@@ -64,7 +64,7 @@
   }
 </script>
 
-<main class="flex flex-col min-h-screen p-6 gap-4 max-w-lg mx-auto">
+<main class="flex flex-col h-screen p-6 gap-5 bg-[#fafafa]">
   <header class="flex items-center justify-between">
     <h1 class="text-lg font-semibold">Welcome to wispr-fox</h1>
     <span class="text-xs text-gray-500">Step {step} / 3</span>

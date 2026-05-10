@@ -1,11 +1,29 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  background: #fafafa;
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Apple-like polish */
+* {
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+a {
+  transition: color 0.15s ease;
 }

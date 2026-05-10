@@ -35,7 +35,7 @@
   }
 </script>
 
-<main class="flex flex-col min-h-screen p-5 gap-4">
+<main class="flex flex-col h-screen p-6 gap-5 bg-[#fafafa]">
   <header class="flex items-center justify-between">
     <h1 class="text-base font-semibold tracking-tight">wispr-fox</h1>
     <StatusBadge />

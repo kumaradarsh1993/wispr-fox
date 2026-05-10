@@ -14,13 +14,14 @@
       {
         "label": "main",
         "title": "wispr-fox",
-        "width": 480,
-        "height": 400,
-        "minWidth": 400,
-        "minHeight": 320,
+        "width": 600,
+        "height": 500,
+        "minWidth": 480,
+        "minHeight": 400,
         "decorations": true,
         "resizable": true,
-        "visible": true
+        "visible": true,
+        "center": true
       }
     ],
     "security": {

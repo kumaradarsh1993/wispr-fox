@@ -6150,6 +6150,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "cpal",
+ "dirs 6.0.0",
  "hound",
  "keyring",
  "once_cell",

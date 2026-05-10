@@ -2,9 +2,12 @@
 //!
 //! cpal's `Stream` is `!Send` on Windows (WASAPI/COM thread affinity), so we
 //! park it on a dedicated audio worker thread and expose a Send/Sync handle
-//! (`AudioController`) that the Flow layer calls into. Commands flow over an
-//! `mpsc::channel`; replies use a `oneshot`. The worker drops the stream on
-//! `Stop`, finalises the WAV, and returns the duration.
+//! (`AudioController`) that the Flow layer calls into.
+//!
+//! **Always-hot mic:** The cpal stream starts at app launch and runs
+//! continuously. Audio samples are discarded unless recording is active.
+//! This eliminates WASAPI stream startup latency (3–6s on some Windows
+//! setups) so recording begins on the very first syllable after F8.
 
 use std::fs::File;
 use std::io::BufWriter;
@@ -76,62 +79,68 @@ impl AudioController {
     }
 }
 
+/// State shared between the always-running cpal callback and the worker loop.
+/// When `writer` holds `Some(wav)`, samples are written. When `None`, they're
+/// discarded — the mic stays hot but nothing hits disk.
+struct RecordingGate {
+    writer: SharedWriter,
+    channels: u16,
+}
+
 struct ActiveRecording {
     path: PathBuf,
     started_at: Instant,
-    writer: SharedWriter,
-    _stream: Stream,
 }
 
 fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
-    let mut active: Option<ActiveRecording> = None;
-    while let Ok(cmd) = rx.recv() {
-        match cmd {
-            AudioCmd::Start { path, reply } => {
-                if active.is_some() {
-                    let _ = reply.send(Err(anyhow!("recording already in progress")));
-                    continue;
-                }
-                match begin_recording(path) {
-                    Ok(rec) => {
-                        active = Some(rec);
-                        let _ = reply.send(Ok(()));
-                    }
-                    Err(e) => {
-                        let _ = reply.send(Err(e));
-                    }
-                }
-            }
-            AudioCmd::Stop { reply } => {
-                let Some(rec) = active.take() else {
-                    let _ = reply.send(Err(anyhow!("no recording in progress")));
-                    continue;
-                };
-                let _ = reply.send(end_recording(rec));
-            }
-        }
-    }
-    tracing::debug!("audio worker exiting");
-}
-
-fn begin_recording(out_path: PathBuf) -> Result<ActiveRecording> {
-    if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating audio dir {parent:?}"))?;
-    }
-
+    // ── Initialise audio device + always-hot stream ────────────────────────
+    let t0 = Instant::now();
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no default input device — check Windows mic privacy settings"))?;
-
-    let config: SupportedStreamConfig = device
-        .default_input_config()
-        .context("querying default input config")?;
+    let device = match host.default_input_device() {
+        Some(d) => d,
+        None => {
+            tracing::error!("no default input device — check Windows mic privacy settings");
+            drain_errors(rx, "no input device");
+            return;
+        }
+    };
+    let config: SupportedStreamConfig = match device.default_input_config() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("querying input config: {e}");
+            drain_errors(rx, "input config failed");
+            return;
+        }
+    };
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
 
+    // Shared writer gate — starts as None (not recording).
+    let writer: SharedWriter = Arc::new(Mutex::new(None));
+    let gate = RecordingGate { writer: writer.clone(), channels };
+
+    let err_fn = |e: cpal::StreamError| {
+        tracing::error!("audio stream error: {e}");
+    };
+
+    let _stream: Stream = match config.sample_format() {
+        SampleFormat::F32 => build_stream::<f32>(&device, &config.into(), &gate, err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &config.into(), &gate, err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &config.into(), &gate, err_fn),
+        other => {
+            tracing::error!("unsupported sample format: {other:?}");
+            drain_errors(rx, "unsupported format");
+            return;
+        }
+    }.expect("building always-hot input stream");
+
+    _stream.play().expect("starting always-hot stream");
+
+    let init_ms = t0.elapsed().as_millis();
+    tracing::info!(sample_rate, channels, init_ms, "audio device + hot stream ready");
+
+    // WAV spec used for every recording file.
     let spec = WavSpec {
         channels: 1,
         sample_rate,
@@ -139,62 +148,110 @@ fn begin_recording(out_path: PathBuf) -> Result<ActiveRecording> {
         sample_format: WavSampleFormat::Int,
     };
 
-    let file = File::create(&out_path)
-        .with_context(|| format!("creating WAV at {out_path:?}"))?;
-    let writer = WavWriter::new(BufWriter::new(file), spec)
-        .with_context(|| "writing WAV header")?;
-    let writer: SharedWriter = Arc::new(Mutex::new(Some(writer)));
+    // ── Command loop ───────────────────────────────────────────────────────
+    let mut active: Option<ActiveRecording> = None;
 
-    let err_writer = writer.clone();
-    let err_fn = move |e: cpal::StreamError| {
-        tracing::error!("audio stream error: {e}");
-        let _ = err_writer.lock().take();
-    };
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            AudioCmd::Start { path, reply } => {
+                if active.is_some() {
+                    tracing::debug!("ignoring duplicate start (key repeat)");
+                    let _ = reply.send(Err(anyhow!("recording already in progress")));
+                    continue;
+                }
 
-    let stream = match config.sample_format() {
-        SampleFormat::F32 => build_stream::<f32>(&device, &config.into(), writer.clone(), channels, err_fn)?,
-        SampleFormat::I16 => build_stream::<i16>(&device, &config.into(), writer.clone(), channels, err_fn)?,
-        SampleFormat::U16 => build_stream::<u16>(&device, &config.into(), writer.clone(), channels, err_fn)?,
-        other => return Err(anyhow!("unsupported sample format: {other:?}")),
-    };
+                let t0 = Instant::now();
 
-    stream.play().context("starting cpal stream")?;
-    tracing::info!(?out_path, sample_rate, channels, "recording started");
+                // Create the output WAV file and slot it into the gate.
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let wav_writer = match File::create(&path)
+                    .context("creating WAV")
+                    .and_then(|f| {
+                        WavWriter::new(BufWriter::new(f), spec)
+                            .context("writing WAV header")
+                    }) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        continue;
+                    }
+                };
 
-    Ok(ActiveRecording {
-        path: out_path,
-        started_at: Instant::now(),
-        writer,
-        _stream: stream,
-    })
+                // Flip the gate — samples start flowing to disk immediately.
+                *writer.lock() = Some(wav_writer);
+                active = Some(ActiveRecording {
+                    path: path.clone(),
+                    started_at: Instant::now(),
+                });
+
+                let setup_ms = t0.elapsed().as_millis();
+                tracing::info!(?path, setup_ms, "recording started (gate opened)");
+                let _ = reply.send(Ok(()));
+            }
+
+            AudioCmd::Stop { reply } => {
+                let Some(rec) = active.take() else {
+                    let _ = reply.send(Err(anyhow!("no recording in progress")));
+                    continue;
+                };
+
+                let duration_ms = rec.started_at.elapsed().as_millis() as i64;
+
+                // Close the gate — samples stop flowing to disk.
+                if let Some(w) = writer.lock().take() {
+                    if let Err(e) = w.finalize() {
+                        tracing::warn!("WAV finalize error: {e}");
+                    }
+                }
+
+                let _ = reply.send(Ok(FinishedRecording {
+                    path: rec.path,
+                    duration_ms,
+                }));
+            }
+        }
+    }
+
+    tracing::debug!("audio worker exiting");
+    drop(_stream);
 }
 
-fn end_recording(rec: ActiveRecording) -> Result<FinishedRecording> {
-    let duration_ms = rec.started_at.elapsed().as_millis() as i64;
-    let ActiveRecording { path, writer, _stream, .. } = rec;
-    drop(_stream);
-    if let Some(w) = writer.lock().take() {
-        w.finalize().context("finalising WAV header")?;
+/// When device init fails, drain the command channel replying with errors.
+fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            AudioCmd::Start { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
+            AudioCmd::Stop { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
+        }
     }
-    Ok(FinishedRecording { path, duration_ms })
 }
 
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    writer: SharedWriter,
-    input_channels: u16,
+    gate: &RecordingGate,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
     T: cpal::SizedSample + ToI16Sample + Send + 'static,
 {
+    let writer = gate.writer.clone();
+    let input_channels = gate.channels;
+
     let stream = device
         .build_input_stream(
             config,
             move |data: &[T], _info| {
+                // Fast path: if not recording, discard all samples.
                 let mut guard = writer.lock();
                 let Some(wav) = guard.as_mut() else { return };
+
                 if input_channels <= 1 {
                     for &s in data {
                         let _ = wav.write_sample(s.to_i16_sample());
@@ -216,6 +273,58 @@ where
         )
         .context("building cpal input stream")?;
     Ok(stream)
+}
+
+// ── Silence trimming (anti-hallucination) ──────────────────────────────────
+
+/// Trim trailing silence from a recorded WAV file. Whisper hallucinates
+/// ("thank you", "gracias", "merci") on silent tails — this removes them.
+///
+/// * `threshold` — amplitude below which a sample counts as silence (500 ≈ 1.5%)
+/// * `min_tail_ms` — only trim if the silent tail exceeds this many ms
+pub fn trim_trailing_silence(path: &Path, threshold: i16, min_tail_ms: u32) -> Result<()> {
+    let reader = hound::WavReader::open(path)
+        .with_context(|| format!("opening WAV for silence trim: {path:?}"))?;
+    let spec = reader.spec();
+    let sample_rate = spec.sample_rate;
+
+    let samples: Vec<i16> = reader
+        .into_samples::<i16>()
+        .filter_map(|s| s.ok())
+        .collect();
+
+    if samples.is_empty() {
+        return Ok(());
+    }
+
+    let last_loud = samples.iter().rposition(|&s| s.abs() > threshold);
+    let last_loud_idx = match last_loud {
+        Some(i) => i,
+        None => return Ok(()),
+    };
+
+    let buffer_samples = (sample_rate as usize * 150) / 1000;
+    let trim_to = (last_loud_idx + buffer_samples).min(samples.len());
+
+    let removed_samples = samples.len() - trim_to;
+    let removed_ms = (removed_samples as u64 * 1000) / sample_rate as u64;
+    if removed_ms < min_tail_ms as u64 {
+        return Ok(());
+    }
+
+    tracing::info!(
+        path = %path.display(),
+        trimmed_ms = removed_ms,
+        "trimmed trailing silence from WAV"
+    );
+
+    let mut writer = hound::WavWriter::create(path, spec)
+        .with_context(|| "rewriting trimmed WAV")?;
+    for &s in &samples[..trim_to] {
+        writer.write_sample(s)?;
+    }
+    writer.finalize().context("finalising trimmed WAV")?;
+    Ok(())
 }
 
 trait ToI16Sample: Copy {

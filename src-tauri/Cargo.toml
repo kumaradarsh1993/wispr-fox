@@ -38,8 +38,9 @@ hound = "3"
 # Clipboard with text + image preservation
 arboard = "3"
 
-# Windows Credential Manager for API keys
+# Windows Credential Manager for API keys (primary); file fallback via dirs
 keyring = "3"
+dirs = "6"
 
 # History DB (bundled = ships SQLite, no system dep)
 rusqlite = { version = "0.32", features = ["bundled"] }

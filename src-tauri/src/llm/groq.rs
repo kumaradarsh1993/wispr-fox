@@ -10,7 +10,7 @@ use super::{LlmError, LlmProvider};
 const ENDPOINT: &str = "https://api.groq.com/openai/v1/chat/completions";
 const TIMEOUT: Duration = Duration::from_secs(8);
 
-pub const DEFAULT_LIGHT_MODEL: &str = "llama-3.1-8b-instant";
+pub const DEFAULT_LIGHT_MODEL: &str = "llama-3.3-70b-versatile";
 pub const DEFAULT_ADVANCED_MODEL: &str = "llama-3.3-70b-versatile";
 
 pub struct GroqLlm {

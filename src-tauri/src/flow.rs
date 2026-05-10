@@ -131,6 +131,12 @@ impl Flow {
         let FinishedRecording { path, duration_ms } = self.audio.stop().await?;
         self.history.set_duration(&record_id, duration_ms)?;
 
+        // Trim trailing silence before sending to Whisper — prevents
+        // hallucinations like "thank you" / "gracias" on silent tails.
+        if let Err(e) = crate::audio::trim_trailing_silence(&path, 500, 300) {
+            tracing::warn!("silence trimming failed (non-fatal): {e:#}");
+        }
+
         if duration_ms < MIN_DURATION_MS {
             tracing::info!(record_id, duration_ms, "discarding too-short recording");
             self.history
@@ -147,10 +153,26 @@ impl Flow {
         let stt_settings = self.settings();
         let stt = GroqStt::with_model(stt_key, stt_settings.stt_model.clone());
 
+        let wav_size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+        tracing::info!(
+            record_id,
+            wav_bytes = wav_size,
+            "sending WAV to Whisper"
+        );
+
         let transcript = stt
             .transcribe(&path, stt_settings.language_hint.as_deref())
             .await
             .context("Groq Whisper request")?;
+
+        tracing::info!(
+            record_id,
+            text = %transcript.text,
+            language = ?transcript.language,
+            duration_secs = ?transcript.duration_seconds,
+            "Whisper response"
+        );
+
         self.history
             .set_transcript(&record_id, &transcript.text, stt.name())?;
 
