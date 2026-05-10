@@ -31,6 +31,7 @@ use hound::{SampleFormat as WavSampleFormat, WavSpec, WavWriter};
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
+pub mod cues;
 pub mod devices;
 
 type SharedWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;

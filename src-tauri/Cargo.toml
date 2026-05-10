@@ -38,6 +38,10 @@ hound = "3"
 # Clipboard with text + image preservation
 arboard = "3"
 
+# Audio cues (start/stop tones) — generated sine waves OR user-supplied
+# files dropped at %APPDATA%/com.wispr-fox.app/sounds/{start,stop}.{wav,mp3}
+rodio = { version = "0.20", default-features = false, features = ["wav", "mp3", "vorbis"] }
+
 # Windows Credential Manager for API keys (primary); file fallback via dirs
 keyring = "3"
 dirs = "6"

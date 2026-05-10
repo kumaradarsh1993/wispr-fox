@@ -110,6 +110,7 @@ impl Flow {
             .start(path.clone())
             .await
             .context("starting audio capture")?;
+        crate::audio::cues::play_start();
         let record_id = self.history.insert_new(&path, ClippyMode::from(mode))?;
 
         let mut state = self.state.lock();
@@ -129,6 +130,7 @@ impl Flow {
         let _ = app.emit("wispr:state", "transcribing");
 
         let FinishedRecording { path, duration_ms } = self.audio.stop().await?;
+        crate::audio::cues::play_stop();
         self.history.set_duration(&record_id, duration_ms)?;
 
         // Trim trailing silence before sending to Whisper — prevents
