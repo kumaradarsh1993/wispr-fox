@@ -1,0 +1,80 @@
+[package]
+name = "wispr-fox"
+version = "0.0.1"
+description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
+authors = ["wispr-fox contributors"]
+edition = "2021"
+
+[lib]
+name = "wispr_fox_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-store = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async runtime + HTTP for STT/LLM clients
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+async-trait = "0.1"
+
+# Audio capture + WAV encoding
+cpal = "0.15"
+hound = "3"
+
+# Clipboard with text + image preservation
+arboard = "3"
+
+# Windows Credential Manager for API keys
+keyring = "3"
+
+# History DB (bundled = ships SQLite, no system dep)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Errors, logging, ids, time
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Sync primitives
+once_cell = "1"
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_Foundation",
+] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
