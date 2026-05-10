@@ -4,10 +4,18 @@
 //! park it on a dedicated audio worker thread and expose a Send/Sync handle
 //! (`AudioController`) that the Flow layer calls into.
 //!
-//! **Always-hot mic:** The cpal stream starts at app launch and runs
-//! continuously. Audio samples are discarded unless recording is active.
-//! This eliminates WASAPI stream startup latency (3–6s on some Windows
-//! setups) so recording begins on the very first syllable after F8.
+//! **Warm-paused mic:** WASAPI shared-mode initialization (esp. Realtek HD
+//! with audio enhancements, or Bluetooth) can take 3–6 seconds on the very
+//! first `stream.play()`. To avoid that latency on every F8 press, we:
+//!   1. Build + play the cpal stream at app startup (warmup happens here)
+//!   2. Immediately pause it — stream stays alive, mic samples stop flowing
+//!   3. On F8 press: `stream.play()` — resumes in <50ms (already warm)
+//!   4. On F8 release: `stream.pause()` — samples stop, stream stays warm
+//!
+//! Result: first dictation may have warmup-cost during onboarding, every
+//! subsequent press is near-instant. Other apps (Teams, Zoom) can still
+//! read the mic in WASAPI shared mode — only the "mic in use" indicator
+//! stays lit because our stream object is alive.
 
 use std::fs::File;
 use std::io::BufWriter;
@@ -79,21 +87,13 @@ impl AudioController {
     }
 }
 
-/// State shared between the always-running cpal callback and the worker loop.
-/// When `writer` holds `Some(wav)`, samples are written. When `None`, they're
-/// discarded — the mic stays hot but nothing hits disk.
-struct RecordingGate {
-    writer: SharedWriter,
-    channels: u16,
-}
-
 struct ActiveRecording {
     path: PathBuf,
     started_at: Instant,
 }
 
 fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
-    // ── Initialise audio device + always-hot stream ────────────────────────
+    // ── 1. Initialise audio device (COM + WASAPI enumeration) ──────────────
     let t0 = Instant::now();
     let host = cpal::default_host();
     let device = match host.default_input_device() {
@@ -104,6 +104,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
             return;
         }
     };
+    let device_name = device.name().unwrap_or_else(|_| "<unnamed>".into());
     let config: SupportedStreamConfig = match device.default_input_config() {
         Ok(c) => c,
         Err(e) => {
@@ -115,30 +116,74 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
+    let sample_format = config.sample_format();
+    let dev_init_ms = t0.elapsed().as_millis();
+    tracing::info!(
+        device = %device_name,
+        sample_rate,
+        channels,
+        ?sample_format,
+        dev_init_ms,
+        "audio device enumerated"
+    );
 
-    // Shared writer gate — starts as None (not recording).
+    // Writer gate: Some(wav) = recording, None = idle (samples discarded).
     let writer: SharedWriter = Arc::new(Mutex::new(None));
-    let gate = RecordingGate { writer: writer.clone(), channels };
 
     let err_fn = |e: cpal::StreamError| {
         tracing::error!("audio stream error: {e}");
     };
 
-    let _stream: Stream = match config.sample_format() {
-        SampleFormat::F32 => build_stream::<f32>(&device, &config.into(), &gate, err_fn),
-        SampleFormat::I16 => build_stream::<i16>(&device, &config.into(), &gate, err_fn),
-        SampleFormat::U16 => build_stream::<u16>(&device, &config.into(), &gate, err_fn),
+    // ── 2. Build stream once ──────────────────────────────────────────────
+    // Force a small buffer size (~10ms) to reduce WASAPI warm-up latency.
+    // Default cpal buffer can be 100ms+ on Realtek which compounds startup delay.
+    let mut stream_config: cpal::StreamConfig = config.clone().into();
+    stream_config.buffer_size = cpal::BufferSize::Fixed(sample_rate / 100); // 10ms
+
+    let t_build = Instant::now();
+    let stream_result: Result<Stream> = match sample_format {
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, err_fn),
         other => {
             tracing::error!("unsupported sample format: {other:?}");
             drain_errors(rx, "unsupported format");
             return;
         }
-    }.expect("building always-hot input stream");
+    };
+    let stream = match stream_result {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("building input stream: {e:#}");
+            drain_errors(rx, "build_input_stream failed");
+            return;
+        }
+    };
+    let build_ms = t_build.elapsed().as_millis();
 
-    _stream.play().expect("starting always-hot stream");
+    // ── 3. Start the always-hot stream ─────────────────────────────────────
+    // Empirical: WASAPI shared-mode on Realtek STOPS the audio engine on
+    // `pause()`. A subsequent `play()` triggers a 3-5s warm-up before samples
+    // actually arrive. The only way to get instant F8 capture is to keep the
+    // stream continuously playing — samples are discarded in-callback when
+    // not recording (no disk, no buffer, no network). Other apps can still
+    // read the mic in shared mode; the only cost is the "mic in use" indicator.
+    let t_play = Instant::now();
+    if let Err(e) = stream.play() {
+        tracing::error!("stream.play() failed: {e}");
+        drain_errors(rx, "stream play failed");
+        return;
+    }
+    let play_ms = t_play.elapsed().as_millis();
 
-    let init_ms = t0.elapsed().as_millis();
-    tracing::info!(sample_rate, channels, init_ms, "audio device + hot stream ready");
+    let total_init_ms = t0.elapsed().as_millis();
+    tracing::info!(
+        dev_init_ms,
+        build_ms,
+        play_ms,
+        total_init_ms,
+        "audio stream live (always-hot — samples discarded until F8)"
+    );
 
     // WAV spec used for every recording file.
     let spec = WavSpec {
@@ -162,16 +207,13 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
 
                 let t0 = Instant::now();
 
-                // Create the output WAV file and slot it into the gate.
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
                 let wav_writer = match File::create(&path)
                     .context("creating WAV")
-                    .and_then(|f| {
-                        WavWriter::new(BufWriter::new(f), spec)
-                            .context("writing WAV header")
-                    }) {
+                    .and_then(|f| WavWriter::new(BufWriter::new(f), spec).context("WAV header"))
+                {
                     Ok(w) => w,
                     Err(e) => {
                         let _ = reply.send(Err(e));
@@ -179,8 +221,10 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
                     }
                 };
 
-                // Flip the gate — samples start flowing to disk immediately.
+                // Open the gate — callback starts writing samples NOW.
+                // Stream is already live, so there's no resume latency.
                 *writer.lock() = Some(wav_writer);
+
                 active = Some(ActiveRecording {
                     path: path.clone(),
                     started_at: Instant::now(),
@@ -199,7 +243,8 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
 
                 let duration_ms = rec.started_at.elapsed().as_millis() as i64;
 
-                // Close the gate — samples stop flowing to disk.
+                // Close the gate — callback continues running on the live
+                // stream but discards samples (samples never hit disk again).
                 if let Some(w) = writer.lock().take() {
                     if let Err(e) = w.finalize() {
                         tracing::warn!("WAV finalize error: {e}");
@@ -215,10 +260,9 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
     }
 
     tracing::debug!("audio worker exiting");
-    drop(_stream);
+    drop(stream);
 }
 
-/// When device init fails, drain the command channel replying with errors.
 fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
     while let Ok(cmd) = rx.recv() {
         match cmd {
@@ -235,20 +279,50 @@ fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    gate: &RecordingGate,
+    writer: SharedWriter,
+    input_channels: u16,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
     T: cpal::SizedSample + ToI16Sample + Send + 'static,
 {
-    let writer = gate.writer.clone();
-    let input_channels = gate.channels;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    let first_callback = Arc::new(Mutex::new(None::<Instant>));
+    let callback_count = Arc::new(AtomicU64::new(0));
+
+    let fc = first_callback.clone();
+    let cc = callback_count.clone();
 
     let stream = device
         .build_input_stream(
             config,
             move |data: &[T], _info| {
-                // Fast path: if not recording, discard all samples.
+                // Diagnostic: log when the first callback fires and every 100 thereafter.
+                let n = cc.fetch_add(1, Ordering::Relaxed);
+                if n == 0 {
+                    let mut slot = fc.lock();
+                    if slot.is_none() {
+                        *slot = Some(Instant::now());
+                        tracing::info!(samples = data.len(), "FIRST audio callback fired");
+                    }
+                } else if n.is_multiple_of(200) {
+                    // Check sample energy to see if audio is silent or live.
+                    let mut max_abs: i32 = 0;
+                    for &s in data.iter().take(64) {
+                        let v = s.to_i16_sample().abs() as i32;
+                        if v > max_abs { max_abs = v; }
+                    }
+                    tracing::debug!(
+                        callbacks = n,
+                        samples_per_cb = data.len(),
+                        peak = max_abs,
+                        "audio callback heartbeat"
+                    );
+                }
+
+                // Fast path: if not recording, discard immediately.
                 let mut guard = writer.lock();
                 let Some(wav) = guard.as_mut() else { return };
 
@@ -279,9 +353,6 @@ where
 
 /// Trim trailing silence from a recorded WAV file. Whisper hallucinates
 /// ("thank you", "gracias", "merci") on silent tails — this removes them.
-///
-/// * `threshold` — amplitude below which a sample counts as silence (500 ≈ 1.5%)
-/// * `min_tail_ms` — only trim if the silent tail exceeds this many ms
 pub fn trim_trailing_silence(path: &Path, threshold: i16, min_tail_ms: u32) -> Result<()> {
     let reader = hound::WavReader::open(path)
         .with_context(|| format!("opening WAV for silence trim: {path:?}"))?;
