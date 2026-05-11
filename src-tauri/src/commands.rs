@@ -128,6 +128,24 @@ pub fn daily_usage(usage: State<'_, UsageTracker>) -> DailyUsage {
 }
 
 #[derive(Serialize)]
+pub struct DefaultPrompts {
+    pub light: &'static str,
+    pub advanced: &'static str,
+    pub drafting: &'static str,
+}
+
+/// Return the baked-in default system prompts for each mode. Used by the
+/// Settings UI to seed the editor + power the Reset button.
+#[tauri::command]
+pub fn get_default_prompts() -> DefaultPrompts {
+    DefaultPrompts {
+        light: crate::llm::prompts::LIGHT_SYSTEM,
+        advanced: crate::llm::prompts::ADVANCED_SYSTEM,
+        drafting: crate::llm::prompts::DRAFTING_SYSTEM,
+    }
+}
+
+#[derive(Serialize)]
 pub struct CurrentModels {
     pub stt: String,
     pub llm_light: String,

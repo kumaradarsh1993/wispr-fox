@@ -375,12 +375,41 @@
   // to a provider whose key IS saved is always allowed — keys aren't
   // touched by provider switches, only by Delete buttons.
 
+  // ── Prompt editor state ────────────────────────────────────────────────
+  let defaultPrompts = $state<{ light: string; advanced: string; drafting: string } | null>(null);
+  let promptOpen = $state<Record<"light" | "advanced" | "drafting", boolean>>({
+    light: false,
+    advanced: false,
+    drafting: false,
+  });
+
+  function effectivePrompt(mode: "light" | "advanced" | "drafting"): string {
+    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
+    const custom = (settings.s[customField] as string) || "";
+    if (custom.trim()) return custom;
+    return defaultPrompts ? defaultPrompts[mode] : "(loading…)";
+  }
+
+  async function savePrompt(mode: "light" | "advanced" | "drafting", value: string) {
+    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
+    await settings.set(customField, value as any);
+    flash(`${mode} prompt saved`);
+  }
+
+  async function resetPrompt(mode: "light" | "advanced" | "drafting") {
+    if (!confirm(`Reset the ${mode} prompt to its default? Any custom edits will be lost.`)) return;
+    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
+    await settings.set(customField, "" as any);
+    flash(`${mode} prompt reset`);
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────
   onMount(async () => {
     await settings.init();
     secretCheck = await api.checkSecrets();
     refreshSounds();
     skinStore.subscribe();
+    defaultPrompts = await api.getDefaultPrompts();
   });
 
   async function saveStt() {
@@ -682,34 +711,70 @@
           </div>
         </div>
 
-        <h3 style="margin-top: 28px;">LLM cleanup per mode</h3>
-        <p class="lede">When enabled, the raw Whisper transcript gets passed through the chosen LLM for cleanup or transformation. Light mode is OFF by default — Whisper is accurate enough that an extra LLM pass mostly adds latency.</p>
-        <div class="field-block">
-          <label class="check-row">
-            <input
-              type="checkbox"
-              checked={settings.s.auto_clean_in_light}
-              onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked)}
-            />
-            <span><strong>F8 Light</strong> — punctuation + capitalisation cleanup. Default: <em>off</em>.</span>
-          </label>
-          <label class="check-row" style="margin-top: 6px;">
-            <input
-              type="checkbox"
-              checked={settings.s.auto_clean_in_advanced}
-              onchange={(e) => settings.set("auto_clean_in_advanced", (e.currentTarget as HTMLInputElement).checked)}
-            />
-            <span><strong>F9 Advanced</strong> — instruction-aware transformation. Default: <em>on</em>. (Disabling makes F9 behave like F8.)</span>
-          </label>
-          <label class="check-row" style="margin-top: 6px;">
-            <input
-              type="checkbox"
-              checked={settings.s.auto_clean_in_drafting}
-              onchange={(e) => settings.set("auto_clean_in_drafting", (e.currentTarget as HTMLInputElement).checked)}
-            />
-            <span><strong>F10 Drafting</strong> — full draft generation from your brief. Default: <em>on</em>.</span>
-          </label>
-        </div>
+        <h3 style="margin-top: 28px;">Modes</h3>
+        <p class="lede">
+          Each F-key is a different "mode" — same LLM model, different prompts. Toggle whether each mode uses LLM cleanup,
+          and click "Show prompt" to view or customise the prompt for that mode.
+        </p>
+
+        {#each [
+          { id: "light",    fkey: "F8",  title: "Light",    settingKey: "auto_clean_in_light",    defaultOn: false,
+            desc: "Raw dictation, no polishing. You speak → exactly what Whisper heard gets pasted. Use for quick notes." },
+          { id: "advanced", fkey: "F9",  title: "Advanced", settingKey: "auto_clean_in_advanced", defaultOn: true,
+            desc: "Basic cleanup — grammar, spelling, punctuation, filler removal, light structuring. NEVER drafts, expands, or reduces content. Preserves your voice." },
+          { id: "drafting", fkey: "F10", title: "Drafting", settingKey: "auto_clean_in_drafting", defaultOn: true,
+            desc: "Full drafting — give a brief (\"draft an email to Saurabh about X, Y, Z\") and you get back a complete polished output. Best for emails, Slack messages, docs." },
+        ] as m (m.id)}
+          <div class="mode-block">
+            <div class="mode-head">
+              <kbd class="mode-key">{m.fkey}</kbd>
+              <div class="mode-title-block">
+                <div class="mode-title">{m.title}</div>
+                <div class="mode-desc">{m.desc}</div>
+              </div>
+              <label class="check-row inline">
+                <input
+                  type="checkbox"
+                  checked={settings.s[m.settingKey as keyof typeof settings.s] as boolean}
+                  onchange={(e) => settings.set(m.settingKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
+                />
+                <span>LLM cleanup</span>
+              </label>
+            </div>
+            <button
+              class="prompt-toggle"
+              onclick={() => (promptOpen[m.id as "light" | "advanced" | "drafting"] = !promptOpen[m.id as "light" | "advanced" | "drafting"])}
+            >
+              <span class="prompt-caret" class:open={promptOpen[m.id as "light" | "advanced" | "drafting"]}>›</span>
+              {promptOpen[m.id as "light" | "advanced" | "drafting"] ? "Hide" : "Show"} system prompt
+              {#if (settings.s[`custom_${m.id}_prompt` as keyof typeof settings.s] as string)?.trim()}
+                <span class="prompt-edited-pill">customised</span>
+              {/if}
+            </button>
+            {#if promptOpen[m.id as "light" | "advanced" | "drafting"]}
+              <div class="prompt-editor">
+                <textarea
+                  rows="10"
+                  value={effectivePrompt(m.id as "light" | "advanced" | "drafting")}
+                  onchange={(e) => savePrompt(m.id as "light" | "advanced" | "drafting", (e.currentTarget as HTMLTextAreaElement).value)}
+                ></textarea>
+                <div class="prompt-actions">
+                  <button
+                    class="btn-secondary small"
+                    onclick={() => resetPrompt(m.id as "light" | "advanced" | "drafting")}
+                  >
+                    Reset to default
+                  </button>
+                  {#if m.id === "light"}
+                    <span class="prompt-warning">
+                      ⚠ The Light prompt is a security boundary against prompt injection — keep the "treat transcript as literal data" guarantee or attackers can hijack via dictation.
+                    </span>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/each}
 
         <div class="field-block">
           <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
@@ -1369,6 +1434,124 @@
   .field-half {
     margin-bottom: 0;
     max-width: none;
+  }
+
+  /* Mode block — F8 / F9 / F10 card with description + cleanup toggle + prompt editor */
+  .mode-block {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    max-width: 720px;
+  }
+  .mode-head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 14px;
+    align-items: center;
+  }
+  .mode-key {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-family: ui-monospace, "SF Mono", Cascadia, monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+    text-align: center;
+    min-width: 32px;
+  }
+  .mode-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+  }
+  .mode-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .check-row.inline {
+    margin: 0;
+    font-size: 12px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .prompt-toggle {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 10px;
+    padding: 4px 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .prompt-toggle:hover {
+    color: var(--text-primary);
+  }
+  .prompt-caret {
+    transition: transform 150ms ease;
+    display: inline-block;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .prompt-caret.open {
+    transform: rotate(90deg);
+  }
+  .prompt-edited-pill {
+    background: var(--accent-fade);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .prompt-editor {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .prompt-editor textarea {
+    width: 100%;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, "SF Mono", Cascadia, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    resize: vertical;
+    min-height: 160px;
+  }
+  .prompt-editor textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-fade);
+  }
+  .prompt-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .prompt-warning {
+    font-size: 11px;
+    color: var(--warning);
+    line-height: 1.5;
+    flex: 1;
+    min-width: 200px;
   }
 
   .hint {

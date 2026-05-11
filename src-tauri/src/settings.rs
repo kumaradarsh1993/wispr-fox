@@ -81,6 +81,16 @@ pub struct AppSettings {
     // ── Look & feel ────────────────────────────────────────────────────────
     /// "auto" | "light" | "dark" | "retro"
     pub theme: String,
+
+    // ── Custom prompts (override built-in defaults) ───────────────────────
+    // Empty string = use the baked-in default from prompts.rs.
+    // Set via Settings UI. Reset button clears these strings.
+    #[serde(default)]
+    pub custom_light_prompt: String,
+    #[serde(default)]
+    pub custom_advanced_prompt: String,
+    #[serde(default)]
+    pub custom_drafting_prompt: String,
 }
 
 impl Default for AppSettings {
@@ -126,6 +136,9 @@ impl Default for AppSettings {
             // Light by default — user feedback May 2026: many surfaces still
             // need dark-mode polish, so don't auto-flip on system dark.
             theme: "light".to_string(),
+            custom_light_prompt: String::new(),
+            custom_advanced_prompt: String::new(),
+            custom_drafting_prompt: String::new(),
         }
     }
 }

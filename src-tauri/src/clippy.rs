@@ -19,9 +19,12 @@ pub struct CleanedTranscript {
 const TIMEOUT: Duration = Duration::from_secs(8);
 const LIGHT_MAX_DRIFT: f32 = 0.40;
 
+/// `system_override` — if `Some`, used in place of the baked-in default
+/// prompt for the given mode. Lets users tweak prompts via Settings.
 pub async fn clean(
     raw: &str,
     mode: ClippyMode,
+    system_override: Option<&str>,
     provider: &dyn LlmProvider,
 ) -> CleanedTranscript {
     let raw_trimmed = raw.trim();
@@ -29,7 +32,7 @@ pub async fn clean(
         return CleanedTranscript { text: String::new(), used_clippy: false, note: None };
     }
 
-    let (system, user, temperature) = match mode {
+    let (default_system, user, temperature) = match mode {
         ClippyMode::Light => (
             prompts::LIGHT_SYSTEM,
             prompts::light_user_message(raw_trimmed),
@@ -46,6 +49,9 @@ pub async fn clean(
             0.5,
         ),
     };
+    let system = system_override
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(default_system);
 
     let fut = provider.complete(system, &user, temperature);
     let result = tokio::time::timeout(TIMEOUT, fut).await;

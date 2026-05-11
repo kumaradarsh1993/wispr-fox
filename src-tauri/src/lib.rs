@@ -160,6 +160,7 @@ pub fn run() {
             commands::daily_usage,
             commands::current_models,
             commands::clear_all_history,
+            commands::get_default_prompts,
             commands::list_notification_sounds,
             commands::add_notification_sound,
             commands::test_groq_key,

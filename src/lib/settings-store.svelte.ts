@@ -35,6 +35,9 @@ const FALLBACK: AppSettings = {
   stop_sound: "",
   cues_enabled: true,
   theme: "light",
+  custom_light_prompt: "",
+  custom_advanced_prompt: "",
+  custom_drafting_prompt: "",
 };
 
 class SettingsStore {

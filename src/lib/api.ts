@@ -49,6 +49,9 @@ export interface AppSettings {
   stop_sound: string;
   cues_enabled: boolean;
   theme: string;
+  custom_light_prompt: string;
+  custom_advanced_prompt: string;
+  custom_drafting_prompt: string;
 }
 
 export interface Recording {
@@ -99,6 +102,12 @@ export interface CurrentModels {
   llm_advanced: string;
 }
 
+export interface DefaultPrompts {
+  light: string;
+  advanced: string;
+  drafting: string;
+}
+
 export const api = {
   ping: () => invoke<string>("ping"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
@@ -117,6 +126,7 @@ export const api = {
   appPaths: () => invoke<AppPaths>("app_paths"),
   dailyUsage: () => invoke<DailyUsage>("daily_usage"),
   currentModels: () => invoke<CurrentModels>("current_models"),
+  getDefaultPrompts: () => invoke<DefaultPrompts>("get_default_prompts"),
   clearAllHistory: () => invoke<number>("clear_all_history"),
   listNotificationSounds: () => invoke<string[]>("list_notification_sounds"),
   addNotificationSound: (srcPath: string) =>

@@ -25,6 +25,21 @@ use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
 
+/// Pick the user-customised system prompt for the given mode, if set.
+/// Empty string means "use the baked-in default" (handled by clippy::clean).
+fn custom_prompt_for(s: &AppSettings, mode: Mode) -> Option<String> {
+    let raw = match mode {
+        Mode::Light => &s.custom_light_prompt,
+        Mode::Advanced => &s.custom_advanced_prompt,
+        Mode::Drafting => &s.custom_drafting_prompt,
+    };
+    if raw.trim().is_empty() {
+        None
+    } else {
+        Some(raw.clone())
+    }
+}
+
 fn mode_to_str(m: Mode) -> &'static str {
     match m {
         Mode::Light => "light",
@@ -277,7 +292,8 @@ impl Flow {
 
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), llm.as_ref()).await;
+            let custom = custom_prompt_for(&clippy_settings, mode);
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
             self.history.set_cleaned(
                 &record_id,
                 &cleaned.text,
@@ -358,7 +374,8 @@ impl Flow {
             let model = stt_settings.llm_model.clone();
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), llm.as_ref()).await;
+            let custom = custom_prompt_for(&stt_settings, mode);
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
             self.history.set_cleaned(
                 record_id,
                 &cleaned.text,
