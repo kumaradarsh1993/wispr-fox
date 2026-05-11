@@ -1,6 +1,23 @@
 <script lang="ts">
   import type { Skin } from "./skin-store.svelte";
+  // Import the actual Microsoft Clippy sprite data (base64 PNG + frame map)
+  // from the vendored clippyjs agent file. Vite bundles it once and dedupes
+  // across all SkinIcon usages.
+  import clippyAgent from "./clippyjs-vendor/clippy-agent.js";
+
   let { skin, size = 28 }: { skin: Skin; size?: number } = $props();
+
+  // Hand-picked frame from the agent's "Writing" animation — Clippy
+  // bent over the yellow notepad, the iconic "Clippy reading" pose
+  // that matches what users remember from MS Office. Coords are the
+  // top-left of the 124x93 frame within the sprite sheet.
+  const CLIPPY_FRAME = { x: 992, y: 1953, w: 124, h: 93 };
+
+  // Final on-screen frame size for the sprite preview — taller than `size`
+  // to preserve the original 124x93 aspect ratio.
+  let spriteW = $derived(Math.round(size * (CLIPPY_FRAME.w / CLIPPY_FRAME.h)));
+  let spriteH = $derived(size);
+  let scale = $derived(size / CLIPPY_FRAME.h);
 </script>
 
 {#if skin === "off"}
@@ -20,16 +37,23 @@
     <circle cx="32" cy="26" r="1.4" fill="currentColor"/>
   </svg>
 {:else if skin === "real-clippy"}
-  <svg viewBox="0 0 70 80" width={size * 0.85} height={size} aria-hidden="true">
-    <path d="M 27 12 C 27 6, 43 6, 43 12 L 43 64 C 43 74, 19 74, 19 60 L 19 28 C 19 20, 33 20, 33 28 L 33 56"
-          fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 17 20 Q 22 16, 28 20 L 27 22 Q 22 19, 18 22 Z" fill="currentColor"/>
-    <path d="M 30 20 Q 35 16, 41 20 L 40 22 Q 35 19, 31 22 Z" fill="currentColor"/>
-    <ellipse cx="23" cy="28" rx="4" ry="4.5" fill="var(--bg-card)" stroke="currentColor" stroke-width="1.4"/>
-    <ellipse cx="23" cy="29" rx="1.5" ry="2" fill="currentColor"/>
-    <ellipse cx="37" cy="28" rx="4" ry="4.5" fill="var(--bg-card)" stroke="currentColor" stroke-width="1.4"/>
-    <ellipse cx="37" cy="29" rx="1.5" ry="2" fill="currentColor"/>
-  </svg>
+  <!-- The ACTUAL Microsoft Clippy frame from the vendored sprite. -->
+  <div
+    class="clippy-sprite-wrap"
+    style="width: {spriteW}px; height: {spriteH}px;"
+    aria-hidden="true"
+  >
+    <div
+      class="clippy-sprite-frame"
+      style="
+        width: {CLIPPY_FRAME.w}px;
+        height: {CLIPPY_FRAME.h}px;
+        background: url('{clippyAgent.image}') -{CLIPPY_FRAME.x}px -{CLIPPY_FRAME.y}px no-repeat;
+        transform: scale({scale});
+        transform-origin: top left;
+      "
+    ></div>
+  </div>
 {:else if skin === "chippy"}
   <svg viewBox="0 0 70 70" width={size} height={size} aria-hidden="true">
     <defs>
@@ -48,3 +72,14 @@
     <path d="M 32 46 Q 35 49, 38 46" fill="none" stroke="#4a2208" stroke-width="1.4" stroke-linecap="round"/>
   </svg>
 {/if}
+
+<style>
+  .clippy-sprite-wrap {
+    display: inline-block;
+    overflow: hidden;
+    line-height: 0;
+  }
+  .clippy-sprite-frame {
+    image-rendering: -webkit-optimize-contrast;
+  }
+</style>
