@@ -191,35 +191,21 @@
   </div>
 
   {#if hasBothVariants}
-    <!-- Prominent variant pager — bigger chevron hit targets + centered label -->
-    <div class="variant-pager" class:visible={expanded}>
-      <button
-        class="chev-btn"
-        onclick={() => (variant = variant === 0 ? 1 : 0)}
-        title="Show raw transcript (Base)"
-        disabled={variant === 1}
-      >
-        <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
-          <path d="M 10 3 L 5 8 L 10 13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      <div class="variant-state">
-        <div class="variant-name">{variant === 0 ? "Polished" : "Base"}</div>
-        <div class="variant-sub">
-          {variant === 0 ? "LLM-cleaned output" : "Raw Whisper transcript"}
-        </div>
-      </div>
-      <button
-        class="chev-btn"
-        onclick={() => (variant = variant === 0 ? 1 : 0)}
-        title="Show LLM-cleaned text (Polished)"
-        disabled={variant === 0}
-      >
-        <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
-          <path d="M 6 3 L 11 8 L 6 13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-    </div>
+    <!-- Compact inline variant toggle — minimal chevrons + tiny label.
+         Sits flush against the transcript so it doesn't steal vertical space. -->
+    <button
+      class="variant-toggle"
+      onclick={() => (variant = variant === 0 ? 1 : 0)}
+      title="Switch between Polished (LLM-cleaned) and Base (raw transcript)"
+    >
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <path d="M 10 3 L 5 8 L 10 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="variant-name-compact">{variant === 0 ? "Polished" : "Base"}</span>
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <path d="M 6 3 L 11 8 L 6 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
   {/if}
 
   {#if audioUrl}
@@ -423,61 +409,31 @@
     word-break: break-word;
   }
 
-  /* Variant pager — visible whenever a row has both Base + Polished. */
-  .variant-pager {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 10px 0 0 36px;
-    padding: 6px 8px;
-    background: var(--bg-subtle);
-    border-radius: 10px;
-    width: fit-content;
-    border: 1px solid var(--border-subtle);
-  }
-
-  .chev-btn {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    width: 30px;
-    height: 30px;
+  /* Compact variant toggle — inline pill, tiny chevrons. */
+  .variant-toggle {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    gap: 6px;
+    margin: 6px 0 0 36px;
+    padding: 3px 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: 9999px;
     cursor: pointer;
-    color: var(--text-primary);
+    color: var(--text-secondary);
+    font-size: 11px;
     transition: all 120ms ease;
   }
-
-  .chev-btn:hover:not(:disabled) {
-    background: var(--accent);
-    color: #fff;
+  .variant-toggle:hover {
+    background: var(--accent-fade);
+    color: var(--accent);
     border-color: var(--accent);
   }
-
-  .chev-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
-  .variant-state {
-    min-width: 130px;
-    text-align: center;
-    padding: 0 6px;
-  }
-
-  .variant-name {
-    font-size: 12px;
+  .variant-name-compact {
     font-weight: 600;
-    color: var(--text-primary);
-    line-height: 1.2;
-  }
-
-  .variant-sub {
     font-size: 10px;
-    color: var(--text-secondary);
-    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 
   .err {

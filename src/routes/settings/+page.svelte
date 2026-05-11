@@ -568,6 +568,8 @@
           </select>
         </div>
 
+        <h3 style="margin-top: 28px;">LLM cleanup per mode</h3>
+        <p class="lede">When enabled, the raw Whisper transcript gets passed through the chosen LLM for cleanup or transformation. Light mode is OFF by default — Whisper is accurate enough that an extra LLM pass mostly adds latency.</p>
         <div class="field-block">
           <label class="check-row">
             <input
@@ -575,7 +577,23 @@
               checked={settings.s.auto_clean_in_light}
               onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked)}
             />
-            <span>Auto-clean transcripts in Light mode (otherwise output the raw transcript)</span>
+            <span><strong>F8 Light</strong> — punctuation + capitalisation cleanup. Default: <em>off</em>.</span>
+          </label>
+          <label class="check-row" style="margin-top: 6px;">
+            <input
+              type="checkbox"
+              checked={settings.s.auto_clean_in_advanced}
+              onchange={(e) => settings.set("auto_clean_in_advanced", (e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span><strong>F9 Advanced</strong> — instruction-aware transformation. Default: <em>on</em>. (Disabling makes F9 behave like F8.)</span>
+          </label>
+          <label class="check-row" style="margin-top: 6px;">
+            <input
+              type="checkbox"
+              checked={settings.s.auto_clean_in_drafting}
+              onchange={(e) => settings.set("auto_clean_in_drafting", (e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span><strong>F10 Drafting</strong> — full draft generation from your brief. Default: <em>on</em>.</span>
           </label>
         </div>
 

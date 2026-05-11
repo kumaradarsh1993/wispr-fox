@@ -28,6 +28,8 @@ export interface AppSettings {
   advanced_sticky_hotkey: string;
   drafting_sticky_hotkey: string;
   auto_clean_in_light: boolean;
+  auto_clean_in_advanced: boolean;
+  auto_clean_in_drafting: boolean;
   clippy_light_model: string;
   clippy_advanced_model: string;
   clippy_drafting_model: string;

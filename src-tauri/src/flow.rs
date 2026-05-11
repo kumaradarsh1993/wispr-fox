@@ -233,8 +233,11 @@ impl Flow {
             .set_transcript(&record_id, &transcript.text, stt.name())?;
 
         let clippy_settings = self.settings();
-        let needs_clippy = matches!(mode, Mode::Advanced | Mode::Drafting)
-            || (matches!(mode, Mode::Light) && clippy_settings.auto_clean_in_light);
+        let needs_clippy = match mode {
+            Mode::Light => clippy_settings.auto_clean_in_light,
+            Mode::Advanced => clippy_settings.auto_clean_in_advanced,
+            Mode::Drafting => clippy_settings.auto_clean_in_drafting,
+        };
 
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");
@@ -316,8 +319,11 @@ impl Flow {
             ClippyMode::Advanced => Mode::Advanced,
             ClippyMode::Drafting => Mode::Drafting,
         };
-        let needs_clippy = matches!(mode, Mode::Advanced | Mode::Drafting)
-            || (matches!(mode, Mode::Light) && stt_settings.auto_clean_in_light);
+        let needs_clippy = match mode {
+            Mode::Light => stt_settings.auto_clean_in_light,
+            Mode::Advanced => stt_settings.auto_clean_in_advanced,
+            Mode::Drafting => stt_settings.auto_clean_in_drafting,
+        };
 
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");

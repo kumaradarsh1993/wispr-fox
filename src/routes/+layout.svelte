@@ -7,11 +7,11 @@
   import { usageStore } from "$lib/usage-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
   import { settings } from "$lib/settings-store.svelte";
+  import SkinIcon from "$lib/SkinIcon.svelte";
 
   let { children } = $props();
 
   let collapsed = $state(false);
-  let floaterOpen = $state(true);
 
   // Reactive theme application — sets document.body[data-theme] whenever the
   // settings.theme value changes. Valid values: "auto" | "light" | "dark" | "retro".
@@ -22,12 +22,12 @@
     }
   });
 
-  type SkinOption = { id: Skin; label: string; icon: string };
+  type SkinOption = { id: Skin; label: string };
   const SKIN_OPTIONS: SkinOption[] = [
-    { id: "off",         label: "Off",       icon: "○" },
-    { id: "stylized",    label: "Paperclip", icon: "📎" },
-    { id: "real-clippy", label: "Clippy",    icon: "✨" },
-    { id: "chippy",      label: "Chippy",    icon: "🥔" },
+    { id: "off",         label: "Off" },
+    { id: "stylized",    label: "Paperclip" },
+    { id: "real-clippy", label: "Clippy" },
+    { id: "chippy",      label: "Chippy" },
   ];
 
   async function pickSkin(s: Skin) {
@@ -48,8 +48,6 @@
   onMount(() => {
     const saved = localStorage.getItem("wispr.sidebar.collapsed");
     if (saved === "1") collapsed = true;
-    const floater = localStorage.getItem("wispr.sidebar.floater-open");
-    if (floater === "0") floaterOpen = false;
     usageStore.subscribe();
     skinStore.subscribe();
     settings.init();
@@ -67,11 +65,6 @@
   function toggleSidebar() {
     collapsed = !collapsed;
     localStorage.setItem("wispr.sidebar.collapsed", collapsed ? "1" : "0");
-  }
-
-  function toggleFloaterSection() {
-    floaterOpen = !floaterOpen;
-    localStorage.setItem("wispr.sidebar.floater-open", floaterOpen ? "1" : "0");
   }
 
   // Hide chrome on /onboarding (full-bleed) and /clippy (floating window).
@@ -120,8 +113,17 @@
   <div class="app-shell">
     <aside class="sidebar" class:collapsed>
       <div class="sidebar-top">
-        <button class="brand" onclick={toggleSidebar} title={collapsed ? "Expand" : "Collapse"}>
-          <span class="brand-mark">📎</span>
+        <!-- Universal sidebar-toggle icon (à la Claude/ChatGPT) — clearer
+             affordance than the paperclip emoji previously used. -->
+        <button class="brand" onclick={toggleSidebar} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+          <span class="brand-mark">
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+              <line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/>
+              <line x1="4.5" y1="7" x2="6" y2="7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <line x1="4.5" y1="10" x2="6" y2="10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </span>
           {#if !collapsed}<span class="brand-text">wispr-fox</span>{/if}
         </button>
 
@@ -148,42 +150,34 @@
           </div>
         {/if}
 
-        <!-- Floater section: skin picker for the Clippy window -->
+        <!-- Floater section: icon-only skin picker. Same compact grid in
+             both expanded and collapsed states (just different column count). -->
         <div class="section">
           {#if !collapsed}
-            <button class="section-head" onclick={toggleFloaterSection}>
-              <span class="section-caret" class:open={floaterOpen}>▸</span>
-              <span class="section-title">Floater</span>
-              <span class="section-current">{SKIN_OPTIONS.find((o) => o.id === skinStore.current)?.label ?? "—"}</span>
-            </button>
-            {#if floaterOpen}
-              <div class="skin-list">
-                {#each SKIN_OPTIONS as opt (opt.id)}
-                  <button
-                    class="skin-item"
-                    class:active={skinStore.current === opt.id}
-                    onclick={() => pickSkin(opt.id)}
-                  >
-                    <span class="skin-check">
-                      {#if skinStore.current === opt.id}✓{/if}
-                    </span>
-                    <span class="skin-icon">{opt.icon}</span>
-                    <span class="skin-label-txt">{opt.label}</span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          {:else}
-            <!-- Collapsed: each skin is just an icon row -->
-            <div class="skin-list-collapsed">
+            <div class="section-title-bar">FLOATER</div>
+            <div class="skin-grid">
               {#each SKIN_OPTIONS as opt (opt.id)}
                 <button
-                  class="skin-item-collapsed"
+                  class="skin-icon-btn"
+                  class:active={skinStore.current === opt.id}
+                  onclick={() => pickSkin(opt.id)}
+                  title={opt.label}
+                  aria-label={opt.label}
+                >
+                  <SkinIcon skin={opt.id} size={26} />
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <div class="skin-grid-collapsed">
+              {#each SKIN_OPTIONS as opt (opt.id)}
+                <button
+                  class="skin-icon-btn"
                   class:active={skinStore.current === opt.id}
                   onclick={() => pickSkin(opt.id)}
                   title={opt.label}
                 >
-                  {opt.icon}
+                  <SkinIcon skin={opt.id} size={22} />
                 </button>
               {/each}
             </div>
@@ -428,131 +422,67 @@
     color: var(--text-primary);
   }
 
-  /* Floater section */
+  /* Floater section — icon-only grid (same in both light + dark themes). */
   .section {
-    margin-top: 12px;
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
-    padding-top: 10px;
+    margin-top: 14px;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 12px;
   }
 
-  .section-head {
-    width: 100%;
-    background: transparent;
-    border: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    cursor: pointer;
-    color: #6e6e73;
+  .section-title-bar {
     font-size: 10px;
     font-weight: 600;
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-radius: 5px;
-    transition: background 100ms ease;
+    letter-spacing: 0.06em;
+    padding: 0 10px 8px;
   }
 
-  .section-head:hover {
-    background: rgba(0, 0, 0, 0.04);
+  .skin-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 0 4px;
   }
 
-  .section-caret {
-    display: inline-block;
-    transition: transform 120ms ease;
-    font-size: 9px;
-  }
-
-  .section-caret.open {
-    transform: rotate(90deg);
-  }
-
-  .section-title {
-    flex: 1;
-    text-align: left;
-  }
-
-  .section-current {
-    color: #1d1d1f;
-    font-weight: 400;
-    text-transform: none;
-    letter-spacing: 0;
-    font-size: 11px;
-  }
-
-  .skin-list {
+  .skin-grid-collapsed {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 4px;
     margin-top: 4px;
-  }
-
-  .skin-item {
-    display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 10px 5px 8px;
-    background: transparent;
-    border: none;
+  }
+
+  .skin-icon-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     cursor: pointer;
-    border-radius: 6px;
-    font-size: 12px;
-    color: #1d1d1f;
-    text-align: left;
-    transition: background 100ms ease;
-  }
-
-  .skin-item:hover {
-    background: rgba(0, 0, 0, 0.04);
-  }
-
-  .skin-item.active {
-    background: rgba(10, 132, 255, 0.10);
-    color: #0a84ff;
-  }
-
-  .skin-check {
-    width: 12px;
-    color: #0a84ff;
-    font-size: 11px;
-    text-align: center;
-  }
-
-  .skin-icon {
-    width: 18px;
-    text-align: center;
-    font-size: 13px;
-  }
-
-  .skin-label-txt {
-    flex: 1;
-  }
-
-  .skin-list-collapsed {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    margin-top: 4px;
-  }
-
-  .skin-item-collapsed {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    border-radius: 6px;
+    border-radius: 8px;
     width: 100%;
-    padding: 6px 0;
-    font-size: 14px;
-    color: #1d1d1f;
-    transition: background 100ms ease;
+    aspect-ratio: 1;
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    transition: all 120ms ease;
   }
 
-  .skin-item-collapsed:hover {
-    background: rgba(0, 0, 0, 0.04);
+  .skin-grid-collapsed .skin-icon-btn {
+    width: 36px;
+    aspect-ratio: 1;
   }
 
-  .skin-item-collapsed.active {
-    background: rgba(10, 132, 255, 0.12);
+  .skin-icon-btn:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+
+  .skin-icon-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
   }
 
   /* Progress bars for usage */

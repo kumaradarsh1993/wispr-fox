@@ -30,8 +30,14 @@ pub struct AppSettings {
     pub advanced_sticky_hotkey: String,
     pub drafting_sticky_hotkey: String,
 
-    // ── Light flow behavior ────────────────────────────────────────────────
+    // ── Cleanup behaviour per mode ────────────────────────────────────────
+    // Whether each mode runs the LLM cleanup step. Light defaults to OFF
+    // (raw Whisper transcript is good enough; user can opt in). Advanced
+    // and Drafting default to ON because their whole purpose is the
+    // transformative LLM pass.
     pub auto_clean_in_light: bool,
+    pub auto_clean_in_advanced: bool,
+    pub auto_clean_in_drafting: bool,
 
     // ── Models (per mode) ──────────────────────────────────────────────────
     pub clippy_light_model: String,
@@ -74,7 +80,10 @@ impl Default for AppSettings {
             light_sticky_hotkey: "Super+F8".to_string(),
             advanced_sticky_hotkey: "Super+F9".to_string(),
             drafting_sticky_hotkey: "Super+F10".to_string(),
-            auto_clean_in_light: true,
+            // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
+            auto_clean_in_light: false,
+            auto_clean_in_advanced: true,
+            auto_clean_in_drafting: true,
             clippy_light_model: crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
             clippy_advanced_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             clippy_drafting_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
