@@ -198,9 +198,10 @@
     },
   ];
 
-  let secretCheck = $state({ stt: false, llm: false });
+  let secretCheck = $state({ stt: false, llm: false, gemini: false });
   let groqStt = $state("");
   let groqLlm = $state("");
+  let geminiKey = $state("");
   let saving = $state(false);
   let savedToast = $state<string | null>(null);
 
@@ -342,11 +343,38 @@
     { id: "whisper-large-v3",        label: "Whisper Large v3",   quality: "Slower • Best accuracy" },
     { id: "distil-whisper-large-v3-en", label: "Distil-Whisper",  quality: "Fastest • English only" },
   ];
-  const LLM_MODELS: ModelOpt[] = [
-    { id: "llama-3.1-8b-instant",   label: "Llama 3.1 8B",   quality: "Fast • 14,400/day free" },
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B",  quality: "Smarter • 1,000/day free" },
-    { id: "llama-4-maverick",       label: "Llama 4 Maverick", quality: "Smartest • 500/day free" },
+  const GROQ_LLM_MODELS: ModelOpt[] = [
+    { id: "llama-3.1-8b-instant",    label: "Llama 3.1 8B",    quality: "Fast • 14,400/day free" },
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B",   quality: "Smarter • 1,000/day free" },
+    { id: "llama-4-maverick",        label: "Llama 4 Maverick", quality: "Smartest • 500/day free" },
   ];
+  const GEMINI_LLM_MODELS: ModelOpt[] = [
+    { id: "gemini-2.5-flash",        label: "Gemini 2.5 Flash", quality: "Fast • 1,500/day free • Best free quality" },
+    { id: "gemini-2.0-flash",        label: "Gemini 2.0 Flash", quality: "Fast • free tier" },
+    { id: "gemini-2.5-pro",          label: "Gemini 2.5 Pro",   quality: "Smartest • PAID ONLY since Apr 2026" },
+    { id: "gemini-3-pro",            label: "Gemini 3 Pro",     quality: "Smartest • PAID ONLY" },
+  ];
+
+  function modelsForProvider(p: string): ModelOpt[] {
+    return p === "gemini" ? GEMINI_LLM_MODELS : GROQ_LLM_MODELS;
+  }
+
+  // When user changes provider, also default the model to a sane choice for that provider.
+  async function changeProvider(mode: "light" | "advanced" | "drafting", provider: string) {
+    const field = `${mode}_provider` as keyof typeof settings.s;
+    await settings.set(field, provider as any);
+    const modelField = mode === "light"
+      ? "clippy_light_model"
+      : mode === "advanced"
+      ? "clippy_advanced_model"
+      : "clippy_drafting_model";
+    const currentModel = settings.s[modelField] as string;
+    const options = modelsForProvider(provider);
+    if (!options.find((m) => m.id === currentModel)) {
+      // Current model doesn't exist for this provider — default to first option.
+      await settings.set(modelField, options[0].id as any);
+    }
+  }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   onMount(async () => {
@@ -382,11 +410,41 @@
     }
   }
 
-  async function deleteKey(name: "groq_stt" | "groq_llm") {
+  async function saveGemini() {
+    if (!geminiKey.trim()) return;
+    saving = true;
+    try {
+      await api.saveSecret("gemini_llm", geminiKey.trim());
+      geminiKey = "";
+      secretCheck = await api.checkSecrets();
+      flash("Gemini key saved");
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function deleteKey(name: "groq_stt" | "groq_llm" | "gemini_llm") {
     if (!confirm(`Delete ${name}?`)) return;
     await api.deleteSecret(name);
     secretCheck = await api.checkSecrets();
     flash("Deleted");
+  }
+
+  // Gemini test — uses freshly-pasted key (saved keys can't be read back from JS).
+  let geminiTestResult = $state<TestResult>({ kind: "idle" });
+  async function testGemini() {
+    const k = geminiKey.trim();
+    if (!k) {
+      geminiTestResult = { kind: "error", msg: "Paste your Gemini key first." };
+      return;
+    }
+    geminiTestResult = { kind: "testing" };
+    try {
+      const models = await api.testGeminiKey(k);
+      geminiTestResult = { kind: "ok", models };
+    } catch (e) {
+      geminiTestResult = { kind: "error", msg: String(e) };
+    }
   }
 
   function flash(msg: string) {
@@ -511,6 +569,54 @@
             {/if}
           </div>
         </div>
+
+        <!-- ── Google Gemini ───────────────────────────────────────────── -->
+        <div class="provider-card" style="margin-top: 18px;">
+          <div class="provider-head">
+            <div>
+              <div class="provider-name">Google Gemini</div>
+              <div class="provider-meta">ai.google.dev — best free-tier LLM for cleanup + drafting</div>
+            </div>
+            <a class="link-out" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">
+              Get an API key →
+            </a>
+          </div>
+
+          <div class="help-box">
+            <strong>Free tier as of May 2026:</strong>
+            <ul>
+              <li>Gemini 2.5 Flash: <code>15 RPM, 1,500 req/day</code> — recommended for F10 drafting</li>
+              <li>Pro models <em>removed from free tier April 2026</em> — billing required.</li>
+              <li>No card needed to start. Quality competitive with GPT-4o-mini.</li>
+            </ul>
+          </div>
+
+          <div class="key-row">
+            <label>API key</label>
+            <div class="input-row">
+              <input
+                type="password"
+                placeholder={secretCheck.gemini ? "•••••••• (saved)" : "AIza..."}
+                bind:value={geminiKey}
+              />
+              <button class="btn-primary" onclick={saveGemini} disabled={saving}>Save</button>
+              {#if secretCheck.gemini}
+                <button class="btn-danger" onclick={() => deleteKey("gemini_llm")}>Delete</button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="test-block">
+            <button class="btn-secondary" onclick={testGemini}>Test connection</button>
+            {#if geminiTestResult.kind === "testing"}
+              <span class="test-msg testing">Testing…</span>
+            {:else if geminiTestResult.kind === "ok"}
+              <span class="test-msg ok">✓ Key works — {geminiTestResult.models.length} models accessible</span>
+            {:else if geminiTestResult.kind === "error"}
+              <span class="test-msg error">✗ {geminiTestResult.msg}</span>
+            {/if}
+          </div>
+        </div>
       </section>
     {/if}
 
@@ -532,40 +638,70 @@
           </select>
         </div>
 
-        <div class="field-block">
-          <label>Light mode LLM <span class="hint-inline">(F8 — punctuation + capitalisation only)</span></label>
-          <select
-            value={settings.s.clippy_light_model}
-            onchange={(e) => settings.set("clippy_light_model", (e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each LLM_MODELS as m (m.id)}
-              <option value={m.id}>{m.label} — {m.quality}</option>
-            {/each}
-          </select>
+        <h3 style="margin-top: 22px;">Light mode (F8)</h3>
+        <p class="lede">Cleanup or no-op. Cheap calls if used.</p>
+        <div class="provider-model-row">
+          <div class="field-block field-half">
+            <label>Provider</label>
+            <select value={settings.s.light_provider}
+                    onchange={(e) => changeProvider("light", (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="groq">Groq</option>
+              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
+            </select>
+          </div>
+          <div class="field-block field-half">
+            <label>Model</label>
+            <select value={settings.s.clippy_light_model}
+                    onchange={(e) => settings.set("clippy_light_model", (e.currentTarget as HTMLSelectElement).value)}>
+              {#each modelsForProvider(settings.s.light_provider) as m (m.id)}
+                <option value={m.id}>{m.label} — {m.quality}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
-        <div class="field-block">
-          <label>Advanced mode LLM <span class="hint-inline">(F9 — treats dictation as instructions)</span></label>
-          <select
-            value={settings.s.clippy_advanced_model}
-            onchange={(e) => settings.set("clippy_advanced_model", (e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each LLM_MODELS as m (m.id)}
-              <option value={m.id}>{m.label} — {m.quality}</option>
-            {/each}
-          </select>
+        <h3 style="margin-top: 22px;">Advanced mode (F9)</h3>
+        <p class="lede">Instruction-aware transformation. Worth a smarter model.</p>
+        <div class="provider-model-row">
+          <div class="field-block field-half">
+            <label>Provider</label>
+            <select value={settings.s.advanced_provider}
+                    onchange={(e) => changeProvider("advanced", (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="groq">Groq</option>
+              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
+            </select>
+          </div>
+          <div class="field-block field-half">
+            <label>Model</label>
+            <select value={settings.s.clippy_advanced_model}
+                    onchange={(e) => settings.set("clippy_advanced_model", (e.currentTarget as HTMLSelectElement).value)}>
+              {#each modelsForProvider(settings.s.advanced_provider) as m (m.id)}
+                <option value={m.id}>{m.label} — {m.quality}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
-        <div class="field-block">
-          <label>Drafting mode LLM <span class="hint-inline">(F10 — drafts polished output from your brief)</span></label>
-          <select
-            value={settings.s.clippy_drafting_model}
-            onchange={(e) => settings.set("clippy_drafting_model", (e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each LLM_MODELS as m (m.id)}
-              <option value={m.id}>{m.label} — {m.quality}</option>
-            {/each}
-          </select>
+        <h3 style="margin-top: 22px;">Drafting mode (F10)</h3>
+        <p class="lede">Full draft generation from your brief — use your smartest model here.</p>
+        <div class="provider-model-row">
+          <div class="field-block field-half">
+            <label>Provider</label>
+            <select value={settings.s.drafting_provider}
+                    onchange={(e) => changeProvider("drafting", (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="groq">Groq</option>
+              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
+            </select>
+          </div>
+          <div class="field-block field-half">
+            <label>Model</label>
+            <select value={settings.s.clippy_drafting_model}
+                    onchange={(e) => settings.set("clippy_drafting_model", (e.currentTarget as HTMLSelectElement).value)}>
+              {#each modelsForProvider(settings.s.drafting_provider) as m (m.id)}
+                <option value={m.id}>{m.label} — {m.quality}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
         <h3 style="margin-top: 28px;">LLM cleanup per mode</h3>
@@ -1287,6 +1423,18 @@
 
   .field-block input[type="range"] {
     padding: 0;
+  }
+
+  .provider-model-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 10px;
+    max-width: 620px;
+  }
+
+  .field-half {
+    margin-bottom: 0;
+    max-width: none;
   }
 
   .hint {

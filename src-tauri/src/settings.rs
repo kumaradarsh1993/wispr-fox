@@ -46,6 +46,12 @@ pub struct AppSettings {
     pub stt_model: String,
     pub language_hint: Option<String>,
 
+    /// Which LLM provider to use for each mode. "groq" | "gemini".
+    /// Defaults all to "groq" since that's been the only option until now.
+    pub light_provider: String,
+    pub advanced_provider: String,
+    pub drafting_provider: String,
+
     // ── Retention ──────────────────────────────────────────────────────────
     pub retention_days: u32,
     pub retention_max_mb: u64,
@@ -87,6 +93,9 @@ impl Default for AppSettings {
             clippy_light_model: crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
             clippy_advanced_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             clippy_drafting_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
+            light_provider: "groq".to_string(),
+            advanced_provider: "groq".to_string(),
+            drafting_provider: "groq".to_string(),
             stt_model: "whisper-large-v3-turbo".to_string(),
             language_hint: None,
             retention_days: 7,

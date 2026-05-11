@@ -42,6 +42,7 @@ fn fallback_path() -> PathBuf {
 pub enum SecretKey {
     GroqStt,
     GroqLlm,
+    GeminiLlm,
 }
 
 impl SecretKey {
@@ -49,6 +50,7 @@ impl SecretKey {
         match self {
             SecretKey::GroqStt => "groq_stt_key",
             SecretKey::GroqLlm => "groq_llm_key",
+            SecretKey::GeminiLlm => "gemini_llm_key",
         }
     }
 }

@@ -21,6 +21,7 @@ pub fn ping() -> &'static str {
 pub struct SecretCheck {
     pub stt: bool,
     pub llm: bool,
+    pub gemini: bool,
 }
 
 #[tauri::command]
@@ -28,27 +29,29 @@ pub fn check_secrets() -> SecretCheck {
     SecretCheck {
         stt: secrets::has(SecretKey::GroqStt),
         llm: secrets::has(SecretKey::GroqLlm),
+        gemini: secrets::has(SecretKey::GeminiLlm),
+    }
+}
+
+fn parse_secret_key(name: &str) -> Result<SecretKey, String> {
+    match name {
+        "groq_stt" => Ok(SecretKey::GroqStt),
+        "groq_llm" => Ok(SecretKey::GroqLlm),
+        "gemini_llm" => Ok(SecretKey::GeminiLlm),
+        other => Err(format!("unknown secret key '{other}'")),
     }
 }
 
 #[tauri::command]
 pub fn save_secret(key: String, value: String) -> Result<(), String> {
-    let key = match key.as_str() {
-        "groq_stt" => SecretKey::GroqStt,
-        "groq_llm" => SecretKey::GroqLlm,
-        other => return Err(format!("unknown secret key '{other}'")),
-    };
-    secrets::set(key, &value).map_err(|e| e.to_string())
+    let k = parse_secret_key(&key)?;
+    secrets::set(k, &value).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_secret(key: String) -> Result<(), String> {
-    let key = match key.as_str() {
-        "groq_stt" => SecretKey::GroqStt,
-        "groq_llm" => SecretKey::GroqLlm,
-        other => return Err(format!("unknown secret key '{other}'")),
-    };
-    secrets::delete(key).map_err(|e| e.to_string())
+    let k = parse_secret_key(&key)?;
+    secrets::delete(k).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -247,6 +250,42 @@ pub fn list_notification_sounds() -> Vec<String> {
 #[tauri::command]
 pub fn configure_cues(start: String, stop: String, enabled: bool) {
     crate::audio::cues::configure(&start, &stop, enabled);
+}
+
+/// Test a Google Gemini API key by listing available models.
+#[tauri::command]
+pub async fn test_gemini_key(key: String) -> Result<Vec<String>, String> {
+    if key.trim().is_empty() {
+        return Err("key is empty".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+        urlencoding::encode(key.trim())
+    );
+    let resp = client.get(&url).send().await.map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status.as_u16(), body));
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        models: Vec<Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        name: String,
+    }
+    let parsed: Resp = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    Ok(parsed
+        .models
+        .into_iter()
+        .map(|m| m.name.trim_start_matches("models/").to_string())
+        .collect())
 }
 
 /// Test a Groq API key by making a minimal authenticated request. Returns the

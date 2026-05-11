@@ -17,7 +17,7 @@ use crate::clippy;
 use crate::history::{History, Status};
 use crate::hotkey::{Edge, HotkeyEvent};
 use crate::inject;
-use crate::llm::{groq::GroqLlm, ClippyMode, LlmProvider};
+use crate::llm::{gemini::GeminiLlm, groq::GroqLlm, ClippyMode, LlmProvider};
 use crate::secrets::{self, SecretKey};
 use crate::settings::{AppSettings, Mode};
 use crate::stt::{groq::GroqStt, SttProvider};
@@ -30,6 +30,31 @@ fn mode_to_str(m: Mode) -> &'static str {
         Mode::Light => "light",
         Mode::Advanced => "advanced",
         Mode::Drafting => "drafting",
+    }
+}
+
+/// Construct an LLM provider client for the user-chosen `provider_id`.
+/// Falls back to Groq if the id is unrecognised (e.g. stale settings).
+fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmProvider>> {
+    match provider_id {
+        "gemini" => {
+            let key = secrets::get(SecretKey::GeminiLlm)?
+                .ok_or_else(|| anyhow!("no Gemini API key — open Settings → Provider & Keys"))?;
+            // If user has gemini selected but no model set, fall back to default.
+            let m = if model.starts_with("gemini") {
+                model
+            } else {
+                crate::llm::gemini::DEFAULT_MODEL.to_string()
+            };
+            Ok(Box::new(GeminiLlm::new(key, m)))
+        }
+        _ => {
+            // "groq" or anything unknown -> Groq path.
+            let key = secrets::get(SecretKey::GroqLlm)?
+                .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
+                .ok_or_else(|| anyhow!("no Groq LLM key — open Settings → Provider & Keys"))?;
+            Ok(Box::new(GroqLlm::new(key, model)))
+        }
     }
 }
 
@@ -242,17 +267,21 @@ impl Flow {
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");
             self.history.update_status(&record_id, Status::Cleaning)?;
-            let llm_key = secrets::get(SecretKey::GroqLlm)?
-                .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no Groq LLM key — open Settings to add one"))?;
+
+            let provider_id = match mode {
+                Mode::Light => clippy_settings.light_provider.clone(),
+                Mode::Advanced => clippy_settings.advanced_provider.clone(),
+                Mode::Drafting => clippy_settings.drafting_provider.clone(),
+            };
             let model = match mode {
                 Mode::Light => clippy_settings.clippy_light_model.clone(),
                 Mode::Advanced => clippy_settings.clippy_advanced_model.clone(),
                 Mode::Drafting => clippy_settings.clippy_drafting_model.clone(),
             };
-            let llm = GroqLlm::new(llm_key, model);
+
+            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), &llm).await;
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), llm.as_ref()).await;
             self.history.set_cleaned(
                 &record_id,
                 &cleaned.text,
@@ -328,17 +357,19 @@ impl Flow {
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");
             self.history.update_status(record_id, Status::Cleaning)?;
-            let llm_key = secrets::get(SecretKey::GroqLlm)?
-                .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no Groq LLM key — open Settings to add one"))?;
+            let provider_id = match mode {
+                Mode::Light => stt_settings.light_provider.clone(),
+                Mode::Advanced => stt_settings.advanced_provider.clone(),
+                Mode::Drafting => stt_settings.drafting_provider.clone(),
+            };
             let model = match mode {
                 Mode::Light => stt_settings.clippy_light_model.clone(),
                 Mode::Advanced => stt_settings.clippy_advanced_model.clone(),
                 Mode::Drafting => stt_settings.clippy_drafting_model.clone(),
             };
-            let llm = GroqLlm::new(llm_key, model);
+            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), &llm).await;
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), llm.as_ref()).await;
             self.history.set_cleaned(
                 record_id,
                 &cleaned.text,

@@ -35,6 +35,9 @@ export interface AppSettings {
   clippy_drafting_model: string;
   stt_model: string;
   language_hint: string | null;
+  light_provider: string;
+  advanced_provider: string;
+  drafting_provider: string;
   retention_days: number;
   retention_max_mb: number;
   autostart: boolean;
@@ -64,6 +67,7 @@ export interface Recording {
 export interface SecretCheck {
   stt: boolean;
   llm: boolean;
+  gemini?: boolean;
 }
 
 export interface InputDeviceInfo {
@@ -77,7 +81,7 @@ export interface AppPaths {
   sounds_dir: string;
 }
 
-export type SecretKeyName = "groq_stt" | "groq_llm";
+export type SecretKeyName = "groq_stt" | "groq_llm" | "gemini_llm";
 
 export interface DailyUsage {
   date: string;
@@ -114,6 +118,7 @@ export const api = {
   addNotificationSound: (srcPath: string) =>
     invoke<string>("add_notification_sound", { srcPath }),
   testGroqKey: (key: string) => invoke<string[]>("test_groq_key", { key }),
+  testGeminiKey: (key: string) => invoke<string[]>("test_gemini_key", { key }),
   configureCues: (start: string, stop: string, enabled: boolean) =>
     invoke<void>("configure_cues", { start, stop, enabled }),
 };

@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+pub mod gemini;
 pub mod groq;
 pub mod prompts;
 
