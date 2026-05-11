@@ -62,9 +62,28 @@ pub fn paste(text: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn paste(text: &str) -> Result<()> {
+    let saved = save_prior();
+
+    {
+        let mut cb = Clipboard::new().context("opening clipboard")?;
+        cb.set_text(text).context("writing text to clipboard")?;
+    }
+
+    super::macos::send_cmd_v().context("sending Cmd+V")?;
+
+    thread::spawn(move || {
+        thread::sleep(RESTORE_DELAY);
+        let _ = restore_prior(saved);
+    });
+
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn paste(_text: &str) -> Result<()> {
-    anyhow::bail!("clipboard paste is Windows-only in this build")
+    anyhow::bail!("clipboard paste is Windows/macOS-only in this build")
 }
 
 fn save_prior() -> Saved {

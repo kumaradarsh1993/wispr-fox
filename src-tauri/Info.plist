@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Custom Info.plist keys merged into the bundle by tauri-bundler.
+    Standard keys (CFBundleIdentifier, CFBundleVersion, icon, etc.) are
+    generated automatically from tauri.conf.json — do NOT duplicate them
+    here, or the bundler will reject the build.
+  -->
+
+  <!-- User-facing reason shown by macOS when wispr-fox first requests
+       microphone access. The dictation flow doesn't work without it. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>wispr-fox needs the microphone to capture your dictation. Audio is sent only to the transcription provider whose API key you configure.</string>
+
+  <!-- Required for posting CGEvents that reach other apps (the text
+       injection path). macOS doesn't show this string in the
+       Accessibility prompt by name, but we keep it for documentation
+       and in case Apple starts honoring it. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>wispr-fox pastes your dictated text into the focused text field of another app.</string>
+
+  <!-- High-resolution capable — lets the app render at Retina density. -->
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
