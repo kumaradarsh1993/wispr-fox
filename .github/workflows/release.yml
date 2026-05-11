@@ -87,14 +87,41 @@ jobs:
           releaseBody: |
             Built from commit ${{ github.sha }}.
 
-            **Installers:**
-            - Windows: `wispr-fox_*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi`
-            - macOS (Apple Silicon): `wispr-fox_*_aarch64.dmg`
-            - macOS (Intel): `wispr-fox_*_x64.dmg`
-            - Linux: `*.AppImage` or `*.deb`
+            **Pick your installer:**
+            - **Windows:** `wispr-fox_*_x64-setup.exe` (recommended) or `*_x64_en-US.msi`
+            - **macOS Apple Silicon (M1/M2/M3/M4):** `wispr-fox_*_aarch64.dmg`
+            - **macOS Intel:** `wispr-fox_*_x64.dmg`
+            - **Linux:** `*.AppImage` (portable) or `*.deb` (Ubuntu/Debian)
 
-            ⚠ First-launch on Windows / macOS may need clicking past the
-            unsigned-app warning. Code signing certs aren't bundled.
+            ## First-time install — please read
+
+            **Windows.** Run the `.exe`, click through SmartScreen
+            ("More info" → "Run anyway") on first launch since the
+            binary isn't code-signed yet.
+
+            **macOS.** The build isn't notarized, so macOS treats it
+            as untrusted on first launch. One of two things will
+            happen:
+
+            - *"developer cannot be verified" dialog:* Cancel →
+              right-click the app in Applications → Open → click Open
+              in the new dialog.
+            - *"App is damaged" dialog:* open Terminal and run
+              `xattr -dr com.apple.quarantine /Applications/wispr-fox.app`
+              then double-click normally.
+
+            Then grant two permissions when prompted:
+            1. **Microphone** (first time you press F8) — required
+            2. **Accessibility** (first time it tries to paste) —
+               required for fast text injection; if you skip it, the
+               app falls back to clipboard+Cmd+V which still works
+               but is slower
+
+            Full install walkthrough in the
+            [README](https://github.com/${{ github.repository }}#macos-first-time-install-walkthrough).
+
+            **Linux.** AppImage is portable — `chmod +x` and run.
+            Untested by maintainer; report issues.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

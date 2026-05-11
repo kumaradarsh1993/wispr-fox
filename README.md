@@ -57,14 +57,71 @@ your terminal, anywhere.
 2. Run it. Click through the installer.
 3. First launch will walk you through onboarding (~2 minutes).
 
-### macOS
+### macOS (first-time install walkthrough)
 
-1. Download `wispr-fox_x.y.z_aarch64.dmg` (Apple Silicon) or
-   `wispr-fox_x.y.z_x64.dmg` (Intel) from [Releases](../../releases/latest).
-2. Drag to `/Applications`.
-3. First launch: right-click → Open (to bypass Gatekeeper since the
-   app isn't notarized yet).
-4. Grant **Accessibility** and **Microphone** permission when prompted.
+The Mac build isn't code-signed yet (Apple Developer cert costs $99/yr
+and we're not there). So macOS treats it as untrusted on first launch.
+The dance below gets past it once; subsequent launches work normally.
+
+**1. Download the right DMG** from
+[Releases](../../releases/latest):
+- Apple Silicon (M1/M2/M3/M4): `wispr-fox_0.1.0_aarch64.dmg`
+- Intel Mac: `wispr-fox_0.1.0_x64.dmg`
+- Not sure? Apple menu → About This Mac → "Chip" line says "Apple M…"
+  for Apple Silicon, "Intel" for Intel.
+
+**2. Drag to Applications.** Open the DMG, drag the `wispr-fox` icon
+to the Applications folder shortcut shown.
+
+**3. First launch — pick the one that matches what you see:**
+
+*If you see a dialog "wispr-fox cannot be opened because the
+developer cannot be verified"* — the friendly case:
+- Click **Cancel** (counterintuitive but necessary).
+- Open Finder → Applications → **right-click** (or Control-click)
+  on `wispr-fox` → **Open**.
+- Now a different dialog appears with an **Open** button. Click it.
+- App launches.
+
+*If you see "wispr-fox is damaged and can't be opened. You should
+move it to the Trash."* — newer macOS sets a quarantine attribute on
+downloaded unsigned binaries. Strip it:
+- Open Terminal (Spotlight → "Terminal" → Enter).
+- Run: `xattr -dr com.apple.quarantine /Applications/wispr-fox.app`
+- Now double-click the app normally.
+
+**4. Grant the two permissions** macOS will prompt for:
+
+*First prompt — Microphone* (appears the first time you press F8):
+- Click **OK** / **Allow**. Without this, dictation can't record.
+- If you accidentally click Deny: System Settings → Privacy &
+  Security → Microphone → toggle wispr-fox ON.
+
+*Second prompt — Accessibility* (appears the first time the app
+tries to paste text into another app):
+- Click **Open System Settings**.
+- In the Accessibility list, toggle wispr-fox ON.
+- You'll be asked for your Mac password to confirm.
+- Switch back to wispr-fox and try F8 again.
+- Without this, dictation still works but pastes via a clipboard
+  fallback (slightly slower, briefly overwrites your clipboard).
+
+**5. (Optional) Pin to Dock.** Right-click the app's Dock icon while
+running → Options → Keep in Dock.
+
+**Common gotchas:**
+
+- *F8 does nothing on Mac.* Some Macs map F-keys to brightness/volume
+  by default. Hold **Fn + F8**, or in System Settings → Keyboard →
+  Keyboard Shortcuts → Function Keys → toggle "Use F1, F2, etc. as
+  standard function keys". Alternatively change the hotkey in
+  wispr-fox Settings → Hotkeys.
+- *Mic indicator (orange dot in menu bar) stays on after I stop
+  recording.* It doesn't — macOS shows it for ~5 seconds after the
+  mic releases. Normal.
+- *App won't launch after macOS update.* Sometimes a major macOS
+  update re-quarantines unsigned apps. Re-run the `xattr` command
+  from step 3.
 
 ### Linux
 
