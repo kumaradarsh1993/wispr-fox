@@ -30,11 +30,15 @@ export interface AppSettings {
   auto_clean_in_light: boolean;
   auto_clean_in_advanced: boolean;
   auto_clean_in_drafting: boolean;
+  stt_provider: string;
+  stt_model: string;
+  llm_provider: string;
+  llm_model: string;
+  language_hint: string | null;
+  // Legacy per-mode fields — kept for backwards compat, not used by UI.
   clippy_light_model: string;
   clippy_advanced_model: string;
   clippy_drafting_model: string;
-  stt_model: string;
-  language_hint: string | null;
   light_provider: string;
   advanced_provider: string;
   drafting_provider: string;
@@ -119,6 +123,8 @@ export const api = {
     invoke<string>("add_notification_sound", { srcPath }),
   testGroqKey: (key: string) => invoke<string[]>("test_groq_key", { key }),
   testGeminiKey: (key: string) => invoke<string[]>("test_gemini_key", { key }),
+  testSavedGroqKey: () => invoke<string[]>("test_saved_groq_key"),
+  testSavedGeminiKey: () => invoke<string[]>("test_saved_gemini_key"),
   configureCues: (start: string, stop: string, enabled: boolean) =>
     invoke<void>("configure_cues", { start, stop, enabled }),
 };

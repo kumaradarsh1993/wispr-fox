@@ -39,17 +39,30 @@ pub struct AppSettings {
     pub auto_clean_in_advanced: bool,
     pub auto_clean_in_drafting: bool,
 
-    // ── Models (per mode) ──────────────────────────────────────────────────
-    pub clippy_light_model: String,
-    pub clippy_advanced_model: String,
-    pub clippy_drafting_model: String,
+    // ── Models ────────────────────────────────────────────────────────────
+    // Simplified May 2026: ONE STT choice + ONE LLM choice. All three modes
+    // (F8 / F9 / F10) use the same LLM client; only the system prompt
+    // differs per mode. Old per-mode fields kept for backwards compat but
+    // ignored by the flow layer.
+    pub stt_provider: String,
     pub stt_model: String,
+    pub llm_provider: String,
+    pub llm_model: String,
     pub language_hint: Option<String>,
 
-    /// Which LLM provider to use for each mode. "groq" | "gemini".
-    /// Defaults all to "groq" since that's been the only option until now.
+    // Legacy per-mode fields. Kept so old settings.json files still
+    // deserialize cleanly. New code uses llm_provider / llm_model.
+    #[serde(default)]
+    pub clippy_light_model: String,
+    #[serde(default)]
+    pub clippy_advanced_model: String,
+    #[serde(default)]
+    pub clippy_drafting_model: String,
+    #[serde(default)]
     pub light_provider: String,
+    #[serde(default)]
     pub advanced_provider: String,
+    #[serde(default)]
     pub drafting_provider: String,
 
     // ── Retention ──────────────────────────────────────────────────────────
@@ -90,21 +103,29 @@ impl Default for AppSettings {
             auto_clean_in_light: false,
             auto_clean_in_advanced: true,
             auto_clean_in_drafting: true,
-            clippy_light_model: crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
+            // Simplified globals.
+            stt_provider: "groq".to_string(),
+            stt_model: "whisper-large-v3-turbo".to_string(),
+            llm_provider: "groq".to_string(),
+            llm_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
+            language_hint: None,
+            // Legacy per-mode fields — mirror the globals so any code that
+            // still reads them gets a sane value.
+            clippy_light_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             clippy_advanced_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             clippy_drafting_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             light_provider: "groq".to_string(),
             advanced_provider: "groq".to_string(),
             drafting_provider: "groq".to_string(),
-            stt_model: "whisper-large-v3-turbo".to_string(),
-            language_hint: None,
             retention_days: 7,
             retention_max_mb: 500,
             autostart: false,
             start_sound: String::new(),
             stop_sound: String::new(),
             cues_enabled: true,
-            theme: "auto".to_string(),
+            // Light by default — user feedback May 2026: many surfaces still
+            // need dark-mode polish, so don't auto-flip on system dark.
+            theme: "light".to_string(),
         }
     }
 }

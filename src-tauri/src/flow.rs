@@ -268,16 +268,12 @@ impl Flow {
             let _ = app.emit("wispr:state", "cleaning");
             self.history.update_status(&record_id, Status::Cleaning)?;
 
-            let provider_id = match mode {
-                Mode::Light => clippy_settings.light_provider.clone(),
-                Mode::Advanced => clippy_settings.advanced_provider.clone(),
-                Mode::Drafting => clippy_settings.drafting_provider.clone(),
-            };
-            let model = match mode {
-                Mode::Light => clippy_settings.clippy_light_model.clone(),
-                Mode::Advanced => clippy_settings.clippy_advanced_model.clone(),
-                Mode::Drafting => clippy_settings.clippy_drafting_model.clone(),
-            };
+            // Simplified: ONE LLM provider + model for all three modes.
+            // The mode only changes which system prompt is sent (Light /
+            // Advanced / Drafting) — not which model is called.
+            let provider_id = clippy_settings.llm_provider.clone();
+            let model = clippy_settings.llm_model.clone();
+            let _ = mode; // mode is used downstream in clippy::clean for prompt selection
 
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
@@ -357,16 +353,9 @@ impl Flow {
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");
             self.history.update_status(record_id, Status::Cleaning)?;
-            let provider_id = match mode {
-                Mode::Light => stt_settings.light_provider.clone(),
-                Mode::Advanced => stt_settings.advanced_provider.clone(),
-                Mode::Drafting => stt_settings.drafting_provider.clone(),
-            };
-            let model = match mode {
-                Mode::Light => stt_settings.clippy_light_model.clone(),
-                Mode::Advanced => stt_settings.clippy_advanced_model.clone(),
-                Mode::Drafting => stt_settings.clippy_drafting_model.clone(),
-            };
+            // Retry path: same single global provider + model.
+            let provider_id = stt_settings.llm_provider.clone();
+            let model = stt_settings.llm_model.clone();
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
             let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), llm.as_ref()).await;

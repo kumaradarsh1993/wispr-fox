@@ -215,21 +215,20 @@
   let testResult = $state<TestResult>({ kind: "idle" });
 
   async function testGroqStt() {
-    const k = groqStt.trim();
-    if (!k && !secretCheck.stt) {
-      testResult = { kind: "error", msg: "Paste a key first or save one to test the saved value." };
-      return;
-    }
+    // Prefer the value in the input box (fresh paste). If empty AND a key
+    // is saved, test the saved one — Rust reads it from keyring on its side.
+    const k = groqStt.trim() || groqLlm.trim();
     testResult = { kind: "testing" };
     try {
-      // If user pasted a new key, test that; otherwise we can't read the saved
-      // one from JS — recommend pasting + saving first.
-      const keyToTest = k || groqLlm.trim();
-      if (!keyToTest) {
-        testResult = { kind: "error", msg: "Paste your key (or the saved one) into the field above and click Test." };
+      const models = k
+        ? await api.testGroqKey(k)
+        : secretCheck.stt || secretCheck.llm
+        ? await api.testSavedGroqKey()
+        : null;
+      if (models === null) {
+        testResult = { kind: "error", msg: "No saved key — paste one above and click Save first." };
         return;
       }
-      const models = await api.testGroqKey(keyToTest);
       testResult = { kind: "ok", models };
     } catch (e) {
       testResult = { kind: "error", msg: String(e) };
@@ -360,22 +359,21 @@
     return p === "gemini" ? GEMINI_LLM_MODELS : GROQ_LLM_MODELS;
   }
 
-  // When user changes provider, also default the model to a sane choice for that provider.
-  async function changeProvider(mode: "light" | "advanced" | "drafting", provider: string) {
-    const field = `${mode}_provider` as keyof typeof settings.s;
-    await settings.set(field, provider as any);
-    const modelField = mode === "light"
-      ? "clippy_light_model"
-      : mode === "advanced"
-      ? "clippy_advanced_model"
-      : "clippy_drafting_model";
-    const currentModel = settings.s[modelField] as string;
+  // Simplified May 2026: one LLM provider/model pair for all three modes.
+  // Mode (F8 / F9 / F10) only chooses which system prompt to send — the
+  // model itself stays the same.
+  async function changeLlmProvider(provider: string) {
+    await settings.set("llm_provider", provider as any);
     const options = modelsForProvider(provider);
-    if (!options.find((m) => m.id === currentModel)) {
-      // Current model doesn't exist for this provider — default to first option.
-      await settings.set(modelField, options[0].id as any);
+    if (!options.find((m) => m.id === settings.s.llm_model)) {
+      await settings.set("llm_model", options[0].id as any);
     }
   }
+
+  // Saved-key persistence: when the user toggles to a provider whose key
+  // isn't saved yet, the dropdown option is disabled. Switching back later
+  // to a provider whose key IS saved is always allowed — keys aren't
+  // touched by provider switches, only by Delete buttons.
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   onMount(async () => {
@@ -435,13 +433,17 @@
   let geminiTestResult = $state<TestResult>({ kind: "idle" });
   async function testGemini() {
     const k = geminiKey.trim();
-    if (!k) {
-      geminiTestResult = { kind: "error", msg: "Paste your Gemini key first." };
-      return;
-    }
     geminiTestResult = { kind: "testing" };
     try {
-      const models = await api.testGeminiKey(k);
+      const models = k
+        ? await api.testGeminiKey(k)
+        : secretCheck.gemini
+        ? await api.testSavedGeminiKey()
+        : null;
+      if (models === null) {
+        geminiTestResult = { kind: "error", msg: "No saved Gemini key — paste one above and click Save first." };
+        return;
+      }
       geminiTestResult = { kind: "ok", models };
     } catch (e) {
       geminiTestResult = { kind: "error", msg: String(e) };
@@ -627,78 +629,53 @@
         <h2>Models</h2>
         <p class="lede">Pick the model for each mode. Faster models hit fewer rate limits; smarter models give better output.</p>
 
-        <div class="field-block">
-          <label>Speech-to-text</label>
-          <select
-            value={settings.s.stt_model}
-            onchange={(e) => settings.set("stt_model", (e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each STT_MODELS as m (m.id)}
-              <option value={m.id}>{m.label} — {m.quality}</option>
-            {/each}
-          </select>
-        </div>
-
-        <h3 style="margin-top: 22px;">Light mode (F8)</h3>
-        <p class="lede">Cleanup or no-op. Cheap calls if used.</p>
+        <h3>Speech-to-text</h3>
+        <p class="lede">Which service transcribes your audio. Currently Groq Whisper only — Gemini multimodal STT is on the roadmap.</p>
         <div class="provider-model-row">
           <div class="field-block field-half">
-            <label>Provider</label>
-            <select value={settings.s.light_provider}
-                    onchange={(e) => changeProvider("light", (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="groq">Groq</option>
-              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
+            <label>Service</label>
+            <select value={settings.s.stt_provider} onchange={(e) => settings.set("stt_provider", (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="groq">Groq Whisper</option>
             </select>
           </div>
           <div class="field-block field-half">
             <label>Model</label>
-            <select value={settings.s.clippy_light_model}
-                    onchange={(e) => settings.set("clippy_light_model", (e.currentTarget as HTMLSelectElement).value)}>
-              {#each modelsForProvider(settings.s.light_provider) as m (m.id)}
+            <select
+              value={settings.s.stt_model}
+              onchange={(e) => settings.set("stt_model", (e.currentTarget as HTMLSelectElement).value)}
+            >
+              {#each STT_MODELS as m (m.id)}
                 <option value={m.id}>{m.label} — {m.quality}</option>
               {/each}
             </select>
           </div>
         </div>
 
-        <h3 style="margin-top: 22px;">Advanced mode (F9)</h3>
-        <p class="lede">Instruction-aware transformation. Worth a smarter model.</p>
+        <h3 style="margin-top: 28px;">LLM cleanup</h3>
+        <p class="lede">
+          Used by F9 / F10 (and F8 if you've enabled cleanup for it). One choice — the same model handles all three modes,
+          only the prompt changes per mode. Your saved API keys stick around when you switch providers, so you can flip
+          back and forth without re-entering them.
+        </p>
         <div class="provider-model-row">
           <div class="field-block field-half">
-            <label>Provider</label>
-            <select value={settings.s.advanced_provider}
-                    onchange={(e) => changeProvider("advanced", (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="groq">Groq</option>
-              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
+            <label>Service</label>
+            <select value={settings.s.llm_provider} onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}>
+              <option value="groq" disabled={!secretCheck.llm && !secretCheck.stt}>
+                Groq {(!secretCheck.llm && !secretCheck.stt) ? "(add key first)" : ""}
+              </option>
+              <option value="gemini" disabled={!secretCheck.gemini}>
+                Google Gemini {secretCheck.gemini ? "" : "(add key first)"}
+              </option>
             </select>
           </div>
           <div class="field-block field-half">
             <label>Model</label>
-            <select value={settings.s.clippy_advanced_model}
-                    onchange={(e) => settings.set("clippy_advanced_model", (e.currentTarget as HTMLSelectElement).value)}>
-              {#each modelsForProvider(settings.s.advanced_provider) as m (m.id)}
-                <option value={m.id}>{m.label} — {m.quality}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <h3 style="margin-top: 22px;">Drafting mode (F10)</h3>
-        <p class="lede">Full draft generation from your brief — use your smartest model here.</p>
-        <div class="provider-model-row">
-          <div class="field-block field-half">
-            <label>Provider</label>
-            <select value={settings.s.drafting_provider}
-                    onchange={(e) => changeProvider("drafting", (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="groq">Groq</option>
-              <option value="gemini" disabled={!secretCheck.gemini}>Gemini {secretCheck.gemini ? "" : "(add key first)"}</option>
-            </select>
-          </div>
-          <div class="field-block field-half">
-            <label>Model</label>
-            <select value={settings.s.clippy_drafting_model}
-                    onchange={(e) => settings.set("clippy_drafting_model", (e.currentTarget as HTMLSelectElement).value)}>
-              {#each modelsForProvider(settings.s.drafting_provider) as m (m.id)}
+            <select
+              value={settings.s.llm_model}
+              onchange={(e) => settings.set("llm_model", (e.currentTarget as HTMLSelectElement).value)}
+            >
+              {#each modelsForProvider(settings.s.llm_provider) as m (m.id)}
                 <option value={m.id}>{m.label} — {m.quality}</option>
               {/each}
             </select>

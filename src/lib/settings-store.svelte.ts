@@ -17,6 +17,9 @@ const FALLBACK: AppSettings = {
   auto_clean_in_light: false,
   auto_clean_in_advanced: true,
   auto_clean_in_drafting: true,
+  stt_provider: "groq",
+  llm_provider: "groq",
+  llm_model: "llama-3.3-70b-versatile",
   clippy_light_model: "llama-3.3-70b-versatile",
   clippy_advanced_model: "llama-3.3-70b-versatile",
   clippy_drafting_model: "llama-3.3-70b-versatile",
@@ -31,7 +34,7 @@ const FALLBACK: AppSettings = {
   start_sound: "",
   stop_sound: "",
   cues_enabled: true,
-  theme: "auto",
+  theme: "light",
 };
 
 class SettingsStore {

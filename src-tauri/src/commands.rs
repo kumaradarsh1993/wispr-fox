@@ -252,6 +252,26 @@ pub fn configure_cues(start: String, stop: String, enabled: bool) {
     crate::audio::cues::configure(&start, &stop, enabled);
 }
 
+/// Test the currently-saved Groq key (no need to paste it again).
+/// Reads the key from secret storage, runs the same test as test_groq_key.
+#[tauri::command]
+pub async fn test_saved_groq_key() -> Result<Vec<String>, String> {
+    let key = secrets::get(SecretKey::GroqLlm)
+        .map_err(|e| e.to_string())?
+        .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
+        .ok_or_else(|| "No Groq key saved yet — paste one above first.".to_string())?;
+    test_groq_key(key).await
+}
+
+/// Test the currently-saved Gemini key.
+#[tauri::command]
+pub async fn test_saved_gemini_key() -> Result<Vec<String>, String> {
+    let key = secrets::get(SecretKey::GeminiLlm)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No Gemini key saved yet — paste one above first.".to_string())?;
+    test_gemini_key(key).await
+}
+
 /// Test a Google Gemini API key by listing available models.
 #[tauri::command]
 pub async fn test_gemini_key(key: String) -> Result<Vec<String>, String> {

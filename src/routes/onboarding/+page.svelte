@@ -35,6 +35,19 @@
     }
   });
 
+  // Force light theme during onboarding — first-run shouldn't be the moment
+  // the user hits any dark-mode rough edges. Restore the saved theme on
+  // navigate-away.
+  let priorTheme = $state<string | null>(null);
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    priorTheme = document.body.getAttribute("data-theme");
+    document.body.setAttribute("data-theme", "light");
+    return () => {
+      if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
+    };
+  });
+
   function next(s: Step) {
     step = s;
   }
@@ -64,13 +77,9 @@
         }
         const models = await api.testGeminiKey(k);
         await api.saveSecret("gemini_llm", k);
-        // Default Gemini as the LLM provider for all modes when chosen here.
-        await settings.set("light_provider", "gemini");
-        await settings.set("advanced_provider", "gemini");
-        await settings.set("drafting_provider", "gemini");
-        await settings.set("clippy_light_model", "gemini-2.5-flash");
-        await settings.set("clippy_advanced_model", "gemini-2.5-flash");
-        await settings.set("clippy_drafting_model", "gemini-2.5-flash");
+        // Default Gemini as the LLM provider for all cleanup.
+        await settings.set("llm_provider", "gemini");
+        await settings.set("llm_model", "gemini-2.5-flash");
         testState = { kind: "ok", count: models.length };
       }
       setTimeout(() => next("hotkeys"), 600);

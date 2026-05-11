@@ -164,6 +164,8 @@ pub fn run() {
             commands::add_notification_sound,
             commands::test_groq_key,
             commands::test_gemini_key,
+            commands::test_saved_groq_key,
+            commands::test_saved_gemini_key,
             commands::configure_cues,
         ])
         .run(tauri::generate_context!());
