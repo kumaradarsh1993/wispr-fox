@@ -24,7 +24,20 @@
 
   let hasBothVariants = $derived(!!rec.cleaned_text && !!rec.transcript && rec.cleaned_text !== rec.transcript);
   let isError = $derived(rec.status === "error");
-  let canRetry = $derived(isError && rec.audio_path);
+  // Retry is now offered for every recording — failed ones (recover from
+  // a transient API outage / network blip) and successful ones (the user
+  // didn't like the transcript and wants a fresh STT pass). Disabled only
+  // while a retry is in flight or while the recording is mid-flow.
+  let retryDisabled = $derived(
+    busy || rec.status === "recording" || rec.status === "transcribing" || rec.status === "cleaning",
+  );
+
+  // Inspector — (i) button. Shows: full error, retry count, providers
+  // used, Clippy note, audio path. Surfaced for every recording so the
+  // user can see what happened on success too. Red dot when there's an
+  // error worth noticing.
+  let showInspector = $state(false);
+  let inspectorHasNews = $derived(isError || !!rec.error);
 
   function timeShort(iso: string): string {
     try {
@@ -113,6 +126,15 @@
   }
 
   async function retry() {
+    // On non-failed rows, confirm before nuking the existing transcript.
+    // Done rows are the easy mis-click target — "I'll just check this
+    // recording" → accidentally re-burn an STT call.
+    if (!isError) {
+      const ok = confirm(
+        "Re-run transcription on this recording? The current transcript and cleaned text will be replaced.",
+      );
+      if (!ok) return;
+    }
     busy = true;
     try {
       await api.retryRecording(rec.id);
@@ -121,6 +143,22 @@
       alert(`Retry failed: ${e}`);
     } finally {
       busy = false;
+    }
+  }
+
+  function fmtFullTime(iso: string): string {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    } catch {
+      return iso;
     }
   }
 </script>
@@ -141,8 +179,23 @@
         <span class="retry-count" title="Number of retry attempts">↻ {rec.retry_count}</span>
       {/if}
       {#if isError}
-        <span class="err-pill">Failed — click ↻ to retry</span>
+        <span class="err-pill">Failed — see details</span>
       {/if}
+
+      <!-- (i) details button. Always present; pulses a red dot when
+           there's an error to surface so the user notices without
+           clicking. Clicking expands an inline details panel below
+           the body. -->
+      <button
+        class="info-btn"
+        class:has-news={inspectorHasNews}
+        onclick={() => (showInspector = !showInspector)}
+        aria-label="Show recording details and event log"
+        aria-expanded={showInspector}
+        title={inspectorHasNews ? "Details (error logged)" : "Details"}
+      >
+        i
+      </button>
     </div>
 
     <div class="actions">
@@ -154,14 +207,9 @@
         {/if}
       </button>
 
-      {#if isError}
-        <button class="action-btn retry" onclick={retry} disabled={busy} title="Retry transcription">
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-            <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </button>
-      {:else}
+      <!-- Copy: only meaningful when there's actual text. Hidden on
+           rows that errored before producing a transcript. -->
+      {#if !isError || rec.transcript || rec.cleaned_text}
         <button class="action-btn" onclick={copyText} disabled={busy} title="Copy text">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             <rect x="4" y="3" width="8" height="10" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -170,9 +218,19 @@
         </button>
       {/if}
 
-      <button class="action-btn delete" onclick={remove} disabled={busy} title="Delete (audio + text)">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path d="M 3 4 L 13 4 M 5 4 L 5 13 A 1 1 0 0 0 6 14 L 10 14 A 1 1 0 0 0 11 13 L 11 4 M 6 4 L 6 2.5 A 0.5 0.5 0 0 1 6.5 2 L 9.5 2 A 0.5 0.5 0 0 1 10 2.5 L 10 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- Retry: always visible. Highlighted for errored rows since
+           it's the obvious recovery action; a normal subtle button on
+           successful rows since most users won't click it. -->
+      <button
+        class="action-btn retry"
+        class:emphasized={isError}
+        onclick={retry}
+        disabled={retryDisabled}
+        title={isError ? "Retry transcription" : "Re-run transcription on this audio"}
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+          <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
       </button>
     </div>
@@ -188,7 +246,64 @@
     {#if expanded && rec.clippy_note}
       <p class="note">Clippy note: {rec.clippy_note}</p>
     {/if}
+    {#if expanded}
+      <!-- Delete used to live in the action button row. Moved here so it
+           takes a deliberate click instead of being a thumb-reachable
+           danger button alongside Play/Copy/Retry. Still confirms. -->
+      <div class="expanded-actions">
+        <button class="delete-link" onclick={remove} disabled={busy}>Delete recording</button>
+      </div>
+    {/if}
   </div>
+
+  {#if showInspector}
+    <!-- Inline details panel. Sits below the body so it doesn't cover
+         anything; collapses cleanly without layout shift elsewhere. -->
+    <div class="inspector" role="region" aria-label="Recording details">
+      <div class="insp-grid">
+        <div class="insp-k">Status</div>
+        <div class="insp-v">
+          <span class="insp-badge insp-badge-{rec.status}">{rec.status}</span>
+        </div>
+
+        {#if rec.error}
+          <div class="insp-k">Last error</div>
+          <div class="insp-v">
+            <pre class="insp-err">{rec.error}</pre>
+          </div>
+        {/if}
+
+        <div class="insp-k">Retries</div>
+        <div class="insp-v">{rec.retry_count}</div>
+
+        <div class="insp-k">Mode</div>
+        <div class="insp-v">{rec.mode}</div>
+
+        <div class="insp-k">Duration</div>
+        <div class="insp-v">{durationShort(rec.duration_ms)}</div>
+
+        <div class="insp-k">STT provider</div>
+        <div class="insp-v insp-mono">{rec.stt_provider ?? "—"}</div>
+
+        <div class="insp-k">LLM provider</div>
+        <div class="insp-v insp-mono">{rec.llm_provider ?? "—"}</div>
+
+        {#if rec.clippy_note}
+          <div class="insp-k">Clippy note</div>
+          <div class="insp-v">{rec.clippy_note}</div>
+        {/if}
+
+        <div class="insp-k">Created</div>
+        <div class="insp-v">{fmtFullTime(rec.created_at)}</div>
+
+        <div class="insp-k">Audio</div>
+        <div class="insp-v insp-mono insp-small">{rec.audio_path}</div>
+
+        <div class="insp-k">ID</div>
+        <div class="insp-v insp-mono insp-small">{rec.id}</div>
+      </div>
+    </div>
+  {/if}
 
   {#if hasBothVariants}
     <!-- Compact inline variant toggle — minimal chevrons + tiny label.
@@ -378,14 +493,161 @@
     color: var(--danger);
   }
 
-  .action-btn.retry {
+  /* Retry is now always-visible. Default look matches the other action
+     buttons (subtle, monochrome). `emphasized` is added when the row
+     errored, making Retry the obvious recovery action. */
+  .action-btn.retry:hover:not(:disabled) {
+    color: var(--warning, var(--accent));
+    border-color: var(--warning, var(--accent));
+  }
+
+  .action-btn.retry.emphasized {
     background: var(--warning-fade);
     border-color: var(--warning);
     color: var(--warning);
   }
-  .action-btn.retry:hover:not(:disabled) {
+  .action-btn.retry.emphasized:hover:not(:disabled) {
     background: var(--warning);
     color: #fff;
+  }
+
+  /* Round (i) details button. Italic serif "i" — the classic affordance.
+     Pulses a red dot in the top-right when there's an error to surface. */
+  .info-btn {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-size: 12px;
+    line-height: 16px;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .info-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+  }
+  .info-btn.has-news::after {
+    content: "";
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 6px;
+    height: 6px;
+    background: var(--danger);
+    border-radius: 50%;
+    border: 1px solid var(--bg-elev);
+  }
+
+  /* Delete moved out of the icon button row into a subtle text link
+     that only appears when the row is expanded. Less mis-click surface. */
+  .expanded-actions {
+    margin-top: 10px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .delete-link {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+  .delete-link:hover:not(:disabled) {
+    color: var(--danger);
+    text-decoration-color: var(--danger);
+  }
+  .delete-link:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* Inspector panel — inline expansion below the row body. Two-column
+     key/value grid; the error text gets its own monospace block. */
+  .inspector {
+    margin: 10px 0 0 36px;
+    padding: 12px 14px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+  }
+  .insp-grid {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 6px 12px;
+    font-size: 12px;
+    align-items: baseline;
+  }
+  .insp-k {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .insp-v {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  .insp-v.insp-mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .insp-v.insp-small {
+    font-size: 11px;
+  }
+  .insp-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    border: 1px solid var(--border);
+  }
+  .insp-badge-done {
+    background: var(--accent-fade);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .insp-badge-error {
+    background: var(--danger-fade);
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .insp-badge-recording,
+  .insp-badge-transcribing,
+  .insp-badge-cleaning,
+  .insp-badge-injecting {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+  }
+  .insp-err {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--danger);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 200px;
+    overflow-y: auto;
   }
 
   .body {

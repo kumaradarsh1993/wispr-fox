@@ -150,10 +150,21 @@ impl History {
 
     pub fn update_status(&self, id: &str, status: Status) -> Result<()> {
         let conn = self.inner.lock();
-        conn.execute(
-            "UPDATE recordings SET status = ?1 WHERE id = ?2",
-            params![status.as_str(), id],
-        )?;
+        // When transitioning out of an error state (e.g. retry path),
+        // clear the stale error text. Otherwise a successful retry would
+        // leave the previous failure message in the row, and any UI that
+        // surfaces `error` (info popover, telemetry) would show stale data.
+        if !matches!(status, Status::Error) {
+            conn.execute(
+                "UPDATE recordings SET status = ?1, error = NULL WHERE id = ?2",
+                params![status.as_str(), id],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE recordings SET status = ?1 WHERE id = ?2",
+                params![status.as_str(), id],
+            )?;
+        }
         Ok(())
     }
 
