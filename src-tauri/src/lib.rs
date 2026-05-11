@@ -11,16 +11,18 @@ mod secrets;
 mod settings;
 mod stt;
 mod tray;
+mod usage;
 
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 use crate::audio::AudioController;
 use crate::flow::Flow;
 use crate::history::History;
 use crate::settings::AppSettings;
+use crate::usage::UsageTracker;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -68,24 +70,35 @@ pub fn run() {
             let history = History::open(&db_path)?;
             let settings = AppSettings::default();
             let audio_ctrl = AudioController::spawn();
+            let usage = UsageTracker::open().unwrap_or_else(|e| {
+                tracing::warn!("usage tracker init failed: {e:#} (continuing)");
+                UsageTracker::open().expect("retry usage tracker init")
+            });
             let flow = Flow::new(
                 history.clone(),
                 settings.clone(),
                 audio_dir.clone(),
                 audio_ctrl,
+                usage.clone(),
             );
 
             // Spawn retention sweeper.
             let settings_arc: Arc<Mutex<AppSettings>> = Arc::new(Mutex::new(settings.clone()));
             gc::spawn(history.clone(), settings_arc);
 
-            // Hotkeys: bridge events into flow.
+            // Hotkeys: 3 main + 3 sticky-invoke combos. The sticky-invoke
+            // variants (typically Win+main key) always trigger sticky toggle
+            // behaviour for that mode, independent of the per-mode setting.
             let app_for_hotkey = app.handle().clone();
             let flow_for_hotkey = flow.clone();
             if let Err(e) = hotkey::register(
                 app.handle(),
                 &settings.light_hotkey,
                 &settings.advanced_hotkey,
+                &settings.drafting_hotkey,
+                &settings.light_sticky_hotkey,
+                &settings.advanced_sticky_hotkey,
+                &settings.drafting_sticky_hotkey,
                 move |evt| {
                     flow_for_hotkey.handle_hotkey(&app_for_hotkey, evt);
                 },
@@ -100,6 +113,34 @@ pub fn run() {
 
             app.manage(history);
             app.manage(flow);
+            app.manage(usage);
+
+            // Intercept main-window close: hide instead of quit. The app keeps
+            // running as a tray-resident service. Real quit goes through the
+            // tray menu's "Quit" item which calls app.exit().
+            if let Some(main) = app.get_webview_window("main") {
+                let main_for_handler = main.clone();
+                main.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = main_for_handler.hide();
+                    }
+                });
+            }
+
+            // Same for the Clippy floating window — close = hide so it can be
+            // brought back via the tray menu without restarting the app.
+            if let Some(clippy) = app.get_webview_window("clippy") {
+                let clippy_for_handler = clippy.clone();
+                clippy.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = clippy_for_handler.hide();
+                    }
+                });
+                // Show by default; users can hide via the X button or tray menu.
+                let _ = clippy.show();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -111,8 +152,18 @@ pub fn run() {
             commands::set_settings,
             commands::list_history,
             commands::delete_recording,
+            commands::retry_recording,
+            commands::audio_url_for,
+            commands::audio_data_url_for,
             commands::list_input_devices,
             commands::app_paths,
+            commands::daily_usage,
+            commands::current_models,
+            commands::clear_all_history,
+            commands::list_notification_sounds,
+            commands::add_notification_sound,
+            commands::test_groq_key,
+            commands::configure_cues,
         ])
         .run(tauri::generate_context!());
 

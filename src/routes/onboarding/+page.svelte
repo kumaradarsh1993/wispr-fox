@@ -15,7 +15,7 @@
     await settings.init();
     // If a key already exists, skip onboarding.
     const s = await api.checkSecrets();
-    if (s.stt) goto("/");
+    if (s.stt) goto("/history");
   });
 
   async function saveKeys() {
@@ -138,7 +138,7 @@
         </ul>
       </div>
       <p class="text-xs text-gray-500">Try it: open Notepad, hold Light, say a sentence, release.</p>
-      <button class="px-4 py-2 rounded bg-blue-600 text-white" onclick={() => goto("/")}>
+      <button class="px-4 py-2 rounded bg-blue-600 text-white" onclick={() => goto("/history")}>
         Done
       </button>
       <a href="/settings" class="ml-2 text-sm text-gray-600 underline">Customize hotkeys first</a>

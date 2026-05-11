@@ -6,11 +6,14 @@ use serde::{Deserialize, Serialize};
 pub mod groq;
 pub mod prompts;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClippyMode {
     Light,
     Advanced,
+    /// "Drafting" — user gives a brief, LLM drafts a polished output (longer,
+    /// more transformative than Advanced).
+    Drafting,
 }
 
 #[derive(Debug, thiserror::Error)]

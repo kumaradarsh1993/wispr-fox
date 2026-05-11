@@ -14,18 +14,40 @@
       {
         "label": "main",
         "title": "wispr-fox",
-        "width": 600,
-        "height": 500,
-        "minWidth": 480,
-        "minHeight": 400,
+        "width": 960,
+        "height": 680,
+        "minWidth": 720,
+        "minHeight": 480,
         "decorations": true,
         "resizable": true,
         "visible": true,
         "center": true
+      },
+      {
+        "label": "clippy",
+        "title": "Clippy",
+        "url": "/clippy",
+        "width": 190,
+        "height": 185,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false,
+        "x": 100,
+        "y": 100
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/com.wispr-fox.app/audio/**"
+        ]
+      }
     }
   },
   "bundle": {

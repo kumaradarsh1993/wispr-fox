@@ -10,6 +10,7 @@ use crate::flow::Flow;
 use crate::history::{History, Recording};
 use crate::secrets::{self, SecretKey};
 use crate::settings::AppSettings;
+use crate::usage::{DailyUsage, UsageTracker};
 
 #[tauri::command]
 pub fn ping() -> &'static str {
@@ -76,6 +77,84 @@ pub fn delete_recording(history: State<'_, History>, id: String) -> Result<(), S
 }
 
 #[tauri::command]
+pub async fn retry_recording(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    id: String,
+) -> Result<(), String> {
+    flow.retry_recording(&app, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Returns a `tauri://localhost` URL the frontend can use as an `<audio src>`
+/// to play back a saved recording. Falls back to the file path if conversion
+/// fails (the frontend then needs `convertFileSrc` from Tauri's API).
+#[tauri::command]
+pub fn audio_url_for(history: State<'_, History>, id: String) -> Result<String, String> {
+    let rec = history
+        .get(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "recording not found".to_string())?;
+    Ok(rec.audio_path.to_string_lossy().into_owned())
+}
+
+/// Returns a `data:audio/wav;base64,...` URL for a recording's WAV file.
+/// Bypasses the Tauri asset protocol entirely (which has scope/glob issues
+/// on Windows for the AppData path). Slightly heavier than a streamed URL
+/// because base64 inflates by ~33%, but dictation clips are short.
+#[tauri::command]
+pub fn audio_data_url_for(
+    history: State<'_, History>,
+    id: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let rec = history
+        .get(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "recording not found".to_string())?;
+    let bytes = std::fs::read(&rec.audio_path)
+        .map_err(|e| format!("read {}: {e}", rec.audio_path.display()))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:audio/wav;base64,{b64}"))
+}
+
+#[tauri::command]
+pub fn daily_usage(usage: State<'_, UsageTracker>) -> DailyUsage {
+    usage.snapshot()
+}
+
+#[derive(Serialize)]
+pub struct CurrentModels {
+    pub stt: String,
+    pub llm_light: String,
+    pub llm_advanced: String,
+}
+
+#[tauri::command]
+pub fn current_models(flow: State<'_, Flow>) -> CurrentModels {
+    let s = flow.settings();
+    CurrentModels {
+        stt: s.stt_model,
+        llm_light: s.clippy_light_model,
+        llm_advanced: s.clippy_advanced_model,
+    }
+}
+
+#[tauri::command]
+pub fn clear_all_history(history: State<'_, History>) -> Result<u64, String> {
+    let recs = history.list_recent(10_000).map_err(|e| e.to_string())?;
+    let mut removed = 0u64;
+    for r in &recs {
+        let _ = std::fs::remove_file(&r.audio_path);
+        if history.delete(&r.id).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+#[tauri::command]
 pub fn list_input_devices() -> Result<Vec<audio::devices::InputDeviceInfo>, String> {
     audio::devices::list().map_err(|e| e.to_string())
 }
@@ -84,6 +163,7 @@ pub fn list_input_devices() -> Result<Vec<audio::devices::InputDeviceInfo>, Stri
 pub struct AppPaths {
     pub audio_dir: PathBuf,
     pub db_path: PathBuf,
+    pub sounds_dir: PathBuf,
 }
 
 #[tauri::command]
@@ -95,5 +175,111 @@ pub fn app_paths(app: AppHandle) -> Result<AppPaths, String> {
     Ok(AppPaths {
         audio_dir: dir.join("audio"),
         db_path: dir.join("history.sqlite"),
+        sounds_dir: dir.join("sounds"),
     })
+}
+
+/// Copy a user-picked file into the sounds folder so it shows up in the picker.
+/// Returns the final filename (preserving the source basename, deduplicated
+/// with a numeric suffix if needed).
+#[tauri::command]
+pub fn add_notification_sound(src_path: String) -> Result<String, String> {
+    let src = PathBuf::from(&src_path);
+    if !src.is_file() {
+        return Err(format!("not a file: {src_path}"));
+    }
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "wav" | "mp3" | "ogg") {
+        return Err("only .wav / .mp3 / .ogg files supported".to_string());
+    }
+    let base = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.wispr-fox.app")
+        .join("sounds");
+    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("sound");
+    let mut name = format!("{stem}.{ext}");
+    let mut counter = 1;
+    while base.join(&name).exists() {
+        name = format!("{stem}-{counter}.{ext}");
+        counter += 1;
+    }
+    let dest = base.join(&name);
+    std::fs::copy(&src, &dest).map_err(|e| format!("copy: {e}"))?;
+    Ok(name)
+}
+
+/// List filenames in the user's sounds folder, filtered to audio extensions
+/// (.wav / .mp3 / .ogg). Frontend uses this for the notification-sound picker.
+#[tauri::command]
+pub fn list_notification_sounds() -> Vec<String> {
+    let base = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.wispr-fox.app")
+        .join("sounds");
+    let _ = std::fs::create_dir_all(&base);
+
+    let mut out: Vec<String> = std::fs::read_dir(&base)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let lower = name.to_lowercase();
+            if lower.ends_with(".wav") || lower.ends_with(".mp3") || lower.ends_with(".ogg") {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Push audio-cue config into the cue worker. Called whenever the user
+/// saves a sound choice in Settings.
+#[tauri::command]
+pub fn configure_cues(start: String, stop: String, enabled: bool) {
+    crate::audio::cues::configure(&start, &stop, enabled);
+}
+
+/// Test a Groq API key by making a minimal authenticated request. Returns the
+/// list of model ids the key has access to, or an error message. Used by the
+/// Settings page "Test connection" button.
+#[tauri::command]
+pub async fn test_groq_key(key: String) -> Result<Vec<String>, String> {
+    if key.trim().is_empty() {
+        return Err("key is empty".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.groq.com/openai/v1/models")
+        .bearer_auth(key.trim())
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status.as_u16(), body));
+    }
+    #[derive(Deserialize)]
+    struct ModelsResponse {
+        data: Vec<ModelEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ModelEntry {
+        id: String,
+    }
+    let parsed: ModelsResponse = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
 }

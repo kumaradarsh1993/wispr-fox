@@ -40,6 +40,11 @@ pub async fn clean(
             raw_trimmed.to_owned(),
             0.4,
         ),
+        ClippyMode::Drafting => (
+            prompts::DRAFTING_SYSTEM,
+            raw_trimmed.to_owned(),
+            0.5,
+        ),
     };
 
     let fut = provider.complete(system, &user, temperature);

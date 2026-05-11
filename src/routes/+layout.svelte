@@ -1,6 +1,642 @@
 <script lang="ts">
   import "../app.css";
+  import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
+  import { listen } from "@tauri-apps/api/event";
+  import { usageStore } from "$lib/usage-store.svelte";
+  import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { settings } from "$lib/settings-store.svelte";
+
   let { children } = $props();
+
+  let collapsed = $state(false);
+  let floaterOpen = $state(true);
+
+  // Reactive theme application — sets document.body[data-theme] whenever the
+  // settings.theme value changes. Valid values: "auto" | "light" | "dark" | "retro".
+  $effect(() => {
+    const t = settings.s.theme || "auto";
+    if (typeof document !== "undefined") {
+      document.body.setAttribute("data-theme", t);
+    }
+  });
+
+  type SkinOption = { id: Skin; label: string; icon: string };
+  const SKIN_OPTIONS: SkinOption[] = [
+    { id: "off",         label: "Off",       icon: "○" },
+    { id: "stylized",    label: "Paperclip", icon: "📎" },
+    { id: "real-clippy", label: "Clippy",    icon: "✨" },
+    { id: "chippy",      label: "Chippy",    icon: "🥔" },
+  ];
+
+  async function pickSkin(s: Skin) {
+    await skinStore.set(s);
+    await setClippyWindowVisible(s !== "off");
+  }
+
+  // Percentage of daily-limit used (Groq free tier: 2000 STT, 1000 LLM per UTC day).
+  let sttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
+  let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
+  function pctClass(p: number): string {
+    if (p < 50) return "ok";
+    if (p < 85) return "warn";
+    return "danger";
+  }
+
+  // Persist sidebar collapsed state across launches.
+  onMount(() => {
+    const saved = localStorage.getItem("wispr.sidebar.collapsed");
+    if (saved === "1") collapsed = true;
+    const floater = localStorage.getItem("wispr.sidebar.floater-open");
+    if (floater === "0") floaterOpen = false;
+    usageStore.subscribe();
+    skinStore.subscribe();
+    settings.init();
+    // Theme tracking effect runs in $effect block below.
+
+    // Tray menu can request navigation via wispr:navigate event.
+    let unlisten: (() => void) | undefined;
+    listen<string>("wispr:navigate", (e) => {
+      goto(e.payload);
+    }).then((u) => (unlisten = u));
+
+    return () => unlisten?.();
+  });
+
+  function toggleSidebar() {
+    collapsed = !collapsed;
+    localStorage.setItem("wispr.sidebar.collapsed", collapsed ? "1" : "0");
+  }
+
+  function toggleFloaterSection() {
+    floaterOpen = !floaterOpen;
+    localStorage.setItem("wispr.sidebar.floater-open", floaterOpen ? "1" : "0");
+  }
+
+  // Hide chrome on /onboarding (full-bleed) and /clippy (floating window).
+  let hideChrome = $derived(
+    page.url?.pathname?.startsWith("/onboarding") ||
+    page.url?.pathname?.startsWith("/clippy") ||
+    false,
+  );
+
+  type NavItem = { href: string; label: string; icon: string };
+  const navItems: NavItem[] = [
+    { href: "/history", label: "History", icon: "🕓" },
+    { href: "/settings", label: "Settings", icon: "⚙" },
+  ];
+
+  // Hotkey reminder rendered at the top of the sidebar — always visible.
+  function shortcutDisplay(combo: string): string {
+    return combo
+      .replace(/CommandOrControl/g, "Ctrl")
+      .replace(/Super/g, "Win")
+      .replace(/\+/g, "+");
+  }
+
+  function isActive(href: string): boolean {
+    const path = page.url?.pathname ?? "/";
+    if (href === "/") return path === "/";
+    return path.startsWith(href);
+  }
+
+  function shortModel(name: string | undefined): string {
+    if (!name) return "—";
+    // "llama-3.3-70b-versatile" → "llama 3.3 70b"
+    // "whisper-large-v3-turbo" → "whisper turbo"
+    if (name.startsWith("whisper-large-v3-turbo")) return "whisper turbo";
+    if (name.startsWith("whisper-large-v3")) return "whisper v3";
+    if (name.startsWith("distil-whisper")) return "distil-whisper";
+    if (name.startsWith("llama-3.3-70b")) return "llama 70b";
+    if (name.startsWith("llama-3.1-8b")) return "llama 8b";
+    return name.replace(/-/g, " ");
+  }
 </script>
 
-{@render children?.()}
+{#if hideChrome}
+  {@render children?.()}
+{:else}
+  <div class="app-shell">
+    <aside class="sidebar" class:collapsed>
+      <div class="sidebar-top">
+        <button class="brand" onclick={toggleSidebar} title={collapsed ? "Expand" : "Collapse"}>
+          <span class="brand-mark">📎</span>
+          {#if !collapsed}<span class="brand-text">wispr-fox</span>{/if}
+        </button>
+
+        <nav class="nav">
+          {#each navItems as item (item.href)}
+            <a href={item.href} class="nav-item" class:active={isActive(item.href)}>
+              <span class="nav-icon">{item.icon}</span>
+              {#if !collapsed}<span class="nav-label">{item.label}</span>{/if}
+            </a>
+          {/each}
+        </nav>
+
+        {#if !collapsed}
+          <div class="hotkey-reminder">
+            <div class="hk-title">Hold to dictate</div>
+            <div class="hk-row">
+              <span class="hk-mode">Light</span>
+              <kbd>{shortcutDisplay(settings.s.light_hotkey)}</kbd>
+            </div>
+            <div class="hk-row">
+              <span class="hk-mode">Advanced</span>
+              <kbd>{shortcutDisplay(settings.s.advanced_hotkey)}</kbd>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Floater section: skin picker for the Clippy window -->
+        <div class="section">
+          {#if !collapsed}
+            <button class="section-head" onclick={toggleFloaterSection}>
+              <span class="section-caret" class:open={floaterOpen}>▸</span>
+              <span class="section-title">Floater</span>
+              <span class="section-current">{SKIN_OPTIONS.find((o) => o.id === skinStore.current)?.label ?? "—"}</span>
+            </button>
+            {#if floaterOpen}
+              <div class="skin-list">
+                {#each SKIN_OPTIONS as opt (opt.id)}
+                  <button
+                    class="skin-item"
+                    class:active={skinStore.current === opt.id}
+                    onclick={() => pickSkin(opt.id)}
+                  >
+                    <span class="skin-check">
+                      {#if skinStore.current === opt.id}✓{/if}
+                    </span>
+                    <span class="skin-icon">{opt.icon}</span>
+                    <span class="skin-label-txt">{opt.label}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {:else}
+            <!-- Collapsed: each skin is just an icon row -->
+            <div class="skin-list-collapsed">
+              {#each SKIN_OPTIONS as opt (opt.id)}
+                <button
+                  class="skin-item-collapsed"
+                  class:active={skinStore.current === opt.id}
+                  onclick={() => pickSkin(opt.id)}
+                  title={opt.label}
+                >
+                  {opt.icon}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="sidebar-bottom">
+        {#if !collapsed}
+          <div class="footer-block">
+            <div class="footer-title">Today's usage</div>
+
+            <div class="bar-row">
+              <span class="bar-key">STT</span>
+              <div class="bar-track">
+                <div class="bar-fill {pctClass(sttPct)}" style="width: {sttPct}%"></div>
+              </div>
+              <span class="bar-val">{usageStore.usage?.stt_count ?? 0}/2000</span>
+            </div>
+
+            <div class="bar-row">
+              <span class="bar-key">LLM</span>
+              <div class="bar-track">
+                <div class="bar-fill {pctClass(llmPct)}" style="width: {llmPct}%"></div>
+              </div>
+              <span class="bar-val">{usageStore.usage?.llm_count ?? 0}/1000</span>
+            </div>
+          </div>
+
+          <div class="footer-block">
+            <div class="footer-title">Active models</div>
+            <div class="footer-stat" title={usageStore.models?.stt}>
+              <span class="footer-key">STT</span>
+              <span class="footer-val">{shortModel(usageStore.models?.stt)}</span>
+            </div>
+            <div class="footer-stat" title={usageStore.models?.llm_advanced}>
+              <span class="footer-key">LLM</span>
+              <span class="footer-val">{shortModel(usageStore.models?.llm_advanced)}</span>
+            </div>
+          </div>
+        {:else}
+          <!-- Collapsed: stacked usage chips for STT + LLM, centered. -->
+          <div class="usage-stack">
+            <div class="usage-chip {pctClass(sttPct)}" title="STT (Whisper): {usageStore.usage?.stt_count ?? 0} of 2000 today">
+              <span class="usage-chip-key">STT</span>
+              <span class="usage-chip-val">{sttPct}%</span>
+            </div>
+            <div class="usage-chip {pctClass(llmPct)}" title="LLM (cleanup): {usageStore.usage?.llm_count ?? 0} of 1000 today">
+              <span class="usage-chip-key">LLM</span>
+              <span class="usage-chip-val">{llmPct}%</span>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </aside>
+
+    <main class="main-content">
+      {@render children?.()}
+    </main>
+  </div>
+{/if}
+
+<style>
+  :global(body) {
+    overflow: hidden;
+  }
+
+  .app-shell {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    width: 200px;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1),
+                background 200ms ease,
+                border-color 200ms ease;
+    overflow: hidden;
+    color: var(--text-primary);
+  }
+
+  .sidebar.collapsed {
+    width: 56px;
+  }
+
+  .sidebar-top {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 8px;
+    min-height: 0;
+  }
+
+  .sidebar-bottom {
+    border-top: 1px solid var(--border-subtle);
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background 120ms ease;
+  }
+
+  .brand:hover {
+    background: var(--bg-subtle);
+  }
+
+  .brand-mark {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 7px;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 13px;
+    transition: background 120ms ease;
+  }
+
+  .nav-item:hover {
+    background: var(--bg-subtle);
+  }
+
+  .nav-item.active {
+    background: var(--accent-fade);
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .nav-icon {
+    width: 18px;
+    text-align: center;
+    font-size: 13px;
+  }
+
+  .footer-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .footer-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .footer-stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 11px;
+  }
+
+  .footer-key {
+    color: var(--text-secondary);
+  }
+
+  .footer-val {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Hotkey reminder block */
+  .hotkey-reminder {
+    margin-top: 12px;
+    padding: 10px 10px;
+    background: var(--bg-subtle);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .hk-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+
+  .hk-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .hk-mode {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  kbd {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: ui-monospace, "SF Mono", Cascadia, Consolas, monospace;
+    font-size: 10px;
+    color: var(--text-primary);
+  }
+
+  /* Floater section */
+  .section {
+    margin-top: 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    padding-top: 10px;
+  }
+
+  .section-head {
+    width: 100%;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #6e6e73;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 5px;
+    transition: background 100ms ease;
+  }
+
+  .section-head:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .section-caret {
+    display: inline-block;
+    transition: transform 120ms ease;
+    font-size: 9px;
+  }
+
+  .section-caret.open {
+    transform: rotate(90deg);
+  }
+
+  .section-title {
+    flex: 1;
+    text-align: left;
+  }
+
+  .section-current {
+    color: #1d1d1f;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 11px;
+  }
+
+  .skin-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 4px;
+  }
+
+  .skin-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px 5px 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #1d1d1f;
+    text-align: left;
+    transition: background 100ms ease;
+  }
+
+  .skin-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .skin-item.active {
+    background: rgba(10, 132, 255, 0.10);
+    color: #0a84ff;
+  }
+
+  .skin-check {
+    width: 12px;
+    color: #0a84ff;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .skin-icon {
+    width: 18px;
+    text-align: center;
+    font-size: 13px;
+  }
+
+  .skin-label-txt {
+    flex: 1;
+  }
+
+  .skin-list-collapsed {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 4px;
+  }
+
+  .skin-item-collapsed {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    width: 100%;
+    padding: 6px 0;
+    font-size: 14px;
+    color: #1d1d1f;
+    transition: background 100ms ease;
+  }
+
+  .skin-item-collapsed:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  .skin-item-collapsed.active {
+    background: rgba(10, 132, 255, 0.12);
+  }
+
+  /* Progress bars for usage */
+  .bar-row {
+    display: grid;
+    grid-template-columns: 26px 1fr auto;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: #6e6e73;
+  }
+
+  .bar-key {
+    font-weight: 500;
+    color: #6e6e73;
+  }
+
+  .bar-track {
+    height: 6px;
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 300ms ease, background 200ms ease;
+  }
+
+  .bar-fill.ok { background: #34c759; }
+  .bar-fill.warn { background: #ff9f0a; }
+  .bar-fill.danger { background: #ff453a; }
+
+  .bar-val {
+    font-variant-numeric: tabular-nums;
+    color: #1d1d1f;
+    font-size: 10px;
+  }
+
+  /* Collapsed usage — stacked chips, centered in the narrow sidebar. */
+  .usage-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+    width: 100%;
+  }
+
+  .usage-chip {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .usage-chip.ok { background: var(--success-fade); color: var(--success); }
+  .usage-chip.warn { background: var(--warning-fade); color: var(--warning); }
+  .usage-chip.danger { background: var(--danger-fade); color: var(--danger); }
+
+  .usage-chip-key {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+    opacity: 0.85;
+  }
+
+  .usage-chip-val {
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .main-content {
+    overflow: hidden;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    height: 100vh;
+    min-width: 0;
+    transition: background 200ms ease, color 200ms ease;
+  }
+</style>

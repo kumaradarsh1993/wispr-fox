@@ -20,14 +20,26 @@ export type RecordingStatus =
 export interface AppSettings {
   light_hotkey: string;
   advanced_hotkey: string;
+  drafting_hotkey: string;
+  sticky_light: boolean;
+  sticky_advanced: boolean;
+  sticky_drafting: boolean;
+  light_sticky_hotkey: string;
+  advanced_sticky_hotkey: string;
+  drafting_sticky_hotkey: string;
   auto_clean_in_light: boolean;
   clippy_light_model: string;
   clippy_advanced_model: string;
+  clippy_drafting_model: string;
   stt_model: string;
   language_hint: string | null;
   retention_days: number;
   retention_max_mb: number;
   autostart: boolean;
+  start_sound: string;
+  stop_sound: string;
+  cues_enabled: boolean;
+  theme: string;
 }
 
 export interface Recording {
@@ -60,9 +72,22 @@ export interface InputDeviceInfo {
 export interface AppPaths {
   audio_dir: string;
   db_path: string;
+  sounds_dir: string;
 }
 
 export type SecretKeyName = "groq_stt" | "groq_llm";
+
+export interface DailyUsage {
+  date: string;
+  stt_count: number;
+  llm_count: number;
+}
+
+export interface CurrentModels {
+  stt: string;
+  llm_light: string;
+  llm_advanced: string;
+}
 
 export const api = {
   ping: () => invoke<string>("ping"),
@@ -75,8 +100,20 @@ export const api = {
     invoke<void>("set_settings", { settings }),
   listHistory: (limit = 100) => invoke<Recording[]>("list_history", { limit }),
   deleteRecording: (id: string) => invoke<void>("delete_recording", { id }),
+  retryRecording: (id: string) => invoke<void>("retry_recording", { id }),
+  audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),
+  audioDataUrlFor: (id: string) => invoke<string>("audio_data_url_for", { id }),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),
   appPaths: () => invoke<AppPaths>("app_paths"),
+  dailyUsage: () => invoke<DailyUsage>("daily_usage"),
+  currentModels: () => invoke<CurrentModels>("current_models"),
+  clearAllHistory: () => invoke<number>("clear_all_history"),
+  listNotificationSounds: () => invoke<string[]>("list_notification_sounds"),
+  addNotificationSound: (srcPath: string) =>
+    invoke<string>("add_notification_sound", { srcPath }),
+  testGroqKey: (key: string) => invoke<string[]>("test_groq_key", { key }),
+  configureCues: (start: string, stop: string, enabled: boolean) =>
+    invoke<void>("configure_cues", { start, stop, enabled }),
 };
 
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */

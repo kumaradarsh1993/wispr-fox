@@ -7,14 +7,26 @@ import { api, type AppSettings } from "./api";
 const FALLBACK: AppSettings = {
   light_hotkey: "F8",
   advanced_hotkey: "F9",
+  drafting_hotkey: "F10",
+  sticky_light: false,
+  sticky_advanced: false,
+  sticky_drafting: false,
+  light_sticky_hotkey: "Super+F8",
+  advanced_sticky_hotkey: "Super+F9",
+  drafting_sticky_hotkey: "Super+F10",
   auto_clean_in_light: true,
-  clippy_light_model: "llama-3.1-8b-instant",
+  clippy_light_model: "llama-3.3-70b-versatile",
   clippy_advanced_model: "llama-3.3-70b-versatile",
+  clippy_drafting_model: "llama-3.3-70b-versatile",
   stt_model: "whisper-large-v3-turbo",
   language_hint: null,
   retention_days: 7,
   retention_max_mb: 500,
   autostart: false,
+  start_sound: "",
+  stop_sound: "",
+  cues_enabled: true,
+  theme: "auto",
 };
 
 class SettingsStore {
@@ -30,6 +42,15 @@ class SettingsStore {
       console.warn("settings.init: falling back to defaults", e);
     }
     this.ready = true;
+
+    // Push the user's audio-cue selection into the cue worker so it picks
+    // the right files on the next F8 / F9 press. Idempotent; safe to call
+    // every init.
+    try {
+      await api.configureCues(this.s.start_sound, this.s.stop_sound, this.s.cues_enabled);
+    } catch (e) {
+      console.warn("settings.init: configureCues failed", e);
+    }
   }
 
   async set<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {

@@ -17,12 +17,39 @@ use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use parking_lot::Mutex as ParkingMutex;
 use rodio::source::{Source, SineWave};
 use rodio::{Decoder, OutputStream};
 
 enum CueCmd {
     Start,
     Stop,
+}
+
+/// User-selected sound filenames (within the sounds/ folder). Empty = use
+/// the legacy default ("start.{wav,mp3,ogg}" → "stop.{wav,mp3,ogg}") and
+/// then the built-in generated tone.
+static USER_START_SOUND: OnceLock<ParkingMutex<String>> = OnceLock::new();
+static USER_STOP_SOUND: OnceLock<ParkingMutex<String>> = OnceLock::new();
+static CUES_ENABLED: OnceLock<ParkingMutex<bool>> = OnceLock::new();
+
+fn user_start_sound() -> &'static ParkingMutex<String> {
+    USER_START_SOUND.get_or_init(|| ParkingMutex::new(String::new()))
+}
+fn user_stop_sound() -> &'static ParkingMutex<String> {
+    USER_STOP_SOUND.get_or_init(|| ParkingMutex::new(String::new()))
+}
+fn cues_enabled() -> &'static ParkingMutex<bool> {
+    CUES_ENABLED.get_or_init(|| ParkingMutex::new(true))
+}
+
+/// Push the user's settings into the cues system. Called whenever settings
+/// change (the JS side invokes a Tauri command after saving). Empty strings
+/// mean "fall back to legacy default lookup".
+pub fn configure(start: &str, stop: &str, enabled: bool) {
+    *user_start_sound().lock() = start.to_string();
+    *user_stop_sound().lock() = stop.to_string();
+    *cues_enabled().lock() = enabled;
 }
 
 static SENDER: OnceLock<Option<mpsc::Sender<CueCmd>>> = OnceLock::new();
@@ -62,6 +89,16 @@ fn find_custom(base: &str) -> Option<PathBuf> {
     None
 }
 
+/// Resolve a user-supplied filename to a full path inside sounds dir.
+/// Returns None if the file isn't there (e.g. user deleted it).
+fn resolve_user_file(filename: &str) -> Option<PathBuf> {
+    if filename.is_empty() {
+        return None;
+    }
+    let p = sounds_dir().join(filename);
+    if p.is_file() { Some(p) } else { None }
+}
+
 fn cue_worker(rx: mpsc::Receiver<CueCmd>) {
     let stream = match OutputStream::try_default() {
         Ok((s, h)) => Some((s, h)),
@@ -72,13 +109,35 @@ fn cue_worker(rx: mpsc::Receiver<CueCmd>) {
     };
 
     while let Ok(cmd) = rx.recv() {
+        if !*cues_enabled().lock() {
+            continue;
+        }
         let Some((_s, handle)) = &stream else { continue };
-        let base = match cmd {
-            CueCmd::Start => "start",
-            CueCmd::Stop => "stop",
+
+        let (user_pick, base) = match cmd {
+            CueCmd::Start => (user_start_sound().lock().clone(), "start"),
+            CueCmd::Stop => (user_stop_sound().lock().clone(), "stop"),
         };
 
-        // 1. Try user-supplied file.
+        // 1a. User-selected filename from Settings has priority.
+        if let Some(path) = resolve_user_file(&user_pick) {
+            match File::open(&path).and_then(|f| {
+                Decoder::new(BufReader::new(f))
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            }) {
+                Ok(source) => {
+                    if let Err(e) = handle.play_raw(source.convert_samples()) {
+                        tracing::debug!("user-pick cue play failed: {e}");
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("user-pick cue {path:?} failed to decode: {e}");
+                }
+            }
+        }
+
+        // 1b. Legacy default ("start.wav" / "stop.wav" in sounds dir).
         if let Some(path) = find_custom(base) {
             match File::open(&path).and_then(|f| {
                 Decoder::new(BufReader::new(f))

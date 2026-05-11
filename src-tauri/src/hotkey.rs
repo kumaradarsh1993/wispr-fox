@@ -1,9 +1,12 @@
 //! Global-shortcut wrapper.
 //!
-//! Tauri's global-shortcut plugin emits a single event per key combo on press,
-//! with a `ShortcutState` indicating Pressed or Released (post 2.x). We forward
-//! these as `HotkeyEvent`s tagged with the user's intended `Mode` so flow.rs
-//! can build push-to-talk semantics.
+//! Tauri's global-shortcut plugin emits Pressed / Released edges for each
+//! registered combo. We register SIX combos total — three "main" hotkeys
+//! (Light, Advanced, Drafting — push-to-talk by default) and three
+//! "sticky-invoke" hotkeys (typically Win+main key) that always trigger
+//! a press-once-start / press-again-stop toggle, regardless of the per-mode
+//! sticky setting. The flow layer decides actual recording state — this
+//! module just forwards edges + mode + sticky flag.
 
 use std::str::FromStr;
 
@@ -25,63 +28,62 @@ pub enum Edge {
 pub struct HotkeyEvent {
     pub mode: Mode,
     pub edge: Edge,
+    /// True when fired from a sticky-invoke combo (e.g. Win+F8). Flow layer
+    /// uses this to force sticky toggle behaviour for THIS press, regardless
+    /// of the per-mode sticky setting.
+    pub sticky_invoke: bool,
 }
 
-/// Register both Light and Advanced hotkeys. Forwards key-down/key-up edges to
-/// the flow layer through a shared callback.
+#[allow(clippy::too_many_arguments)]
 pub fn register(
     app: &AppHandle,
     light: &str,
     advanced: &str,
+    drafting: &str,
+    light_sticky: &str,
+    advanced_sticky: &str,
+    drafting_sticky: &str,
     on_event: impl Fn(HotkeyEvent) + Send + Sync + 'static,
 ) -> Result<()> {
-    let light_sc = Shortcut::from_str(light)
-        .with_context(|| format!("parsing light hotkey '{light}'"))?;
-    let advanced_sc = Shortcut::from_str(advanced)
-        .with_context(|| format!("parsing advanced hotkey '{advanced}'"))?;
+    let combos = [
+        (light, Mode::Light, false),
+        (advanced, Mode::Advanced, false),
+        (drafting, Mode::Drafting, false),
+        (light_sticky, Mode::Light, true),
+        (advanced_sticky, Mode::Advanced, true),
+        (drafting_sticky, Mode::Drafting, true),
+    ];
 
     let on_event = std::sync::Arc::new(on_event);
 
-    {
+    for (combo, mode, sticky_invoke) in combos {
+        if combo.is_empty() {
+            continue;
+        }
+        let sc = Shortcut::from_str(combo)
+            .with_context(|| format!("parsing hotkey '{combo}'"))?;
+        let sc_match = sc.clone();
         let on_event = on_event.clone();
-        let light_match = light_sc.clone();
-        let advanced_match = advanced_sc.clone();
-        app.global_shortcut().on_shortcut(light_sc.clone(), move |_app, sc, event| {
-            let mode = if sc == &light_match {
-                Mode::Light
-            } else if sc == &advanced_match {
-                Mode::Advanced
-            } else {
+        let mode_capture = mode;
+        let sticky_capture = sticky_invoke;
+        match app.global_shortcut().on_shortcut(sc.clone(), move |_app, fired, event| {
+            if fired != &sc_match {
                 return;
-            };
+            }
             let edge = match event.state() {
                 ShortcutState::Pressed => Edge::Down,
                 ShortcutState::Released => Edge::Up,
             };
-            on_event(HotkeyEvent { mode, edge });
-        })?;
-    }
-    {
-        let on_event = on_event.clone();
-        let light_match = light_sc.clone();
-        let advanced_match = advanced_sc.clone();
-        app.global_shortcut().on_shortcut(advanced_sc.clone(), move |_app, sc, event| {
-            let mode = if sc == &advanced_match {
-                Mode::Advanced
-            } else if sc == &light_match {
-                Mode::Light
-            } else {
-                return;
-            };
-            let edge = match event.state() {
-                ShortcutState::Pressed => Edge::Down,
-                ShortcutState::Released => Edge::Up,
-            };
-            on_event(HotkeyEvent { mode, edge });
-        })?;
+            on_event(HotkeyEvent {
+                mode: mode_capture,
+                edge,
+                sticky_invoke: sticky_capture,
+            });
+        }) {
+            Ok(()) => tracing::info!(combo, ?mode, sticky_invoke, "hotkey registered"),
+            Err(e) => tracing::warn!(combo, ?mode, "hotkey registration failed: {e}"),
+        }
     }
 
-    tracing::info!(%light, %advanced, "hotkeys registered");
-    let _ = app; // suppress unused if Manager goes unused above
     Ok(())
 }

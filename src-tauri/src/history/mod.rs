@@ -55,11 +55,16 @@ fn mode_str(m: ClippyMode) -> &'static str {
     match m {
         ClippyMode::Light => "light",
         ClippyMode::Advanced => "advanced",
+        ClippyMode::Drafting => "drafting",
     }
 }
 
 fn mode_parse(s: &str) -> ClippyMode {
-    if s == "advanced" { ClippyMode::Advanced } else { ClippyMode::Light }
+    match s {
+        "advanced" => ClippyMode::Advanced,
+        "drafting" => ClippyMode::Drafting,
+        _ => ClippyMode::Light,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
