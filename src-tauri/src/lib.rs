@@ -68,6 +68,17 @@ pub fn run() {
             std::fs::create_dir_all(&audio_dir).ok();
 
             let history = History::open(&db_path)?;
+
+            // Sweep any rows left stranded by a previous crash/force-quit.
+            // Without this, recordings stuck at `transcribing` or `cleaning`
+            // would persist as "in-flight" forever and never expose the
+            // Retry button. Idempotent — safe to call on every launch.
+            match history.recover_stranded() {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(rows = n, "history: recovered stranded rows on startup"),
+                Err(e) => tracing::warn!("history recovery scan failed (non-fatal): {e:#}"),
+            }
+
             let settings = AppSettings::default();
             let audio_ctrl = AudioController::spawn();
             let usage = UsageTracker::open().unwrap_or_else(|e| {

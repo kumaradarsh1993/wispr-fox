@@ -753,17 +753,20 @@
     overflow: hidden;
   }
 
-  /* 3-tab bar — Raw / Cleaned / Drafted. Sits above the transcript body.
-     Active tab is highlighted, missing-version tabs are dimmed; dimmed
-     tabs are still clickable to trigger on-demand generation. */
+  /* 3-tab bar — Raw / Cleaned / Drafted. Sits centred above the transcript
+     body so the row reads visually balanced. Active tab is highlighted,
+     missing-version tabs are dimmed; dimmed tabs are still clickable to
+     trigger on-demand generation. */
   .tabs {
-    display: inline-flex;
+    display: flex;
+    justify-content: center;
     gap: 0;
-    margin-bottom: 8px;
+    margin: 0 auto 10px;
     background: var(--bg-subtle);
     padding: 3px;
     border-radius: 8px;
     border: 1px solid var(--border-subtle);
+    width: fit-content;
   }
 
   .tab {

@@ -27,10 +27,16 @@ const LIGHT_MAX_DRIFT: f32 = 0.60;
 
 /// `system_override` — if `Some`, used in place of the baked-in default
 /// prompt for the given mode. Lets users tweak prompts via Settings.
+///
+/// `context_hint` — for Drafting only, prepends a short "match this
+/// register" instruction so the LLM's output fits the user's target app
+/// (email vs WhatsApp vs LinkedIn). Pass `None` to skip augmentation
+/// (also what Light/Advanced should do since they're voice-preserving).
 pub async fn clean(
     raw: &str,
     mode: ClippyMode,
     system_override: Option<&str>,
+    context_hint: Option<&str>,
     provider: &dyn LlmProvider,
 ) -> CleanedTranscript {
     let raw_trimmed = raw.trim();
@@ -55,9 +61,20 @@ pub async fn clean(
             0.5,
         ),
     };
-    let system = system_override
+    let base_system = system_override
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(default_system);
+
+    // Prepend the app-context hint when present. Only Drafting actually
+    // passes one in (Light/Advanced are voice-preserving — changing
+    // register would violate their contract).
+    let augmented_system: String;
+    let system: &str = if let Some(hint) = context_hint {
+        augmented_system = format!("{hint}\n\n{base_system}");
+        &augmented_system
+    } else {
+        base_system
+    };
 
     let fut = provider.complete(system, &user, temperature);
     let result = tokio::time::timeout(TIMEOUT, fut).await;

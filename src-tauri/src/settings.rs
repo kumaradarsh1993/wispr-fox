@@ -116,6 +116,16 @@ pub struct AppSettings {
     #[serde(default = "default_keep_in_clipboard")]
     pub keep_in_clipboard: bool,
 
+    /// When true (default): F9 drafting reads the foreground app's process
+    /// name + window title at hotkey-down time, classifies it into a coarse
+    /// bucket (email / chat / social / doc / code / AI), and nudges the
+    /// LLM's tone to match (formal email, casual WhatsApp message, punchy
+    /// LinkedIn post, etc.). Only the bucket NAME is sent to the LLM —
+    /// never the raw process or title. Disable if you want the LLM to
+    /// pick the register from your brief's content alone.
+    #[serde(default = "default_adapt_to_app")]
+    pub adapt_to_app: bool,
+
     // ── Custom prompts (override built-in defaults) ───────────────────────
     // Empty string = use the baked-in default from prompts.rs.
     // Set via Settings UI. Reset button clears these strings.
@@ -184,8 +194,13 @@ impl Default for AppSettings {
             pull_back_on_navigation: false,
             keep_in_clipboard: default_keep_in_clipboard(),
             open_silently: default_open_silently(),
+            adapt_to_app: default_adapt_to_app(),
         }
     }
+}
+
+fn default_adapt_to_app() -> bool {
+    true
 }
 
 fn default_keep_in_clipboard() -> bool {

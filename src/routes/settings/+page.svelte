@@ -736,11 +736,14 @@
 
         {#each [
           { id: "light",    fkey: "F8",  title: "Transcribe",  settingKey: "auto_clean_in_light",    defaultOn: false,
+            hotkeyKey: "light_hotkey", stickyHotkeyKey: "light_sticky_hotkey", stickyKey: "sticky_light",
             desc: "Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every F8 press also gets spell/punctuation/paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use Shift+F8." },
           { id: "drafting", fkey: "F9",  title: "Draft",       settingKey: "auto_clean_in_drafting", defaultOn: true,
+            hotkeyKey: "drafting_hotkey", stickyHotkeyKey: "drafting_sticky_hotkey", stickyKey: "sticky_drafting",
             desc: "Give a brief (\"draft an email to Saurabh about X, Y, Z\") and get back a complete polished output. Best for emails, Slack, docs." },
           { id: "advanced", fkey: "—",   title: "Advanced (legacy)", settingKey: "auto_clean_in_advanced", defaultOn: true,
-            desc: "Standalone Advanced cleanup mode. No hotkey by default — bind one in Hotkeys if you want a dedicated key separate from the F8 toggle." },
+            hotkeyKey: "advanced_hotkey", stickyHotkeyKey: "advanced_sticky_hotkey", stickyKey: "sticky_advanced",
+            desc: "Standalone Advanced cleanup mode. No hotkey by default — bind one below if you want a dedicated key separate from the F8 toggle." },
         ] as m (m.id)}
           <div class="mode-block">
             <div class="mode-head">
@@ -758,6 +761,33 @@
                 <span>LLM cleanup</span>
               </label>
             </div>
+
+            <!-- Per-mode hotkey + sticky controls. Co-located with the
+                 toggle and prompt so the user sees the whole mode in one
+                 submenu instead of hunting across Settings → Models and
+                 Settings → Hotkeys. The legacy Hotkeys section is still
+                 there for cross-cutting bindings (Shift+F8 force-clean). -->
+            <div class="mode-hotkeys">
+              <div class="hk-pair">
+                <div class="hk-pair-col">
+                  <div class="hk-pair-label">Main (push-to-talk)</div>
+                  <HotkeyCapture label="" bind:value={settings.s[m.hotkeyKey as keyof typeof settings.s] as string} />
+                </div>
+                <div class="hk-pair-col">
+                  <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+                  <HotkeyCapture label="" bind:value={settings.s[m.stickyHotkeyKey as keyof typeof settings.s] as string} />
+                </div>
+              </div>
+              <label class="check-row small">
+                <input
+                  type="checkbox"
+                  checked={settings.s[m.stickyKey as keyof typeof settings.s] as boolean}
+                  onchange={(e) => settings.set(m.stickyKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
+                />
+                <span>Default to sticky — make the MAIN hotkey behave as toggle too</span>
+              </label>
+            </div>
+
             <button
               class="prompt-toggle"
               onclick={() => (promptOpen[m.id as "light" | "advanced" | "drafting"] = !promptOpen[m.id as "light" | "advanced" | "drafting"])}
@@ -793,6 +823,8 @@
           </div>
         {/each}
 
+        <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox.</p>
+
         <div class="field-block">
           <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
           <input
@@ -814,13 +846,17 @@
       <section>
         <h2>Hotkeys</h2>
         <p class="lede">
-          Three modes, each with TWO hotkeys: a <strong>main</strong> hotkey (push-to-talk by default —
-          hold to record) and a <strong>sticky-invoke</strong> hotkey (always toggles —
-          press once to start, press again to stop). Pressing the sticky combo gives you
-          a one-shot sticky session without permanently changing the mode behaviour.
+          Per-mode hotkeys (F8 Transcribe, F9 Draft, Advanced cleanup) now live
+          inside <strong>Settings → Models → Modes</strong> alongside their cleanup
+          toggle and system prompt — that's the recommended place to edit them.
+          This page is kept for cross-cutting bindings (the force-clean override)
+          and inject behaviour toggles below.
         </p>
         <p class="lede" style="margin-top: -10px;">
-          Optionally check <strong>"Default to sticky"</strong> to make the main hotkey also behave as a toggle.
+          Every mode has TWO hotkeys: a <strong>main</strong> (push-to-talk by default —
+          hold to record) and a <strong>sticky-invoke</strong> (press once to start,
+          press again to stop). Optionally check <strong>"Default to sticky"</strong>
+          to make the main hotkey also behave as a toggle.
         </p>
 
         <div class="hotkey-block">
@@ -936,6 +972,15 @@
             <span><strong>Pull focus back to original app</strong> when result is ready — yank the window you started speaking in back to the foreground so the paste lands there.</span>
           </label>
           <p class="hint">Off by default (don't disrupt you if you've moved on). When off and you've navigated away, wispr-fox copies to clipboard and Clippy shows "Copied to clipboard" instead.</p>
+        </div>
+
+        <div class="behavior-block">
+          <label class="check-row">
+            <input type="checkbox" checked={settings.s.adapt_to_app}
+                   onchange={(e) => settings.set("adapt_to_app", (e.currentTarget as HTMLInputElement).checked)} />
+            <span><strong>Adapt tone to active app</strong> — when you press F9, look at which app you're dictating into and hint the LLM at the right register (formal for Outlook, casual for WhatsApp, polished for LinkedIn, etc).</span>
+          </label>
+          <p class="hint">Only the bucket name (e.g. "email", "chat") is sent to the LLM — never your window title or process name. Affects F9 drafting only; F8 always preserves your voice exactly. Off = let the LLM infer register from the brief alone.</p>
         </div>
       </section>
     {/if}
@@ -1535,6 +1580,11 @@
     padding: 14px 16px;
     margin-bottom: 12px;
     max-width: 720px;
+  }
+  .mode-hotkeys {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border-subtle);
   }
   .mode-head {
     display: grid;

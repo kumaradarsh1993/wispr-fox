@@ -384,7 +384,22 @@ impl Flow {
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
             let custom = custom_prompt_for(&clippy_settings, mode);
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
+            // App-context hint: ONLY for Drafting (the mode that's allowed to
+            // reshape register/structure). When the user opts out via the
+            // adapt_to_app setting we skip the lookup entirely.
+            let app_hint = if matches!(mode, Mode::Drafting) && clippy_settings.adapt_to_app {
+                let kind = captured_focus
+                    .as_ref()
+                    .map(inject::focus::classify_app)
+                    .unwrap_or(inject::focus::AppKind::Default);
+                if kind != inject::focus::AppKind::Default {
+                    tracing::info!(?kind, "app-context hint active for drafting");
+                }
+                inject::focus::context_hint(kind)
+            } else {
+                None
+            };
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), app_hint, llm.as_ref()).await;
             // Drafting mode (F9) writes to `drafted_text`; everything else
             // (Light cleanup, Advanced cleanup) writes to `cleaned_text`.
             // This lets the history UI show both versions independently.
@@ -517,7 +532,10 @@ impl Flow {
         self.usage.record_llm();
 
         let custom = custom_prompt_for(&settings, mode);
-        let cleaned = clippy::clean(transcript, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
+        // On-demand "generate cleaned/drafted version" from History has no
+        // app-context — the original target window is long gone. Skip the
+        // hint and let the LLM pick register from the brief's content.
+        let cleaned = clippy::clean(transcript, ClippyMode::from(mode), custom.as_deref(), None, llm.as_ref()).await;
 
         self.history.set_alt(
             record_id,
@@ -582,7 +600,11 @@ impl Flow {
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
             self.usage.record_llm();
             let custom = custom_prompt_for(&stt_settings, mode);
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
+            // Retry path has no captured focus context (it ran possibly
+            // hours ago into a different app), so skip the app-context
+            // hint here. The user can always trigger a fresh F9 if they
+            // want app-adapted output.
+            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), None, llm.as_ref()).await;
             let alt = if matches!(mode, Mode::Drafting) { AltKind::Drafted } else { AltKind::Cleaned };
             self.history.set_alt(
                 record_id,

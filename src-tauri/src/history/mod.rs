@@ -342,6 +342,27 @@ impl History {
         conn.execute("DELETE FROM recordings WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    /// On app launch, mark any rows still in non-terminal states as error.
+    /// They represent recordings that were mid-pipeline when the app was
+    /// killed / crashed / force-quit. Without this they'd sit at
+    /// `transcribing` or `cleaning` forever and the user couldn't tell
+    /// they're stranded — the row would just show a stale status with
+    /// no recovery affordance. Setting status=error lets the History UI
+    /// surface them as failed and expose the Retry button.
+    ///
+    /// Returns the count of rows recovered, for logging.
+    pub fn recover_stranded(&self) -> Result<usize> {
+        let conn = self.inner.lock();
+        let n = conn.execute(
+            r#"UPDATE recordings
+               SET status = 'error',
+                   error  = COALESCE(error, 'Interrupted — app exited before this recording finished. Click Retry to resume.')
+               WHERE status IN ('recording', 'transcribing', 'cleaning', 'injecting')"#,
+            [],
+        )?;
+        Ok(n)
+    }
 }
 
 const SELECT_ALL_COLUMNS_BY_ID: &str = r#"

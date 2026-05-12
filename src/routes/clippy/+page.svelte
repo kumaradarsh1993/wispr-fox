@@ -14,6 +14,35 @@
   // through a queue so each post-listening animation gets at least MIN_DWELL_MS
   // of airtime regardless of how fast the backend finishes transcribing /
   // cleaning / injecting.
+  // Frontend watchdog — last-ditch defense if the backend ever fails to
+  // emit a terminal state. If Clippy has been in any non-idle state for
+  // longer than WATCHDOG_MS without progressing, force-reset to idle and
+  // show a generic error toast. The Rust wrapper in flow.rs handles every
+  // failure I know of; this catches the unknown unknowns (frontend lost
+  // the wispr:state event, Tauri IPC stutter, etc.).
+  const WATCHDOG_MS = 90_000;
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  function armWatchdog() {
+    if (watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+      console.warn("[clippy] watchdog fired — forcing state back to idle");
+      state = "idle";
+      displayState = "idle";
+      displayQueue = [];
+      if (displayTimer) {
+        clearTimeout(displayTimer);
+        displayTimer = null;
+      }
+      showToast("Took too long — try again", "error", 5000);
+    }, WATCHDOG_MS);
+  }
+  function disarmWatchdog() {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
   let state = $state<ClippyState>("idle");
   let displayState = $state<ClippyState>("idle");
   let mode = $state<Mode>("light");
@@ -22,6 +51,16 @@
   // Hover state: true while the cursor is over the Clippy window. Drives
   // the "Clippy notices you" beat — eyes scale up, pupils track cursor.
   let hovering = $state(false);
+  // Single-click "giggle" — a one-off bounce/wiggle animation that plays
+  // when the user clicks Clippy (NOT double-click, which opens the main
+  // window). Lasts ~600ms; resets if the user clicks again mid-animation.
+  let clickWiggling = $state(false);
+  let clickWiggleTimer: ReturnType<typeof setTimeout> | null = null;
+  function playClickWiggle() {
+    clickWiggling = true;
+    if (clickWiggleTimer) clearTimeout(clickWiggleTimer);
+    clickWiggleTimer = setTimeout(() => { clickWiggling = false; }, 600);
+  }
   // Pupil offset (in SVG units, viewBox is -20..160 wide / 0..170 tall).
   // While hovering, these track the cursor relative to Clippy's centre;
   // while idle, the existing lookDir 3-state sway drives eyeShiftX.
@@ -310,15 +349,25 @@
         clearTimeout(displayTimer);
         displayTimer = null;
       }
+      disarmWatchdog();
       showToast(e.payload, "error", 5000);
     }).then((u) => (unlistenErr = u));
     listen<string>("wispr:state", (e) => {
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
       state = next;
+      // Arm or disarm the watchdog based on whether we're in a non-idle
+      // state. Each non-idle transition resets the 90s window, so a slow
+      // legitimate pipeline (chunked STT + LLM) won't trip the alarm.
+      if (next === "idle") {
+        disarmWatchdog();
+      } else {
+        armWatchdog();
+      }
       if (next === "pasting") {
         setTimeout(() => {
           state = "idle";
+          disarmWatchdog();
         }, 800);
       }
     }).then((u) => (unlisten = u));
@@ -380,6 +429,7 @@
       unlistenMode?.();
       unlistenMsg?.();
       unlistenErr?.();
+      disarmWatchdog();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
       window.removeEventListener("mouseup", onMove);
@@ -429,6 +479,7 @@
   tabindex="0"
   aria-label="Clippy floater — drag to move, double-click to open main window"
   ondblclick={openMainWindow}
+  onclick={playClickWiggle}
   onmouseenter={() => (hovering = true)}
   onmouseleave={() => { hovering = false; hoverShiftX = 0; hoverShiftY = 0; }}
   onmousemove={(e) => {
@@ -498,6 +549,7 @@
     <svg
       class="character clippy-stylized"
       class:beige={skin === "beige"}
+      class:wiggle={clickWiggling}
       viewBox="-20 0 180 170"
       xmlns="http://www.w3.org/2000/svg"
       data-state={displayState}
@@ -659,9 +711,23 @@
           </g>
         {/if}
 
-        <!-- Paperclip body -->
+        <!-- Paperclip body. The path is declared via inline `style="d: path(...)"`
+             instead of `d="..."` so CSS @keyframes can interpolate the `d`
+             property to morph into a checkmark when dictation completes
+             (see `.body path` rules + `paperclip-to-tick` keyframe). The
+             paperclip silhouette is approximated with straight L commands
+             so every keyframe shares the same M+C+5L command signature
+             (required for d-interpolation). -->
         <g class="body" stroke="#1d1d1f" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M 50 30 C 50 18, 70 18, 70 30 L 70 110 C 70 132, 38 132, 38 110 L 38 50 C 38 38, 58 38, 58 50 L 58 100" />
+          <path style="d: path('M 50 30 C 50 18, 70 18, 70 30 L 70 110 L 38 110 L 38 50 L 58 50 L 58 100');" />
+        </g>
+        <!-- "Done!" sparkles — fade in around the moment the tick is fully
+             formed during the pasting animation, then fade out as the body
+             morphs back. Greenish (#34c759) so it reads as success. -->
+        <g class="sparkles" fill="#34c759" stroke="none" opacity="0">
+          <circle class="spark spark-1" cx="85" cy="45" r="2.5" />
+          <circle class="spark spark-2" cx="25" cy="65" r="2" />
+          <circle class="spark spark-3" cx="60" cy="100" r="1.8" />
         </g>
         <g class="brows" stroke="#1d1d1f" stroke-width="3.5" stroke-linecap="round" fill="none">
           <path d="M 36 36 Q 42 32, 48 36" />
@@ -803,6 +869,22 @@
   }
   .clippy-stylized .eyes.hover {
     transform: scale(1.12);
+  }
+
+  /* Click giggle — one-off wobble triggered by a single click on Clippy
+     (not double-click, which opens the main window). 600ms total: a quick
+     squash, a side-to-side jiggle, then back to rest. Plays atop whatever
+     state animation is already running. */
+  .clippy-stylized.wiggle {
+    animation: clippy-wiggle 600ms cubic-bezier(0.36, 0, 0.66, -0.56);
+  }
+  @keyframes clippy-wiggle {
+    0%   { transform: rotate(0deg) scale(1); }
+    20%  { transform: rotate(-6deg) scale(1.04, 0.96); }
+    40%  { transform: rotate(5deg)  scale(0.97, 1.03); }
+    60%  { transform: rotate(-3deg) scale(1.02, 0.98); }
+    80%  { transform: rotate(2deg)  scale(0.99, 1.01); }
+    100% { transform: rotate(0deg)  scale(1); }
   }
 
   /* ─── Beige skin variant ────────────────────────────────────────────
@@ -1005,6 +1087,52 @@
     40% { transform: translateY(-12px) scale(1.05, 0.95); }
     100% { transform: translateY(0) scale(1); }
   }
+
+  /* ─── Paperclip → Checkmark morph on completion ──────────────────────
+     When the dictation flow finishes (data-state="pasting"), the
+     paperclip's wire body morphs into a checkmark, holds for ~400ms,
+     then morphs back. Implemented via CSS `d:` interpolation — only
+     works because each keyframe's path uses the SAME command signature
+     (M C L L L L L) so the renderer can lerp point-by-point.
+     Sparkles burst alongside the tick beat. */
+  .clippy-stylized[data-state="pasting"] .body path {
+    animation: paperclip-to-tick 1500ms cubic-bezier(0.65, 0, 0.35, 1) both;
+  }
+  @keyframes paperclip-to-tick {
+    0% {
+      d: path('M 50 30 C 50 18, 70 18, 70 30 L 70 110 L 38 110 L 38 50 L 58 50 L 58 100');
+    }
+    35% {
+      /* Joints loosen — the inner loop straightens, the body unfurls. */
+      d: path('M 40 60 C 42 55, 50 55, 52 58 L 60 80 L 50 95 L 55 75 L 70 60 L 75 55');
+    }
+    50%, 75% {
+      /* Clean tick. Last three points repeat to keep the segment count
+         at 6 (matching the paperclip's command signature). */
+      d: path('M 32 72 C 34 76, 38 80, 40 82 L 48 92 L 48 92 L 78 52 L 78 52 L 78 52');
+    }
+    100% {
+      d: path('M 50 30 C 50 18, 70 18, 70 30 L 70 110 L 38 110 L 38 50 L 58 50 L 58 100');
+    }
+  }
+
+  .clippy-stylized[data-state="pasting"] .sparkles {
+    animation: sparkle-burst 1500ms ease-out both;
+  }
+  @keyframes sparkle-burst {
+    0%, 40%   { opacity: 0; transform: scale(0.4); }
+    55%, 70%  { opacity: 1; transform: scale(1.1); }
+    85%, 100% { opacity: 0; transform: scale(0.8); }
+  }
+  .clippy-stylized .sparkles {
+    transform-origin: 50px 75px;
+  }
+  .clippy-stylized .spark {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .clippy-stylized .spark-2 { animation-delay: 60ms; }
+  .clippy-stylized .spark-3 { animation-delay: 120ms; }
 
   /* Speech bubble — pinned to the top of the window. */
   .bubble {

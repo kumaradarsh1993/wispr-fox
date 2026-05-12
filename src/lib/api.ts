@@ -57,6 +57,7 @@ export interface AppSettings {
   open_silently: boolean;
   force_clean_hotkey: string;
   force_clean_sticky_hotkey: string;
+  adapt_to_app: boolean;
 }
 
 export interface Recording {
