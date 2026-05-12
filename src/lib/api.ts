@@ -52,6 +52,11 @@ export interface AppSettings {
   custom_light_prompt: string;
   custom_advanced_prompt: string;
   custom_drafting_prompt: string;
+  pull_back_on_navigation: boolean;
+  keep_in_clipboard: boolean;
+  open_silently: boolean;
+  force_clean_hotkey: string;
+  force_clean_sticky_hotkey: string;
 }
 
 export interface Recording {
@@ -63,6 +68,7 @@ export interface Recording {
   status: RecordingStatus;
   transcript: string | null;
   cleaned_text: string | null;
+  drafted_text: string | null;
   stt_provider: string | null;
   llm_provider: string | null;
   clippy_used: boolean;
@@ -120,6 +126,8 @@ export const api = {
   listHistory: (limit = 100) => invoke<Recording[]>("list_history", { limit }),
   deleteRecording: (id: string) => invoke<void>("delete_recording", { id }),
   retryRecording: (id: string) => invoke<void>("retry_recording", { id }),
+  generateAltVersion: (id: string, kind: "cleaned" | "drafted") =>
+    invoke<string>("generate_alt_version", { id, kind }),
   audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),
   audioDataUrlFor: (id: string) => invoke<string>("audio_data_url_for", { id }),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),

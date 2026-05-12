@@ -9,6 +9,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+pub mod chunk;
 pub mod groq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

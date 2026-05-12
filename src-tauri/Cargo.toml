@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "0.1.1"
+version = "0.2.0"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -69,6 +69,7 @@ windows = { version = "0.58", features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_DataExchange",
   "Win32_System_Memory",
+  "Win32_System_Threading",
   "Win32_Foundation",
 ] }
 

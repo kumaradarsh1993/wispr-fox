@@ -30,6 +30,16 @@ pub struct AppSettings {
     pub advanced_sticky_hotkey: String,
     pub drafting_sticky_hotkey: String,
 
+    /// Force-clean variants of the Light hotkey. Pressing these triggers
+    /// F8 with `auto_clean_in_light` overridden to TRUE for this single
+    /// invocation — doesn't persist. Used when the user normally wants
+    /// raw F8 output but occasionally needs a cleaned version on-demand.
+    /// Defaults: Shift+F8 and Shift+Super+F8.
+    #[serde(default = "default_force_clean_hotkey")]
+    pub force_clean_hotkey: String,
+    #[serde(default = "default_force_clean_sticky_hotkey")]
+    pub force_clean_sticky_hotkey: String,
+
     // ── Cleanup behaviour per mode ────────────────────────────────────────
     // Whether each mode runs the LLM cleanup step. Light defaults to OFF
     // (raw Whisper transcript is good enough; user can opt in). Advanced
@@ -72,6 +82,13 @@ pub struct AppSettings {
     // ── System integration ─────────────────────────────────────────────────
     pub autostart: bool,
 
+    /// When true (default): main window stays hidden on launch — only the
+    /// Clippy floater + tray icon show up. User clicks tray or double-clicks
+    /// Clippy to open the main window. When false: open the main window on
+    /// startup like a normal app.
+    #[serde(default = "default_open_silently")]
+    pub open_silently: bool,
+
     // ── Audio cues (filename within %APPDATA%/com.wispr-fox.app/sounds/) ──
     /// Empty string = use built-in generated tone.
     pub start_sound: String,
@@ -81,6 +98,23 @@ pub struct AppSettings {
     // ── Look & feel ────────────────────────────────────────────────────────
     /// "auto" | "light" | "dark" | "retro"
     pub theme: String,
+
+    // ── Injection behaviour ────────────────────────────────────────────────
+    /// When true: if the user has navigated to a different app during the
+    /// LLM gap, yank focus back to where they started speaking and inject
+    /// there. When false (default): respect the new app, deliver the result
+    /// silently to the clipboard and show a Clippy bubble. Off by default
+    /// because pulling Chrome (or whatever) back to Outlook feels hostile.
+    #[serde(default)]
+    pub pull_back_on_navigation: bool,
+
+    /// When true (default): after every successful dictation, leave the
+    /// cleaned text on the clipboard so the user can Ctrl+V it again
+    /// anywhere — even if injection already pasted it once. Sacrifices the
+    /// user's prior clipboard contents (no restore-to-prior). When false:
+    /// restore prior clipboard ~800ms after paste (legacy behaviour).
+    #[serde(default = "default_keep_in_clipboard")]
+    pub keep_in_clipboard: bool,
 
     // ── Custom prompts (override built-in defaults) ───────────────────────
     // Empty string = use the baked-in default from prompts.rs.
@@ -96,19 +130,27 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            // F-keys are nearly always free system-wide; Win+Space collides with
-            // the Windows IME picker, and Ctrl+Alt+Space is grabbed by various
-            // background apps (NVIDIA GeForce, Logitech, Discord etc) on common
-            // setups. F8/F9/F10 work out of the box; rebind from Settings if needed.
+            // F-keys are nearly always free system-wide. F10 is UNIQUELY
+            // cursed on Windows — it's the system "menu activation" key
+            // (WM_SYSKEYUP routes to the foreground window even when our
+            // global hotkey eats the keypress), so dictating into Outlook
+            // silently moves focus to the ribbon. We retired F10 as a
+            // default and collapsed the three-mode model into two:
+            //   F8 = transcribe (Light, optional LLM cleanup via toggle)
+            //   F9 = draft (Drafting — instruction-aware elaboration)
+            // The Advanced enum + per-mode settings are kept for back-compat
+            // but no hotkey is bound by default — user can rebind via UI.
             light_hotkey: "F8".to_string(),
-            advanced_hotkey: "F9".to_string(),
-            drafting_hotkey: "F10".to_string(),
+            advanced_hotkey: String::new(),
+            drafting_hotkey: "F9".to_string(),
             sticky_light: false,
             sticky_advanced: false,
             sticky_drafting: false,
             light_sticky_hotkey: "Super+F8".to_string(),
-            advanced_sticky_hotkey: "Super+F9".to_string(),
-            drafting_sticky_hotkey: "Super+F10".to_string(),
+            advanced_sticky_hotkey: String::new(),
+            drafting_sticky_hotkey: "Super+F9".to_string(),
+            force_clean_hotkey: default_force_clean_hotkey(),
+            force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
             // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
             auto_clean_in_light: false,
             auto_clean_in_advanced: true,
@@ -139,8 +181,27 @@ impl Default for AppSettings {
             custom_light_prompt: String::new(),
             custom_advanced_prompt: String::new(),
             custom_drafting_prompt: String::new(),
+            pull_back_on_navigation: false,
+            keep_in_clipboard: default_keep_in_clipboard(),
+            open_silently: default_open_silently(),
         }
     }
+}
+
+fn default_keep_in_clipboard() -> bool {
+    true
+}
+
+fn default_open_silently() -> bool {
+    true
+}
+
+fn default_force_clean_hotkey() -> String {
+    "Shift+F8".to_string()
+}
+
+fn default_force_clean_sticky_hotkey() -> String {
+    "Shift+Super+F8".to_string()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -36,6 +36,19 @@
     <ellipse cx="32" cy="25" rx="3" ry="3.5" fill="var(--bg-card)" stroke="currentColor" stroke-width="1.2"/>
     <circle cx="32" cy="26" r="1.4" fill="currentColor"/>
   </svg>
+{:else if skin === "beige"}
+  <!-- Same shape as stylized, but cream outline + warm-brown features so
+       the picker preview hints at the theme inversion. -->
+  <svg viewBox="0 0 60 80" width={size * 0.75} height={size} aria-hidden="true">
+    <path d="M 25 14 C 25 8, 35 8, 35 14 L 35 56 C 35 67, 19 67, 19 56 L 19 26 C 19 20, 29 20, 29 26 L 29 51"
+          fill="none" stroke="#d8c89e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 18 18 Q 21 16, 24 18" fill="none" stroke="#8a5a2a" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M 30 18 Q 33 16, 36 18" fill="none" stroke="#8a5a2a" stroke-width="2.2" stroke-linecap="round"/>
+    <ellipse cx="22" cy="25" rx="3.2" ry="3.7" fill="#fff9ec" stroke="#6b3a0e" stroke-width="1.3"/>
+    <circle cx="22" cy="26" r="1.6" fill="#3a1a02"/>
+    <ellipse cx="32" cy="25" rx="3.2" ry="3.7" fill="#fff9ec" stroke="#6b3a0e" stroke-width="1.3"/>
+    <circle cx="32" cy="26" r="1.6" fill="#3a1a02"/>
+  </svg>
 {:else if skin === "real-clippy"}
   <!-- The ACTUAL Microsoft Clippy frame from the vendored sprite. -->
   <div

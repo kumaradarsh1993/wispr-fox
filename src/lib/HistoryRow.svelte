@@ -6,31 +6,45 @@
 
   let { rec } = $props<{ rec: Recording }>();
 
-  // Variant: 0 = polished (cleaned_text), 1 = base (raw transcript).
-  // Default to polished if available; otherwise fall back to raw.
-  let variant = $state<0 | 1>(rec.cleaned_text ? 0 : 1);
+  type Tab = "raw" | "cleaned" | "drafted";
+
+  // Active tab. Defaults to the "most refined" version that exists:
+  // drafted > cleaned > raw. User can switch by clicking the tabs.
+  function defaultTab(r: Recording): Tab {
+    if (r.drafted_text) return "drafted";
+    if (r.cleaned_text) return "cleaned";
+    return "raw";
+  }
+  let activeTab = $state<Tab>(defaultTab(rec));
+
   let expanded = $state(false);
   let audioUrl = $state<string | null>(null);
   let audioEl = $state<HTMLAudioElement | null>(null);
   let playing = $state(false);
   let busy = $state(false);
 
+  // When the generate-on-demand command for THIS row is in flight, track
+  // which kind so the corresponding tab can show a spinner instead of
+  // letting the user fire a second request.
+  let generating = $state<null | "cleaned" | "drafted">(null);
+
   let displayedText = $derived.by(() => {
-    if (variant === 0) {
-      return rec.cleaned_text || rec.transcript || "(no transcript)";
-    }
+    if (activeTab === "drafted") return rec.drafted_text || "(no draft yet)";
+    if (activeTab === "cleaned") return rec.cleaned_text || "(no cleaned version yet)";
     return rec.transcript || "(no transcript)";
   });
-
-  let hasBothVariants = $derived(!!rec.cleaned_text && !!rec.transcript && rec.cleaned_text !== rec.transcript);
   let isError = $derived(rec.status === "error");
-  // Retry is now offered for every recording — failed ones (recover from
-  // a transient API outage / network blip) and successful ones (the user
-  // didn't like the transcript and wants a fresh STT pass). Disabled only
-  // while a retry is in flight or while the recording is mid-flow.
-  let retryDisabled = $derived(
-    busy || rec.status === "recording" || rec.status === "transcribing" || rec.status === "cleaning",
-  );
+  // Retry must be available at ALL statuses — including 'transcribing'
+  // and 'cleaning'. The whole reason this exists is to recover from
+  // recordings that got stranded mid-flow (the flow crashed before
+  // status flipped to 'error' or 'done'). Disabling on status would
+  // lock the user out of the exact case they need to fix.
+  //
+  // Rust retry_recording is idempotent: bumps retry_count, resets
+  // status, re-runs. If a real job somehow IS still running, the
+  // second pass wins on UPSERT — annoying but not catastrophic.
+  // Only block while THIS row's button has a request in flight.
+  let retryDisabled = $derived(busy);
 
   // Inspector — (i) button. Shows: full error, retry count, providers
   // used, Clippy note, audio path. Surfaced for every recording so the
@@ -115,6 +129,32 @@
     await writeText(displayedText);
   }
 
+  /// Click handler for the Cleaned / Drafted tabs. If the version exists,
+  /// just switch the active tab. If it doesn't, fire the on-demand
+  /// generate command, wait for the result, then switch to it. Errors
+  /// surface as a simple alert — the row already shows status info via
+  /// the (i) inspector, no need to over-engineer.
+  async function onTabClick(kind: "cleaned" | "drafted") {
+    if (kind === "cleaned" && rec.cleaned_text) { activeTab = "cleaned"; return; }
+    if (kind === "drafted" && rec.drafted_text) { activeTab = "drafted"; return; }
+    if (!rec.transcript) {
+      alert("No raw transcript yet — retry the recording first.");
+      return;
+    }
+    generating = kind;
+    try {
+      await api.generateAltVersion(rec.id, kind);
+      // Pull the freshly-generated text into our local rec via a refresh.
+      // The history-store refresh re-fetches and re-renders the list.
+      await history.refresh();
+      activeTab = kind;
+    } catch (e) {
+      alert(`Could not generate ${kind} version: ${e}`);
+    } finally {
+      generating = null;
+    }
+  }
+
   async function remove() {
     if (!confirm("Delete this recording (text + audio)?")) return;
     busy = true;
@@ -163,9 +203,29 @@
   }
 </script>
 
-<article class="row" class:expanded class:error-row={isError}>
+<!-- Whole row is click-to-expand. Action buttons (play/copy/retry/info)
+     and the body's own action area stopPropagation so they don't toggle
+     expansion when clicked. The caret stays as a visual affordance but is
+     not the only thing that toggles — clicking anywhere on the body or the
+     meta strip also works (matches the user's mental model: "this row is a
+     thing I tap to read"). -->
+<article
+  class="row"
+  class:expanded
+  class:error-row={isError}
+  role="button"
+  tabindex="0"
+  aria-expanded={expanded}
+  onclick={() => (expanded = !expanded)}
+  onkeydown={(e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      expanded = !expanded;
+    }
+  }}
+>
   <header class="row-head">
-    <button class="row-toggle" onclick={() => (expanded = !expanded)} aria-label="Toggle expand">
+    <button class="row-toggle" onclick={(e) => { e.stopPropagation(); expanded = !expanded; }} aria-label="Toggle expand">
       <svg class="caret" class:open={expanded} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
         <path d="M 5 3 L 11 8 L 5 13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
@@ -189,7 +249,7 @@
       <button
         class="info-btn"
         class:has-news={inspectorHasNews}
-        onclick={() => (showInspector = !showInspector)}
+        onclick={(e) => { e.stopPropagation(); showInspector = !showInspector; }}
         aria-label="Show recording details and event log"
         aria-expanded={showInspector}
         title={inspectorHasNews ? "Details (error logged)" : "Details"}
@@ -198,7 +258,7 @@
       </button>
     </div>
 
-    <div class="actions">
+    <div class="actions" onclick={(e) => e.stopPropagation()} role="presentation">
       <button class="action-btn play" onclick={togglePlay} disabled={busy} title="Play / pause audio">
         {#if playing}
           <svg viewBox="0 0 16 16" width="14" height="14"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg>
@@ -237,6 +297,42 @@
   </header>
 
   <div class="body" class:clamped={!expanded}>
+    <!-- Version tabs (Raw / Cleaned / Drafted). The Raw tab is always
+         enabled because we always have a transcript once STT runs.
+         Cleaned + Drafted are enabled if their column has text; clicking
+         a dimmed one triggers on-demand LLM generation. Stops click-
+         bubbling so a tab click doesn't also toggle row expansion. -->
+    {#if rec.transcript || rec.cleaned_text || rec.drafted_text}
+      <div class="tabs" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <button
+          class="tab"
+          class:active={activeTab === "raw"}
+          class:dim={!rec.transcript}
+          disabled={!rec.transcript}
+          onclick={() => (activeTab = "raw")}
+          title="Raw transcript (exact Whisper output)"
+        >Raw</button>
+        <button
+          class="tab"
+          class:active={activeTab === "cleaned"}
+          class:dim={!rec.cleaned_text}
+          class:loading={generating === "cleaned"}
+          disabled={generating !== null}
+          onclick={() => onTabClick("cleaned")}
+          title={rec.cleaned_text ? "Cleaned version" : "Click to generate a cleaned version (spell/punctuation/paragraphing, no content change)"}
+        >{generating === "cleaned" ? "Cleaning…" : "Cleaned"}</button>
+        <button
+          class="tab"
+          class:active={activeTab === "drafted"}
+          class:dim={!rec.drafted_text}
+          class:loading={generating === "drafted"}
+          disabled={generating !== null}
+          onclick={() => onTabClick("drafted")}
+          title={rec.drafted_text ? "Drafted version" : "Click to generate a drafted version (treats the transcript as a brief and produces a polished output)"}
+        >{generating === "drafted" ? "Drafting…" : "Drafted"}</button>
+      </div>
+    {/if}
+
     {#if isError}
       <div class="err">
         <strong>Failed:</strong> {rec.error || "unknown error"}
@@ -247,11 +343,15 @@
       <p class="note">Clippy note: {rec.clippy_note}</p>
     {/if}
     {#if expanded}
+      <!-- Expanded action area stops click-bubbling so its buttons don't
+           re-toggle the row when clicked. -->
+      <div role="presentation" onclick={(e) => e.stopPropagation()}>
       <!-- Delete used to live in the action button row. Moved here so it
            takes a deliberate click instead of being a thumb-reachable
            danger button alongside Play/Copy/Retry. Still confirms. -->
       <div class="expanded-actions">
         <button class="delete-link" onclick={remove} disabled={busy}>Delete recording</button>
+      </div>
       </div>
     {/if}
   </div>
@@ -305,23 +405,8 @@
     </div>
   {/if}
 
-  {#if hasBothVariants}
-    <!-- Compact inline variant toggle — minimal chevrons + tiny label.
-         Sits flush against the transcript so it doesn't steal vertical space. -->
-    <button
-      class="variant-toggle"
-      onclick={() => (variant = variant === 0 ? 1 : 0)}
-      title="Switch between Polished (LLM-cleaned) and Base (raw transcript)"
-    >
-      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-        <path d="M 10 3 L 5 8 L 10 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span class="variant-name-compact">{variant === 0 ? "Polished" : "Base"}</span>
-      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-        <path d="M 6 3 L 11 8 L 6 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-  {/if}
+  <!-- (Old "Polished / Base" toggle removed — replaced by the 3-tab bar
+       at the top of the body.) -->
 
   {#if audioUrl}
     <audio
@@ -343,10 +428,16 @@
     border-bottom: 1px solid var(--border-subtle);
     transition: background 120ms ease;
     position: relative;
+    cursor: pointer;
   }
 
   .row:hover {
     background: var(--bg-subtle);
+  }
+
+  .row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .row.error-row {
@@ -660,6 +751,64 @@
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  /* 3-tab bar — Raw / Cleaned / Drafted. Sits above the transcript body.
+     Active tab is highlighted, missing-version tabs are dimmed; dimmed
+     tabs are still clickable to trigger on-demand generation. */
+  .tabs {
+    display: inline-flex;
+    gap: 0;
+    margin-bottom: 8px;
+    background: var(--bg-subtle);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .tab {
+    background: transparent;
+    border: none;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background 100ms ease, color 100ms ease;
+    font-family: inherit;
+  }
+
+  .tab:hover:not(:disabled) {
+    color: var(--text-primary);
+  }
+
+  .tab.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
+  /* Dim tabs (= version doesn't exist yet) — still clickable to trigger
+     generation. Slight italic so it reads as "this is a CTA, not the data". */
+  .tab.dim {
+    color: var(--text-secondary);
+    opacity: 0.55;
+    font-style: italic;
+  }
+  .tab.dim:hover:not(:disabled) {
+    opacity: 0.9;
+    color: var(--accent);
+  }
+
+  .tab.loading {
+    color: var(--accent);
+    opacity: 1;
+    font-style: italic;
+  }
+
+  .tab:disabled {
+    cursor: not-allowed;
   }
 
   .text {

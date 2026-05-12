@@ -62,10 +62,18 @@
   });
 
   async function clearAll() {
-    if (!confirm("Delete ALL recordings (text + audio)? This cannot be undone.")) return;
+    const ok = confirm(
+      "Delete ALL recordings?\n\n" +
+      "This permanently removes:\n" +
+      "  • All transcripts and cleaned/drafted text\n" +
+      "  • All audio files (the .wav recordings)\n" +
+      "  • All history rows\n\n" +
+      "This cannot be undone. Are you sure?"
+    );
+    if (!ok) return;
     const removed = await api.clearAllHistory();
     await history.refresh();
-    alert(`Deleted ${removed} recordings.`);
+    alert(`Deleted ${removed} recording${removed === 1 ? "" : "s"}.`);
   }
 
   async function openRecordingsFolder() {
@@ -117,7 +125,7 @@
           </svg>
           Folder
         </button>
-        <button class="icon-btn" onclick={() => history.refresh()} title="Refresh">
+        <button class="icon-btn" onclick={() => history.refresh()} title="Reload the list from disk — does not re-transcribe anything">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>

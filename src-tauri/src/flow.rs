@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::audio::{AudioController, FinishedRecording};
 use crate::clippy;
-use crate::history::{History, Status};
+use crate::history::{AltKind, History, Status};
 use crate::hotkey::{Edge, HotkeyEvent};
 use crate::inject;
 use crate::llm::{gemini::GeminiLlm, groq::GroqLlm, ClippyMode, LlmProvider};
@@ -24,6 +24,40 @@ use crate::stt::{groq::GroqStt, SttProvider};
 use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
+
+/// Map a raw error string (from `anyhow::Error::to_string()`) to a short
+/// user-readable message. Pattern-matches the common failure modes we see
+/// in production — auth, rate limit, network, timeout. Anything we don't
+/// recognise falls through to a generic catch-all so the toast still says
+/// something useful and not an opaque stack-y string.
+fn user_friendly_error(raw: &str) -> String {
+    let s = raw.to_ascii_lowercase();
+    if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") {
+        return "API key missing — open Settings → Provider & Keys.".to_string();
+    }
+    if s.contains("401") || s.contains("unauthorized") || s.contains("403") || s.contains("forbidden") {
+        return "API key rejected — check Settings → Provider & Keys.".to_string();
+    }
+    if s.contains("429") || s.contains("rate limit") {
+        return "Rate limit hit — wait a minute and retry from History.".to_string();
+    }
+    if s.contains("timed out") || s.contains("timeout") {
+        return "Took too long — try a shorter clip, or retry from History.".to_string();
+    }
+    if s.contains("dns") || s.contains("no such host") || s.contains("connect") || s.contains("network") {
+        return "Network issue — recording saved to History, retry when back online.".to_string();
+    }
+    if s.contains("500") || s.contains("502") || s.contains("503") || s.contains("504") || s.contains("upstream") {
+        return "Provider had a hiccup — retry from History.".to_string();
+    }
+    if s.contains("recording too short") {
+        return "Recording too short — hold the hotkey longer.".to_string();
+    }
+    if s.contains("injection") || s.contains("clipboard") {
+        return "Couldn't paste — text is on the clipboard, press Ctrl+V manually.".to_string();
+    }
+    format!("Something went wrong — {}", raw.lines().next().unwrap_or(raw))
+}
 
 /// Pick the user-customised system prompt for the given mode, if set.
 /// Empty string means "use the baked-in default" (handled by clippy::clean).
@@ -82,6 +116,16 @@ struct InFlight {
     mode: Mode,
     record_id: String,
     audio_path: PathBuf,
+    /// Foreground window + focused control at recording start. Restored
+    /// just before injection to defeat focus drift during the LLM gap
+    /// (F10 menu activation in Outlook, user clicking away, notification
+    /// stealers, etc.). None when capture wasn't possible — e.g. when the
+    /// user dictated into wispr-fox's own window.
+    captured_focus: Option<inject::focus::CapturedFocus>,
+    /// Set by the Shift+F8 hotkey: force the cleanup pass on (override
+    /// `auto_clean_in_light` to true) for this single invocation, without
+    /// persisting the setting change.
+    force_clean: bool,
 }
 
 #[derive(Clone)]
@@ -153,7 +197,7 @@ impl Flow {
                         tracing::error!("finish_recording (sticky stop) failed: {e:#}");
                         let _ = app.emit("wispr:flow_error", e.to_string());
                     }
-                } else if let Err(e) = this.start_recording_async(&app, evt.mode).await {
+                } else if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
                     tracing::error!("start_recording (sticky start) failed: {e:#}");
                     let _ = app.emit("wispr:flow_error", e.to_string());
                 } else {
@@ -166,7 +210,7 @@ impl Flow {
             // Push-to-talk: down starts, up finishes.
             match evt.edge {
                 Edge::Down => {
-                    if let Err(e) = this.start_recording_async(&app, evt.mode).await {
+                    if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
                         tracing::error!("start_recording failed: {e:#}");
                         let _ = app.emit("wispr:flow_error", e.to_string());
                     } else {
@@ -184,7 +228,7 @@ impl Flow {
         });
     }
 
-    async fn start_recording_async(&self, _app: &AppHandle, mode: Mode) -> Result<()> {
+    async fn start_recording_async(&self, _app: &AppHandle, mode: Mode, force_clean: bool) -> Result<()> {
         {
             let state = self.state.lock();
             if state.active.is_some() {
@@ -199,6 +243,12 @@ impl Flow {
             .join(date)
             .join(format!("{id_seed}.wav"));
 
+        // Snapshot where the user is talking BEFORE we start the audio
+        // stream. We capture now (not on hotkey-up) because F10 release can
+        // itself shift focus (Outlook ribbon keytips), and we want the HWND
+        // of where the user actually started speaking.
+        let captured_focus = inject::focus::capture();
+
         self.audio
             .start(path.clone())
             .await
@@ -207,7 +257,13 @@ impl Flow {
         let record_id = self.history.insert_new(&path, ClippyMode::from(mode))?;
 
         let mut state = self.state.lock();
-        state.active = Some(InFlight { mode, record_id, audio_path: path });
+        state.active = Some(InFlight {
+            mode,
+            record_id,
+            audio_path: path,
+            captured_focus,
+            force_clean,
+        });
         Ok(())
     }
 
@@ -216,9 +272,31 @@ impl Flow {
             let mut state = self.state.lock();
             state.active.take()
         };
-        let Some(InFlight { mode, record_id, audio_path: _ }) = in_flight else {
+        let Some(in_flight) = in_flight else {
             return Ok(());
         };
+        let record_id = in_flight.record_id.clone();
+
+        // Run the pipeline; whatever happens (Ok / Err / step timeout),
+        // the wrapper here GUARANTEES the UI returns to idle and any
+        // history row is properly closed out. Without this, an unhandled
+        // error in STT/LLM leaves Clippy stuck in "thinking" forever and
+        // the row stranded in `transcribing`.
+        let outcome = self.do_pipeline(app, in_flight).await;
+
+        let _ = app.emit("wispr:state", "idle");
+        if let Err(e) = &outcome {
+            let raw = format!("{e:#}");
+            tracing::warn!(record_id = %record_id, "pipeline failed: {raw}");
+            let _ = self.history.set_error(&record_id, &raw);
+            let friendly = user_friendly_error(&raw);
+            let _ = app.emit("wispr:flow_error", &friendly);
+        }
+        outcome
+    }
+
+    async fn do_pipeline(&self, app: &AppHandle, in_flight: InFlight) -> Result<()> {
+        let InFlight { mode, record_id, audio_path: _, captured_focus, force_clean } = in_flight;
 
         let _ = app.emit("wispr:state", "transcribing");
 
@@ -237,7 +315,7 @@ impl Flow {
             self.history
                 .set_error(&record_id, "recording too short")?;
             let _ = std::fs::remove_file(&path);
-            let _ = app.emit("wispr:state", "idle");
+            // wrapper emits idle for us; just return cleanly
             return Ok(());
         }
 
@@ -256,9 +334,17 @@ impl Flow {
         );
 
         self.usage.record_stt();
-        let transcript = stt
-            .transcribe(&path, stt_settings.language_hint.as_deref())
+        // 120s hard cap on STT. Single-request Whisper rarely takes more
+        // than ~15s for 5-min audio; the wider ceiling accommodates the
+        // multi-chunk path (files > 20 MB get split and transcribed
+        // sequentially, ~3-6s per chunk). Beyond 120s something is wrong
+        // (DNS hang, upstream stall) and we'd rather surface an error than
+        // let Clippy spin forever. reqwest itself doesn't apply a default
+        // request timeout, so without this the call could hang indefinitely.
+        let stt_future = stt.transcribe(&path, stt_settings.language_hint.as_deref());
+        let transcript = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future)
             .await
+            .map_err(|_| anyhow!("Whisper STT timed out after 120s — check network or try a shorter clip"))?
             .context("Groq Whisper request")?;
 
         tracing::info!(
@@ -274,10 +360,15 @@ impl Flow {
 
         let clippy_settings = self.settings();
         let needs_clippy = match mode {
-            Mode::Light => clippy_settings.auto_clean_in_light,
+            // Light: cleanup either when the persistent toggle is on OR
+            // when the user hit Shift+F8 (force_clean) for this single press.
+            Mode::Light => clippy_settings.auto_clean_in_light || force_clean,
             Mode::Advanced => clippy_settings.auto_clean_in_advanced,
             Mode::Drafting => clippy_settings.auto_clean_in_drafting,
         };
+        if force_clean {
+            tracing::info!(record_id, "force-clean override active (Shift+F8 invocation)");
+        }
 
         let final_text = if needs_clippy {
             let _ = app.emit("wispr:state", "cleaning");
@@ -294,8 +385,13 @@ impl Flow {
             self.usage.record_llm();
             let custom = custom_prompt_for(&clippy_settings, mode);
             let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
-            self.history.set_cleaned(
+            // Drafting mode (F9) writes to `drafted_text`; everything else
+            // (Light cleanup, Advanced cleanup) writes to `cleaned_text`.
+            // This lets the history UI show both versions independently.
+            let alt = if matches!(mode, Mode::Drafting) { AltKind::Drafted } else { AltKind::Cleaned };
+            self.history.set_alt(
                 &record_id,
+                alt,
                 &cleaned.text,
                 Some(llm.name()),
                 cleaned.used_clippy,
@@ -308,19 +404,130 @@ impl Flow {
 
         let _ = app.emit("wispr:state", "injecting");
         self.history.update_status(&record_id, Status::Injecting)?;
-        match inject::inject(&final_text) {
-            Ok(channel) => {
-                tracing::info!(?channel, chars = final_text.chars().count(), "injected");
-                self.history.update_status(&record_id, Status::Done)?;
+
+        // Decision tree:
+        //   (a) Foreground HWND + focused control unchanged → SKIP restore.
+        //       This is the "user stayed put" case (Teams compose, normal
+        //       same-window dictation). Touching focus here actively hurts
+        //       in Electron apps: SetForegroundWindow on an already-foreground
+        //       window fires WM_ACTIVATE, which Electron uses to re-seat
+        //       focus on its preferred element — usually NOT the user's
+        //       compose box.
+        //   (b) Same process but focus drifted (focused_ctrl changed, OR
+        //       foreground HWND changed within same pid) → restore.
+        //       This is the F10/Outlook ribbon-keytip case.
+        //   (c) Different process AND pull_back_on_navigation == true →
+        //       user opted in to focus-stealing; restore + inject.
+        //   (d) Different process AND pull_back_on_navigation == false →
+        //       respect the new app. Silent clipboard delivery + Clippy
+        //       bubble. No focus theft.
+        let inj_settings = self.settings();
+        let (current_fg, current_ctrl, current_pid) = inject::focus::current_foreground_state();
+        let cap_ref = captured_focus.as_ref();
+        let same_fg = cap_ref.map(|c| c.foreground_hwnd() == current_fg && current_fg != 0).unwrap_or(false);
+        let same_ctrl = cap_ref.map(|c| c.focused_ctrl() == current_ctrl).unwrap_or(false);
+        let same_process = cap_ref.map(|c| c.pid() == current_pid && current_pid != 0).unwrap_or(false);
+        let nothing_changed = same_fg && same_ctrl;
+        let should_restore_focus = !nothing_changed
+            && (same_process || inj_settings.pull_back_on_navigation);
+
+        if let (Some(cap), true) = (cap_ref, should_restore_focus) {
+            if let Err(e) = inject::focus::restore(cap) {
+                tracing::warn!("focus restore failed (non-fatal): {e:#}");
             }
-            Err(e) => {
-                tracing::warn!("injection failed: {e:#}");
-                self.history.set_error(&record_id, &format!("injection: {e}"))?;
+        } else if nothing_changed && cap_ref.is_some() {
+            tracing::debug!("focus restore skipped: foreground + focused control unchanged");
+        }
+
+        if !same_process && !inj_settings.pull_back_on_navigation && captured_focus.is_some() {
+            // Cross-process silent delivery. Don't paste anywhere — that
+            // would either pollute the wrong app (Chrome address bar, etc.)
+            // or fight the user's current task. Just leave it on clipboard
+            // and tell Clippy to show a "copied" bubble.
+            tracing::info!(
+                captured_pid = captured_focus.as_ref().map(|c| c.pid()).unwrap_or(0),
+                current_pid,
+                chars = final_text.chars().count(),
+                "silent clipboard delivery (user navigated away)"
+            );
+            match inject::clipboard::set_only(&final_text) {
+                Ok(()) => {
+                    let _ = app.emit("wispr:clippy_message", "Copied to clipboard");
+                    self.history.update_status(&record_id, Status::Done)?;
+                }
+                Err(e) => {
+                    tracing::warn!("silent clipboard set failed: {e:#}");
+                    self.history.set_error(&record_id, &format!("clipboard: {e}"))?;
+                }
+            }
+        } else {
+            match inject::inject(&final_text, inj_settings.keep_in_clipboard) {
+                Ok(channel) => {
+                    tracing::info!(
+                        ?channel,
+                        chars = final_text.chars().count(),
+                        keep_in_clipboard = inj_settings.keep_in_clipboard,
+                        "injected"
+                    );
+                    self.history.update_status(&record_id, Status::Done)?;
+                }
+                Err(e) => {
+                    tracing::warn!("injection failed: {e:#}");
+                    self.history.set_error(&record_id, &format!("injection: {e}"))?;
+                }
             }
         }
 
-        let _ = app.emit("wispr:state", "idle");
+        // wrapper emits idle
         Ok(())
+    }
+
+    /// Generate a Cleaned or Drafted version for an existing recording.
+    /// The raw transcript must already exist (i.e. STT has run); we just
+    /// feed it through the LLM with the appropriate prompt and persist
+    /// the result to the correct column. Returns the generated text so
+    /// the frontend can show it immediately without a full history refresh.
+    pub async fn generate_alt_version(&self, record_id: &str, kind: &str) -> Result<String> {
+        let target = match kind {
+            "cleaned" => AltKind::Cleaned,
+            "drafted" => AltKind::Drafted,
+            other => return Err(anyhow!("unknown alt-version kind '{other}'")),
+        };
+
+        let rec = self
+            .history
+            .get(record_id)?
+            .ok_or_else(|| anyhow!("recording {record_id} not found"))?;
+        let transcript = rec
+            .transcript
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("no raw transcript yet — retry the recording first"))?;
+
+        let settings = self.settings();
+        let mode = match target {
+            // Cleaned-raw uses the Light prompt (now the "cleaned raw" formatter).
+            AltKind::Cleaned => Mode::Light,
+            AltKind::Drafted => Mode::Drafting,
+        };
+
+        let provider_id = settings.llm_provider.clone();
+        let model = settings.llm_model.clone();
+        let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
+        self.usage.record_llm();
+
+        let custom = custom_prompt_for(&settings, mode);
+        let cleaned = clippy::clean(transcript, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
+
+        self.history.set_alt(
+            record_id,
+            target,
+            &cleaned.text,
+            Some(llm.name()),
+            cleaned.used_clippy,
+            cleaned.note,
+        )?;
+        Ok(cleaned.text)
     }
 
     /// Re-run transcription + cleanup on an existing recording. Used by the
@@ -376,8 +583,10 @@ impl Flow {
             self.usage.record_llm();
             let custom = custom_prompt_for(&stt_settings, mode);
             let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), llm.as_ref()).await;
-            self.history.set_cleaned(
+            let alt = if matches!(mode, Mode::Drafting) { AltKind::Drafted } else { AltKind::Cleaned };
+            self.history.set_alt(
                 record_id,
+                alt,
                 &cleaned.text,
                 Some(llm.name()),
                 cleaned.used_clippy,

@@ -99,6 +99,8 @@ pub fn run() {
                 &settings.light_sticky_hotkey,
                 &settings.advanced_sticky_hotkey,
                 &settings.drafting_sticky_hotkey,
+                &settings.force_clean_hotkey,
+                &settings.force_clean_sticky_hotkey,
                 move |evt| {
                     flow_for_hotkey.handle_hotkey(&app_for_hotkey, evt);
                 },
@@ -153,6 +155,7 @@ pub fn run() {
             commands::list_history,
             commands::delete_recording,
             commands::retry_recording,
+            commands::generate_alt_version,
             commands::audio_url_for,
             commands::audio_data_url_for,
             commands::list_input_devices,

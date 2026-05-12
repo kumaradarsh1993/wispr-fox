@@ -6,7 +6,7 @@
   import HotkeyCapture from "$lib/HotkeyCapture.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
-  type Section = "provider" | "models" | "hotkeys" | "audio" | "look" | "retention" | "compare";
+  type Section = "provider" | "models" | "hotkeys" | "startup" | "audio" | "look" | "retention" | "compare";
   let section = $state<Section>("provider");
 
   // ── Provider comparison matrix (May 2026 figures) ─────────────────────
@@ -318,9 +318,9 @@
   type SkinOption = { id: Skin; label: string; desc: string };
   const SKIN_OPTIONS: SkinOption[] = [
     { id: "off",         label: "Off",       desc: "Hide the floating character entirely" },
-    { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — clean, modern" },
+    { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
+    { id: "beige",       label: "Cream",     desc: "Theme-reversed paperclip — warm cream outline + brown features. Easier on the eyes on dark backgrounds." },
     { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
-    { id: "chippy",      label: "Chippy",    desc: "Potato chip mascot (placeholder — improvements pending)" },
   ];
   async function pickSkin(s: Skin) {
     await skinStore.set(s);
@@ -499,11 +499,28 @@
     { id: "provider",  label: "Provider & Keys", icon: "🔑" },
     { id: "models",    label: "Models",          icon: "✨" },
     { id: "hotkeys",   label: "Hotkeys",         icon: "⌨" },
+    { id: "startup",   label: "Startup",         icon: "🚀" },
     { id: "audio",     label: "Audio cues",      icon: "🔔" },
     { id: "look",      label: "Look & Feel",     icon: "🎨" },
     { id: "retention", label: "Retention",       icon: "🗃" },
     { id: "compare",   label: "Compare providers", icon: "📊" },
   ];
+
+  // Autostart sync — keep the OS-level "launch on login" registration in
+  // step with our settings.autostart flag. tauri-plugin-autostart's enable()
+  // / disable() write the platform-specific entry (Win registry / launchd /
+  // systemd) and isEnabled() reads it back. We don't trust our setting in
+  // isolation because the user might have flipped the OS entry manually.
+  async function syncAutostart(target: boolean) {
+    try {
+      const { enable, disable } = await import("@tauri-apps/plugin-autostart");
+      if (target) await enable();
+      else await disable();
+      await settings.set("autostart", target);
+    } catch (e) {
+      console.warn("autostart sync failed", e);
+    }
+  }
 </script>
 
 <div class="settings">
@@ -718,12 +735,12 @@
         </p>
 
         {#each [
-          { id: "light",    fkey: "F8",  title: "Light",    settingKey: "auto_clean_in_light",    defaultOn: false,
-            desc: "Raw dictation, no polishing. You speak → exactly what Whisper heard gets pasted. Use for quick notes." },
-          { id: "advanced", fkey: "F9",  title: "Advanced", settingKey: "auto_clean_in_advanced", defaultOn: true,
-            desc: "Basic cleanup — grammar, spelling, punctuation, filler removal, light structuring. NEVER drafts, expands, or reduces content. Preserves your voice." },
-          { id: "drafting", fkey: "F10", title: "Drafting", settingKey: "auto_clean_in_drafting", defaultOn: true,
-            desc: "Full drafting — give a brief (\"draft an email to Saurabh about X, Y, Z\") and you get back a complete polished output. Best for emails, Slack messages, docs." },
+          { id: "light",    fkey: "F8",  title: "Transcribe",  settingKey: "auto_clean_in_light",    defaultOn: false,
+            desc: "Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every F8 press also gets spell/punctuation/paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use Shift+F8." },
+          { id: "drafting", fkey: "F9",  title: "Draft",       settingKey: "auto_clean_in_drafting", defaultOn: true,
+            desc: "Give a brief (\"draft an email to Saurabh about X, Y, Z\") and get back a complete polished output. Best for emails, Slack, docs." },
+          { id: "advanced", fkey: "—",   title: "Advanced (legacy)", settingKey: "auto_clean_in_advanced", defaultOn: true,
+            desc: "Standalone Advanced cleanup mode. No hotkey by default — bind one in Hotkeys if you want a dedicated key separate from the F8 toggle." },
         ] as m (m.id)}
           <div class="mode-block">
             <div class="mode-head">
@@ -809,8 +826,8 @@
         <div class="hotkey-block">
           <div class="hotkey-head">
             <div>
-              <div class="hk-label">Light <span class="hk-tag">most used</span></div>
-              <div class="hk-desc">Cleanup-only — fixes punctuation + capitalisation, never rephrases.</div>
+              <div class="hk-label">Transcribe <span class="hk-tag">F8 default · most used</span></div>
+              <div class="hk-desc">Voice → text. LLM cleanup toggle is in Models &amp; Modes.</div>
             </div>
           </div>
           <div class="hk-pair">
@@ -833,8 +850,27 @@
         <div class="hotkey-block">
           <div class="hotkey-head">
             <div>
-              <div class="hk-label">Drafting <span class="hk-tag">F10 default · second most used</span></div>
-              <div class="hk-desc">Drafts polished output from your brief. Best for emails, slack messages, docs.</div>
+              <div class="hk-label">Transcribe + force-clean <span class="hk-tag">Shift+F8 default</span></div>
+              <div class="hk-desc">Same as Transcribe, but forces LLM cleanup ON for this one press — useful when you normally want raw and occasionally want cleaned. Doesn't change the persistent toggle.</div>
+            </div>
+          </div>
+          <div class="hk-pair">
+            <div class="hk-pair-col">
+              <div class="hk-pair-label">Main (push-to-talk)</div>
+              <HotkeyCapture label="" bind:value={settings.s.force_clean_hotkey} />
+            </div>
+            <div class="hk-pair-col">
+              <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+              <HotkeyCapture label="" bind:value={settings.s.force_clean_sticky_hotkey} />
+            </div>
+          </div>
+        </div>
+
+        <div class="hotkey-block">
+          <div class="hotkey-head">
+            <div>
+              <div class="hk-label">Draft <span class="hk-tag">F9 default</span></div>
+              <div class="hk-desc">Drafts polished output from your brief. Best for emails, Slack, docs.</div>
             </div>
           </div>
           <div class="hk-pair">
@@ -854,13 +890,11 @@
           </label>
         </div>
 
-        <div class="hotkey-block">
-          <div class="hotkey-head">
-            <div>
-              <div class="hk-label">Advanced <span class="hk-tag">F9 default</span></div>
-              <div class="hk-desc">Instruction-aware — "make this an email", "shorter", "in bullets".</div>
-            </div>
-          </div>
+        <details class="hotkey-block-collapsed">
+          <summary>
+            <span class="hk-label">Advanced cleanup (legacy)</span>
+            <span class="hk-desc-inline">— optional dedicated hotkey for the cleanup-only pipeline. Most people don't need this; the F8 LLM toggle covers it.</span>
+          </summary>
           <div class="hk-pair">
             <div class="hk-pair-col">
               <div class="hk-pair-label">Main (push-to-talk)</div>
@@ -876,10 +910,67 @@
                    onchange={(e) => settings.set("sticky_advanced", (e.currentTarget as HTMLInputElement).checked)} />
             <span>Default to sticky</span>
           </label>
-        </div>
+        </details>
 
         <button class="btn-primary" onclick={saveHotkeys}>Save hotkeys</button>
-        <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox.</p>
+        <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox. F10 is retired by default — it activates the menu bar in Outlook, which steals focus from your text field.</p>
+
+        <h3 style="margin-top: 32px;">Behaviour</h3>
+        <p class="lede">
+          How wispr-fox delivers the result when you've moved on during the LLM gap.
+        </p>
+
+        <div class="behavior-block">
+          <label class="check-row">
+            <input type="checkbox" checked={settings.s.keep_in_clipboard}
+                   onchange={(e) => settings.set("keep_in_clipboard", (e.currentTarget as HTMLInputElement).checked)} />
+            <span><strong>Keep dictation on clipboard</strong> — after every dictation, the cleaned text stays on your clipboard. Press Ctrl+V anywhere as a backup delivery.</span>
+          </label>
+          <p class="hint">Sacrifices whatever you previously copied. Turn off if you rely on clipboard history flows.</p>
+        </div>
+
+        <div class="behavior-block">
+          <label class="check-row">
+            <input type="checkbox" checked={settings.s.pull_back_on_navigation}
+                   onchange={(e) => settings.set("pull_back_on_navigation", (e.currentTarget as HTMLInputElement).checked)} />
+            <span><strong>Pull focus back to original app</strong> when result is ready — yank the window you started speaking in back to the foreground so the paste lands there.</span>
+          </label>
+          <p class="hint">Off by default (don't disrupt you if you've moved on). When off and you've navigated away, wispr-fox copies to clipboard and Clippy shows "Copied to clipboard" instead.</p>
+        </div>
+      </section>
+    {/if}
+
+    <!-- ═══ Startup ═════════════════════════════════════════════════════ -->
+    {#if section === "startup"}
+      <section>
+        <h2>Startup</h2>
+        <p class="lede">
+          What happens when wispr-fox launches — automatic or manual, loud or silent.
+        </p>
+
+        <div class="behavior-block">
+          <label class="check-row">
+            <input
+              type="checkbox"
+              checked={settings.s.autostart}
+              onchange={(e) => syncAutostart((e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span><strong>Launch wispr-fox at login</strong> — start automatically when you sign in to Windows. The tray icon + Clippy floater appear; no main window unless you ask.</span>
+          </label>
+          <p class="hint">Registers a Windows startup entry under the current user (no admin needed). Toggle off any time to remove it.</p>
+        </div>
+
+        <div class="behavior-block">
+          <label class="check-row">
+            <input
+              type="checkbox"
+              checked={settings.s.open_silently}
+              onchange={(e) => settings.set("open_silently", (e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span><strong>Open silently</strong> — on launch, only Clippy + the tray icon show. Open this Settings/History window via tray (left-click) or double-click on Clippy.</span>
+          </label>
+          <p class="hint">On by default. Turn off if you want the main window to pop open every time the app starts.</p>
+        </div>
       </section>
     {/if}
 
@@ -1614,6 +1705,66 @@
     font-size: 12px;
     color: var(--text-secondary);
     margin-top: 2px;
+  }
+
+  .hk-desc-inline {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  /* Collapsed legacy-Advanced block — same visual frame as hotkey-block
+     but the contents are hidden behind a <details> disclosure. */
+  .hotkey-block-collapsed {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 0;
+    margin-bottom: 12px;
+    max-width: 620px;
+  }
+
+  .hotkey-block-collapsed > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    color: var(--text-primary);
+  }
+
+  .hotkey-block-collapsed > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .hotkey-block-collapsed > summary::before {
+    content: "▸";
+    color: var(--text-secondary);
+    font-size: 10px;
+    margin-right: 4px;
+  }
+
+  .hotkey-block-collapsed[open] > summary::before {
+    content: "▾";
+  }
+
+  .hotkey-block-collapsed[open] > summary {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .hotkey-block-collapsed > :not(summary) {
+    padding: 12px 14px;
+  }
+
+  .behavior-block {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    max-width: 620px;
   }
 
   .hk-pair {

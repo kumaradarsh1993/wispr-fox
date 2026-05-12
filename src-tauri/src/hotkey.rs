@@ -32,6 +32,12 @@ pub struct HotkeyEvent {
     /// uses this to force sticky toggle behaviour for THIS press, regardless
     /// of the per-mode sticky setting.
     pub sticky_invoke: bool,
+    /// True when fired from a force-clean combo (Shift+F8 by default).
+    /// Tells the flow layer to override `auto_clean_in_light` to TRUE for
+    /// this single invocation — gives the user on-demand cleanup without
+    /// changing the global setting. Only meaningful for Light mode.
+    #[serde(default)]
+    pub force_clean: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -43,20 +49,27 @@ pub fn register(
     light_sticky: &str,
     advanced_sticky: &str,
     drafting_sticky: &str,
+    force_clean: &str,
+    force_clean_sticky: &str,
     on_event: impl Fn(HotkeyEvent) + Send + Sync + 'static,
 ) -> Result<()> {
-    let combos = [
-        (light, Mode::Light, false),
-        (advanced, Mode::Advanced, false),
-        (drafting, Mode::Drafting, false),
-        (light_sticky, Mode::Light, true),
-        (advanced_sticky, Mode::Advanced, true),
-        (drafting_sticky, Mode::Drafting, true),
+    // Tuple shape: (combo, mode, sticky_invoke, force_clean)
+    let combos: [(&str, Mode, bool, bool); 8] = [
+        (light, Mode::Light, false, false),
+        (advanced, Mode::Advanced, false, false),
+        (drafting, Mode::Drafting, false, false),
+        (light_sticky, Mode::Light, true, false),
+        (advanced_sticky, Mode::Advanced, true, false),
+        (drafting_sticky, Mode::Drafting, true, false),
+        // Force-clean variants: same Light mode, but flag the press so the
+        // flow layer treats it as auto_clean_in_light=true for this invocation.
+        (force_clean, Mode::Light, false, true),
+        (force_clean_sticky, Mode::Light, true, true),
     ];
 
     let on_event = std::sync::Arc::new(on_event);
 
-    for (combo, mode, sticky_invoke) in combos {
+    for (combo, mode, sticky_invoke, force_clean_flag) in combos {
         if combo.is_empty() {
             continue;
         }
@@ -66,6 +79,7 @@ pub fn register(
         let on_event = on_event.clone();
         let mode_capture = mode;
         let sticky_capture = sticky_invoke;
+        let force_capture = force_clean_flag;
         match app.global_shortcut().on_shortcut(sc.clone(), move |_app, fired, event| {
             if fired != &sc_match {
                 return;
@@ -78,9 +92,10 @@ pub fn register(
                 mode: mode_capture,
                 edge,
                 sticky_invoke: sticky_capture,
+                force_clean: force_capture,
             });
         }) {
-            Ok(()) => tracing::info!(combo, ?mode, sticky_invoke, "hotkey registered"),
+            Ok(()) => tracing::info!(combo, ?mode, sticky_invoke, force_clean = force_clean_flag, "hotkey registered"),
             Err(e) => tracing::warn!(combo, ?mode, "hotkey registration failed: {e}"),
         }
     }

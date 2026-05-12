@@ -27,6 +27,15 @@ pub enum Status {
     Error,
 }
 
+/// Which "alt" output column to write into — the cleaned-raw column or
+/// the drafted column. Lets the same history setter route to either
+/// destination based on the mode that produced the output.
+#[derive(Debug, Clone, Copy)]
+pub enum AltKind {
+    Cleaned,
+    Drafted,
+}
+
 impl Status {
     fn as_str(&self) -> &'static str {
         match self {
@@ -77,6 +86,11 @@ pub struct Recording {
     pub status: Status,
     pub transcript: Option<String>,
     pub cleaned_text: Option<String>,
+    /// "Drafted" version — output of the drafting/elaboration prompt (F9).
+    /// Separate from `cleaned_text` (the moderate "cleaned raw" output)
+    /// so the user can have BOTH a cleaned version and a drafted version
+    /// of the same recording on demand.
+    pub drafted_text: Option<String>,
     pub stt_provider: Option<String>,
     pub llm_provider: Option<String>,
     pub clippy_used: bool,
@@ -111,6 +125,7 @@ impl History {
               status        TEXT NOT NULL,
               transcript    TEXT,
               cleaned_text  TEXT,
+              drafted_text  TEXT,
               stt_provider  TEXT,
               llm_provider  TEXT,
               clippy_used   INTEGER NOT NULL DEFAULT 0,
@@ -122,6 +137,31 @@ impl History {
               ON recordings(created_at);
             "#,
         )?;
+
+        // Idempotent migrations for users upgrading from ≤0.1.1 (which
+        // had no `drafted_text` column). ALTER will error with "duplicate
+        // column name" if the column already exists — that's expected on
+        // every launch after the first, so we ignore the result.
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN drafted_text TEXT", []);
+
+        // For existing rows where the user pressed F9 (drafting): their
+        // drafted output landed in `cleaned_text` under the old single-
+        // output schema. Move it into `drafted_text` so the new history
+        // UI shows it under the "Drafted" tab instead of "Cleaned".
+        // Idempotent — only acts on rows that haven't been migrated yet.
+        let migrated = conn.execute(
+            r#"UPDATE recordings
+               SET drafted_text = cleaned_text,
+                   cleaned_text = NULL
+               WHERE mode = 'drafting'
+                 AND drafted_text IS NULL
+                 AND cleaned_text IS NOT NULL"#,
+            [],
+        ).unwrap_or(0);
+        if migrated > 0 {
+            tracing::info!(rows = migrated, "history: migrated drafting rows to drafted_text column");
+        }
+
         Ok(Self { inner: Arc::new(Mutex::new(conn)) })
     }
 
@@ -201,14 +241,39 @@ impl History {
         used: bool,
         note: Option<&str>,
     ) -> Result<()> {
+        self.set_alt(id, AltKind::Cleaned, cleaned, provider, used, note)
+    }
+
+    /// Generic setter for either the cleaned or drafted output column.
+    /// Backwards-compat alias `set_cleaned` keeps the old call sites green
+    /// while new code uses `set_alt(Drafted, ...)` to route to the right
+    /// column for the new 3-version history UI.
+    pub fn set_alt(
+        &self,
+        id: &str,
+        kind: AltKind,
+        text: &str,
+        provider: Option<&str>,
+        used: bool,
+        note: Option<&str>,
+    ) -> Result<()> {
         let conn = self.inner.lock();
-        conn.execute(
-            r#"UPDATE recordings
-               SET cleaned_text = ?1, llm_provider = ?2,
-                   clippy_used = ?3, clippy_note = ?4
-               WHERE id = ?5"#,
-            params![cleaned, provider, used as i32, note, id],
-        )?;
+        match kind {
+            AltKind::Cleaned => conn.execute(
+                r#"UPDATE recordings
+                   SET cleaned_text = ?1, llm_provider = ?2,
+                       clippy_used = ?3, clippy_note = ?4
+                   WHERE id = ?5"#,
+                params![text, provider, used as i32, note, id],
+            )?,
+            AltKind::Drafted => conn.execute(
+                r#"UPDATE recordings
+                   SET drafted_text = ?1, llm_provider = ?2,
+                       clippy_used = ?3, clippy_note = ?4
+                   WHERE id = ?5"#,
+                params![text, provider, used as i32, note, id],
+            )?,
+        };
         Ok(())
     }
 
@@ -245,7 +310,7 @@ impl History {
         let conn = self.inner.lock();
         let mut stmt = conn.prepare(
             r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
-                      transcript, cleaned_text, stt_provider, llm_provider,
+                      transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
                       clippy_used, clippy_note, retry_count, error
                FROM recordings
                ORDER BY created_at DESC
@@ -281,7 +346,7 @@ impl History {
 
 const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
-       transcript, cleaned_text, stt_provider, llm_provider,
+       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error
 FROM recordings WHERE id = ?1"#;
 
@@ -301,12 +366,13 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         status: Status::parse(&status_s),
         transcript: row.get(6)?,
         cleaned_text: row.get(7)?,
-        stt_provider: row.get(8)?,
-        llm_provider: row.get(9)?,
-        clippy_used: row.get::<_, i32>(10)? != 0,
-        clippy_note: row.get(11)?,
-        retry_count: row.get(12)?,
-        error: row.get(13)?,
+        drafted_text: row.get(8)?,
+        stt_provider: row.get(9)?,
+        llm_provider: row.get(10)?,
+        clippy_used: row.get::<_, i32>(11)? != 0,
+        clippy_note: row.get(12)?,
+        retry_count: row.get(13)?,
+        error: row.get(14)?,
     })
 }
 

@@ -17,7 +17,13 @@ pub struct CleanedTranscript {
 }
 
 const TIMEOUT: Duration = Duration::from_secs(8);
-const LIGHT_MAX_DRIFT: f32 = 0.40;
+// Light's drift threshold: an output longer or shorter than this fraction
+// of the input is treated as prompt-injection or hallucination, and we
+// fall back to the raw transcript. The new "cleaned raw" prompt adds
+// moderate paragraphing + occasional bullets without changing content, so
+// some length growth is normal — but a 2x output means the LLM made stuff
+// up. 0.60 is the empirically-safe headroom.
+const LIGHT_MAX_DRIFT: f32 = 0.60;
 
 /// `system_override` — if `Some`, used in place of the baked-in default
 /// prompt for the given mode. Lets users tweak prompts via Settings.

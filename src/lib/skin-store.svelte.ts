@@ -2,29 +2,28 @@
 // Clippy window via Tauri events. localStorage persists across restarts.
 //
 // Skin values:
-//   "off"       — floater window hidden
-//   "stylized"  — hand-built SVG paperclip
-//   "original"  — Microsoft Clippy via clippyts
-//   "chippy"    — saddle-shaped potato chip
+//   "off"         — floater window hidden
+//   "stylized"    — hand-built SVG paperclip (dark outline, transparent body)
+//   "beige"       — light/cream-filled paperclip variant with the same
+//                    animations + bigger eyes; reads better on dark
+//                    backgrounds where the dark-outline stylized fades.
+//   "real-clippy" — Microsoft Clippy via clippyts
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-// "classic" was removed (was a quick-fix hand-built Clippy substitute — uglier
-// than the polished stylized version below). Real Microsoft Clippy lives in
-// "real-clippy" and the stylized paperclip with rich state animations lives
-// in "stylized".
-export type Skin = "off" | "stylized" | "real-clippy" | "chippy";
+export type Skin = "off" | "stylized" | "beige" | "real-clippy";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "stylized", "real-clippy", "chippy"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "stylized", "beige", "real-clippy"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
     ? localStorage.getItem(STORAGE_KEY)
-    : null) as Skin | null;
-  if (raw && VALID_SKINS.includes(raw)) return raw;
+    : null) as string | null;
+  if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
+  // Migrate legacy "chippy" (now removed) → fall back to default.
   // Default: real Microsoft Clippy.
   return "real-clippy";
 }

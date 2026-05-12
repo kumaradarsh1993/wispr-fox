@@ -90,6 +90,22 @@ pub async fn retry_recording(
         .map_err(|e| e.to_string())
 }
 
+/// Generate a "cleaned" or "drafted" variant for an existing recording.
+/// Used by the History UI tabs: clicking a dimmed tab (Cleaned or Drafted
+/// version not yet generated) calls this, the LLM runs against the raw
+/// transcript with the appropriate prompt, the result is saved into the
+/// matching column, and the returned text is shown in the tab.
+#[tauri::command]
+pub async fn generate_alt_version(
+    flow: State<'_, Flow>,
+    id: String,
+    kind: String,
+) -> Result<String, String> {
+    flow.generate_alt_version(&id, &kind)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Returns a `tauri://localhost` URL the frontend can use as an `<audio src>`
 /// to play back a saved recording. Falls back to the file path if conversion
 /// fails (the frontend then needs `convertFileSrc` from Tauri's API).

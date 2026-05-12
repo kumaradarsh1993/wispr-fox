@@ -19,6 +19,31 @@
   let mode = $state<Mode>("light");
   let blinkOpen = $state(true);
   let lookDir = $state<"left" | "right" | "center">("center");
+  // Hover state: true while the cursor is over the Clippy window. Drives
+  // the "Clippy notices you" beat — eyes scale up, pupils track cursor.
+  let hovering = $state(false);
+  // Pupil offset (in SVG units, viewBox is -20..160 wide / 0..170 tall).
+  // While hovering, these track the cursor relative to Clippy's centre;
+  // while idle, the existing lookDir 3-state sway drives eyeShiftX.
+  let hoverShiftX = $state(0);
+  let hoverShiftY = $state(0);
+
+  // Transient message override — when Rust emits `wispr:clippy_message`
+  // (e.g. "Copied to clipboard" after a cross-process silent delivery),
+  // we show this text in the bubble for ~3s, overriding the state-driven
+  // label. Empty string = no override.
+  let toastMessage = $state("");
+  let toastKind = $state<"info" | "error">("info");
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showToast(msg: string, kind: "info" | "error" = "info", durationMs = 3000) {
+    toastMessage = msg;
+    toastKind = kind;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastMessage = "";
+      toastTimer = null;
+    }, durationMs);
+  }
 
   const MIN_DWELL_MS = 1400;
   // States that need full play-time (pipeline) — when displayState is one of
@@ -268,6 +293,25 @@
 
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
+    let unlistenMsg: (() => void) | undefined;
+    let unlistenErr: (() => void) | undefined;
+    listen<string>("wispr:clippy_message", (e) => {
+      console.log("[clippy] wispr:clippy_message", e.payload);
+      showToast(e.payload, "info", 3000);
+    }).then((u) => (unlistenMsg = u));
+    listen<string>("wispr:flow_error", (e) => {
+      console.warn("[clippy] wispr:flow_error", e.payload);
+      // Force-reset all state — Rust's wrapper also emits "idle" but be
+      // defensive in case events arrive out of order.
+      state = "idle";
+      displayState = "idle";
+      displayQueue = [];
+      if (displayTimer) {
+        clearTimeout(displayTimer);
+        displayTimer = null;
+      }
+      showToast(e.payload, "error", 5000);
+    }).then((u) => (unlistenErr = u));
     listen<string>("wispr:state", (e) => {
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
@@ -334,61 +378,126 @@
     return () => {
       unlisten?.();
       unlistenMode?.();
+      unlistenMsg?.();
+      unlistenErr?.();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
       window.removeEventListener("mouseup", onMove);
     };
   });
 
-  async function hideMe() {
-    await getCurrentWindow().hide();
+  // Double-click anywhere on Clippy → bring the main window forward.
+  // Replaces the old X-dismiss button (looked odd on hover and conflicted
+  // with the user's mental model — Clippy IS the entry point now).
+  async function openMainWindow() {
+    try {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const main = await WebviewWindow.getByLabel("main");
+      if (!main) return;
+      await main.show();
+      await main.unminimize();
+      await main.setFocus();
+    } catch (e) {
+      console.warn("openMainWindow failed", e);
+    }
   }
 
+  // When hovering, eyes follow the cursor (continuous tracking). Otherwise
+  // they sway through the random 3-state look-direction. Hover takes
+  // priority for the "noticing you" feel.
   let eyeShiftX = $derived(
-    lookDir === "left" ? -1.8 : lookDir === "right" ? 1.8 : 0,
+    hovering ? hoverShiftX : (lookDir === "left" ? -2.2 : lookDir === "right" ? 2.2 : 0),
   );
+  let eyeShiftY = $derived(hovering ? hoverShiftY : 0);
 
-  // Themed labels per skin.
-  let labels = $derived.by(() => {
-    if (skin === "chippy") {
-      return { listening: "crunching…", thinking: "thinking", writing: "seasoning", writingIcon: "🧂", pasting: "done!" };
-    }
-    return { listening: "listening…", thinking: "thinking", writing: "polishing", writingIcon: "✏️", pasting: "done!" };
+  // Labels driving the bubble text. The themed-per-skin map collapsed back
+  // to a single set when the "chippy" skin was retired — kept as a derived
+  // so future skin-specific overrides have a single place to land.
+  let labels = $derived({
+    listening: "listening…",
+    thinking: "thinking",
+    writing: "polishing",
+    writingIcon: "✏️",
+    pasting: "done!",
   });
 </script>
 
-<div class="clippy-stage" data-tauri-drag-region role="button" tabindex="0" aria-label="Floater — drag to move">
-  {#if skin === "stylized" || skin === "chippy"}
-    <!-- Subtle floor shadow that pulses on listening -->
-    <div class="shadow" class:pulse={displayState === "listening"}></div>
-
-    <!-- Speech bubble (only over hand-built SVG variants — real Clippy has its own balloon).
-         Uses displayState so it stays in sync with the visible animation. -->
-    <div class="bubble" class:show={displayState !== "idle"} data-state={displayState}>
-      {#if displayState === "listening"}
-        <span class="bubble-text">{labels.listening}</span>
-        <span class="bubble-eq"><span></span><span></span><span></span><span></span></span>
-      {:else if displayState === "thinking"}
-        <span class="bubble-text">{labels.thinking}</span>
-        <span class="bubble-dots"><span></span><span></span><span></span></span>
-      {:else if displayState === "writing"}
-        <span class="bubble-text">{labels.writing}</span>
-        <span class="bubble-pencil">{labels.writingIcon}</span>
-      {:else if displayState === "pasting"}
-        <span class="bubble-text">{labels.pasting}</span>
-      {/if}
+<div
+  class="clippy-stage"
+  data-tauri-drag-region
+  role="button"
+  tabindex="0"
+  aria-label="Clippy floater — drag to move, double-click to open main window"
+  ondblclick={openMainWindow}
+  onmouseenter={() => (hovering = true)}
+  onmouseleave={() => { hovering = false; hoverShiftX = 0; hoverShiftY = 0; }}
+  onmousemove={(e) => {
+    if (!hovering) return;
+    // Translate cursor position to a small pupil offset. Window inner
+    // dimensions are 190x210 (set in tauri.conf.json). Clippy's centre is
+    // roughly at (95, 105). Clamp to a max pupil deflection of ±3.5 SVG units.
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const dx = (e.clientX - r.left) - r.width / 2;
+    const dy = (e.clientY - r.top) - r.height * 0.55; // Clippy sits below centre
+    const maxDx = r.width / 2;
+    const maxDy = r.height * 0.45;
+    hoverShiftX = Math.max(-3.5, Math.min(3.5, (dx / maxDx) * 3.5));
+    hoverShiftY = Math.max(-2.5, Math.min(2.5, (dy / maxDy) * 2.5));
+  }}
+>
+  <!-- Toast bubble (cross-skin). Renders for transient Rust-emitted
+       messages like "Copied to clipboard" — important enough that real-Clippy
+       users see it too, not just the SVG skins. -->
+  {#if toastMessage}
+    <div class="bubble show" data-state={toastKind === "error" ? "toast-error" : "toast"}>
+      <span class="bubble-text">{toastMessage}</span>
+      <span class="bubble-emoji">{toastKind === "error" ? "⚠" : "📋"}</span>
     </div>
   {/if}
 
-  {#if skin === "stylized"}
+  <!-- Soft floor glow/shadow under Clippy — renders for ALL skins (not just
+       the SVG paperclip) because it grounds the character visually. Pulses
+       gently while listening to reinforce the "alive and attentive" feel. -->
+  {#if skin !== "off"}
+    <div class="shadow" class:pulse={displayState === "listening"}></div>
+  {/if}
+
+  {#if skin === "stylized" || skin === "beige"}
+
+    <!-- State-driven bubble (SVG skins only — real Clippy uses its own
+         balloon for these). Hidden while toast is showing so we don't
+         stack two bubbles. -->
+    {#if !toastMessage}
+      <div class="bubble" class:show={displayState !== "idle"} data-state={displayState}>
+        {#if displayState === "listening"}
+          <span class="bubble-text">{labels.listening}</span>
+          <span class="bubble-eq"><span></span><span></span><span></span><span></span></span>
+        {:else if displayState === "thinking"}
+          <span class="bubble-text">{labels.thinking}</span>
+          <span class="bubble-dots"><span></span><span></span><span></span></span>
+        {:else if displayState === "writing"}
+          <span class="bubble-text">{labels.writing}</span>
+          <span class="bubble-pencil">{labels.writingIcon}</span>
+        {:else if displayState === "pasting"}
+          <span class="bubble-text">{labels.pasting}</span>
+        {/if}
+      </div>
+    {/if}
+  {/if}
+
+  {#if skin === "stylized" || skin === "beige"}
     <!-- Stylized paperclip with rich state-specific animations:
          - listening: turns toward viewer, big ear pops out, alert sway
          - phew transition: brief sweat-drop right after listening ends
          - thinking advanced: brain bubble overhead
          - writing: paper slides in beside Clippy, pen scribbles
-         - pasting: paper flies away, Clippy bounces -->
+         - pasting: paper flies away, Clippy bounces.
+         When skin === "beige" the same SVG renders with a cream body fill
+         + warm dark-brown outline (theme inversion). All animations are
+         identical because they target the same CSS classes. -->
     <svg
       class="character clippy-stylized"
+      class:beige={skin === "beige"}
       viewBox="-20 0 180 170"
       xmlns="http://www.w3.org/2000/svg"
       data-state={displayState}
@@ -456,44 +565,97 @@
              Larger, more dimensional, with shading + a drop shadow to suggest
              it's leaning forward toward the user. -->
         {#if displayState === "listening"}
+          <!-- Elephant ear, take 3. Previous attempt was too "leaf" — this
+               one has the unmistakable elephant silhouette: wide rounded
+               base meeting the head, dropping into a broad heavy fan that
+               curls outward and downward to a softly-pointed tip near
+               the lower-left. Inner ear opening is a clear C-shape, not
+               a concentric oval. Outer rim is darker than the inner
+               cartilage, like an actual elephant ear in cross-section. -->
           <g class="ear">
-            <!-- Drop shadow under the ear for depth -->
-            <ellipse cx="6" cy="86" rx="14" ry="3" fill="rgba(0,0,0,0.18)" />
-            <!-- Outer ear curve — wider extension, dips lower than mid-body -->
-            <path
-              d="M 30 40
-                 C 0 36, -10 60, 0 80
-                 C 8 94, 24 90, 32 76 Z"
-              fill="#ffe0c0"
-              stroke="#1d1d1f"
-              stroke-width="2.5"
-              stroke-linejoin="round"
-            />
-            <!-- Highlight on the upper ridge -->
-            <path
-              d="M 22 44 C 8 42, 0 58, 4 72"
-              fill="none"
-              stroke="#fff4e0"
-              stroke-width="2"
-              stroke-linecap="round"
-              opacity="0.7"
-            />
-            <!-- Inner ear canal shading -->
-            <path
-              d="M 20 54 C 12 58, 12 72, 22 74"
-              fill="none"
-              stroke="#c8916a"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-            <!-- Tiny inner detail -->
-            <path
-              d="M 16 64 Q 10 66, 14 72"
-              fill="none"
-              stroke="#a76b48"
-              stroke-width="1.2"
-              stroke-linecap="round"
-            />
+            <defs>
+              <linearGradient id="earOuter" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%"  stop-color="#9a9a9e"/>
+                <stop offset="60%" stop-color="#7a7a7e"/>
+                <stop offset="100%" stop-color="#5a5a5e"/>
+              </linearGradient>
+              <radialGradient id="earCanal" cx="0.45" cy="0.55" r="0.6">
+                <stop offset="0%"   stop-color="#4a4a4e"/>
+                <stop offset="100%" stop-color="#2a2a2e"/>
+              </radialGradient>
+            </defs>
+
+            <!-- ground shadow — pulses in sync with the flap -->
+            <ellipse class="ear-shadow" cx="4" cy="96" rx="22" ry="3" fill="rgba(0,0,0,0.28)"/>
+
+            <!-- the ear leaf -->
+            <g class="ear-leaf">
+              <!-- Outer silhouette. Heavier than a leaf:
+                   - Wide attachment at the top right (x=32, y=48–62) where
+                     the ear meets the head — broad and flat-ish
+                   - Steep drop on the right edge (back of the ear)
+                   - Bulges OUT to the left as the lobe (x=-18)
+                   - Curls under at the bottom, softly pointed tip near (-12, 92)
+                   - Inner edge curves back UP toward the attachment
+                     with a softer convexity — the cartilage "well" -->
+              <path
+                d="M 32,48
+                   C 28,46  20,45  10,46
+                   C  -2,47 -12,54 -17,66
+                   C -20,76 -16,86  -8,92
+                   C   0,95  10,93  18,86
+                   C  24,80 28,72  30,62
+                   C  31,58 32,54  32,48
+                   Z"
+                fill="url(#earOuter)"
+                stroke="#1d1d1f"
+                stroke-width="1.8"
+                stroke-linejoin="round"/>
+
+              <!-- Inner ear canal — a curved C-shape, not a closed shape.
+                   This is what reads as "elephant ear" rather than just
+                   "grey blob": a visible opening near the attachment, the
+                   cavity that an elephant's ear actually has. -->
+              <path
+                d="M 22,56
+                   C 14,54  4,58  -3,65
+                   C -8,72  -6,82  2,86
+                   C   8,88 14,84 18,76
+                   C  21,68 22,62 22,56
+                   Z"
+                fill="url(#earCanal)"
+                opacity="0.85"/>
+
+              <!-- A subtle cartilage ridge along the upper inner edge —
+                   the part where the ear folds outward away from the head. -->
+              <path
+                d="M 24,52 C 16,50 6,53 -4,60"
+                fill="none"
+                stroke="#1d1d1f"
+                stroke-width="1.2"
+                stroke-linecap="round"
+                opacity="0.6"/>
+
+              <!-- Highlight on the upper rim — gives the ear a sense of
+                   thickness/dimensionality. -->
+              <path
+                d="M 28,49 C 22,47 14,48 6,52"
+                fill="none"
+                stroke="#d8d8db"
+                stroke-width="1.3"
+                stroke-linecap="round"
+                opacity="0.75"/>
+
+              <!-- Tip detail — a slightly darker stroke at the lobe's
+                   pointed end suggests the underside curling under. -->
+              <path
+                d="M -10,88 Q -6,93 0,92"
+                fill="none"
+                stroke="#1d1d1f"
+                stroke-width="1"
+                stroke-linecap="round"
+                opacity="0.7"/>
+            </g>
           </g>
         {/if}
 
@@ -505,11 +667,20 @@
           <path d="M 36 36 Q 42 32, 48 36" />
           <path d="M 60 36 Q 66 32, 72 36" />
         </g>
-        <g class="eyes">
-          <ellipse cx="44" cy="50" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="2" />
-          <circle cx={44 + eyeShiftX} cy="51" r={blinkOpen ? 2.4 : 0} fill="#1d1d1f" />
-          <ellipse cx="64" cy="50" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="2" />
-          <circle cx={64 + eyeShiftX} cy="51" r={blinkOpen ? 2.4 : 0} fill="#1d1d1f" />
+        <g class="eyes" class:hover={hovering}>
+          <!-- Bigger eyes per user feedback: sclera ~doubled (was 6×7),
+               pupil ~doubled (was r=2.4). Eyes also pop slightly on hover
+               (CSS transform on .eyes.hover) for a "Clippy notices you"
+               beat. Pupil tracks cursor in two axes when hovering, not
+               just the idle look-direction sway. -->
+          <ellipse cx="44" cy="51" rx="8.5" ry={blinkOpen ? 9.5 : 0.6} fill="#ffffff" stroke="#1d1d1f" stroke-width="2.2" />
+          <circle cx={44 + eyeShiftX} cy={51 + eyeShiftY} r={blinkOpen ? 4 : 0} fill="#1d1d1f" />
+          <!-- Tiny catchlight on each pupil — makes the eyes feel alive -->
+          <circle cx={42.5 + eyeShiftX * 0.7} cy={49 + eyeShiftY * 0.7} r={blinkOpen ? 1.1 : 0} fill="#ffffff" opacity="0.95" />
+
+          <ellipse cx="66" cy="51" rx="8.5" ry={blinkOpen ? 9.5 : 0.6} fill="#ffffff" stroke="#1d1d1f" stroke-width="2.2" />
+          <circle cx={66 + eyeShiftX} cy={51 + eyeShiftY} r={blinkOpen ? 4 : 0} fill="#1d1d1f" />
+          <circle cx={64.5 + eyeShiftX * 0.7} cy={49 + eyeShiftY * 0.7} r={blinkOpen ? 1.1 : 0} fill="#ffffff" opacity="0.95" />
         </g>
       </g>
     </svg>
@@ -523,107 +694,7 @@
     {:else if realClippyError}
       <div class="real-msg error">Clippy failed: {realClippyError}</div>
     {/if}
-  {:else if skin === "chippy"}
-    <!-- Chippy — friendly potato chip. Cleaner silhouette, warmer palette,
-         a touch of crunch with chip "ribs" along the saddle curve. -->
-    <svg
-      class="character chippy"
-      viewBox="0 0 140 140"
-      xmlns="http://www.w3.org/2000/svg"
-      data-state={displayState}
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id="chip-fill-v2" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#fbe3a0" />
-          <stop offset="50%" stop-color="#e8b15c" />
-          <stop offset="100%" stop-color="#b6792a" />
-        </linearGradient>
-        <radialGradient id="chip-hilite" cx="42%" cy="32%" r="38%">
-          <stop offset="0%" stop-color="#fff6d8" stop-opacity="0.9" />
-          <stop offset="100%" stop-color="#fff6d8" stop-opacity="0" />
-        </radialGradient>
-        <filter id="chip-drop" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#7a4d12" flood-opacity="0.4"/>
-        </filter>
-      </defs>
-
-      <!-- White halo for dark backgrounds -->
-      <path
-        d="M 28 70 C 22 38, 60 24, 70 40 C 80 24, 118 38, 112 70 C 118 102, 80 116, 70 100 C 60 116, 22 102, 28 70 Z"
-        fill="none"
-        stroke="#ffffff"
-        stroke-width="9"
-        opacity="0.95"
-      />
-
-      <!-- Chip body — saddle-curve silhouette -->
-      <g class="chip-body" filter="url(#chip-drop)">
-        <path
-          d="M 28 70 C 22 38, 60 24, 70 40 C 80 24, 118 38, 112 70 C 118 102, 80 116, 70 100 C 60 116, 22 102, 28 70 Z"
-          fill="url(#chip-fill-v2)"
-          stroke="#7a4d12"
-          stroke-width="2.5"
-          stroke-linejoin="round"
-        />
-
-        <!-- Highlight wash, top -->
-        <path
-          d="M 32 60 C 32 38, 60 30, 70 44 C 80 30, 108 38, 108 60"
-          fill="none"
-          stroke="url(#chip-hilite)"
-          stroke-width="16"
-          stroke-linecap="round"
-          opacity="0.85"
-          style="mix-blend-mode: screen;"
-        />
-
-        <!-- Saddle crease (Pringles fold) -->
-        <path d="M 30 74 Q 70 60, 110 74" fill="none" stroke="#a06010" stroke-width="2" stroke-linecap="round" opacity="0.55" />
-        <!-- Subtle parallel crease for a "crispy" feel -->
-        <path d="M 36 80 Q 70 70, 104 80" fill="none" stroke="#a06010" stroke-width="1" stroke-linecap="round" opacity="0.32" />
-
-        <!-- Salt grains -->
-        <circle cx="46" cy="86" r="1.6" fill="#ffffff" opacity="0.95" />
-        <circle cx="98" cy="84" r="1.4" fill="#ffffff" opacity="0.9" />
-        <circle cx="62" cy="98" r="1.2" fill="#ffffff" opacity="0.85" />
-        <circle cx="84" cy="48" r="1.3" fill="#ffffff" opacity="0.9" />
-        <circle cx="54" cy="58" r="1.0" fill="#ffffff" opacity="0.85" />
-      </g>
-
-      <!-- Eyebrows (deep brown, slightly thicker) -->
-      <g class="brows" stroke="#4a2208" stroke-width="3.2" stroke-linecap="round" fill="none">
-        <path class="brow brow-l" d="M 50 62 Q 58 56, 66 62" />
-        <path class="brow brow-r" d="M 78 62 Q 86 56, 94 62" />
-      </g>
-
-      <!-- Eyes — friendly, slightly larger -->
-      <g class="eyes">
-        <ellipse cx="58" cy="76" rx="6" ry={blinkOpen ? 7 : 0.6} fill="#ffffff" stroke="#4a2208" stroke-width="2" />
-        <circle cx={58 + eyeShiftX} cy="77" r={blinkOpen ? 2.5 : 0} fill="#1d1d1f" />
-        <circle cx={57 + eyeShiftX} cy="75.5" r={blinkOpen ? 0.8 : 0} fill="#ffffff" />
-
-        <ellipse cx="82" cy="76" rx="6" ry={blinkOpen ? 7 : 0.6} fill="#ffffff" stroke="#4a2208" stroke-width="2" />
-        <circle cx={82 + eyeShiftX} cy="77" r={blinkOpen ? 2.5 : 0} fill="#1d1d1f" />
-        <circle cx={81 + eyeShiftX} cy="75.5" r={blinkOpen ? 0.8 : 0} fill="#ffffff" />
-      </g>
-
-      <!-- Smile -->
-      <path
-        class="mouth"
-        d="M 64 90 Q 70 96, 76 90"
-        fill="none"
-        stroke="#4a2208"
-        stroke-width="2.2"
-        stroke-linecap="round"
-      />
-    </svg>
   {/if}
-
-  <!-- Hide button -->
-  <div class="controls">
-    <button class="ctrl-btn hide-btn" onclick={hideMe} title="Hide (use sidebar to switch skin)">×</button>
-  </div>
 </div>
 
 <style>
@@ -723,6 +794,43 @@
             drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
   }
 
+  /* "Clippy notices you" — eyes pop slightly larger when the cursor enters
+     the floater window. Combined with the pupil tracking (in-script), this
+     gives Clippy a clear "I see you" beat without being clingy. */
+  .clippy-stylized .eyes {
+    transform-origin: 55px 51px;
+    transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .clippy-stylized .eyes.hover {
+    transform: scale(1.12);
+  }
+
+  /* ─── Beige skin variant ────────────────────────────────────────────
+     Theme-reversed Clippy: warm cream outline + brown features instead
+     of the default near-black-on-transparent. Reuses ALL the same SVG
+     paths and animation classes — only the colour palette changes via
+     CSS overrides (SVG inline `stroke=` attrs are overridden by CSS
+     `stroke:` declarations of higher specificity). */
+  .clippy-stylized.beige .body {
+    stroke: #f0e3c6;
+    filter: drop-shadow(0 1px 1.5px rgba(80, 50, 10, 0.35));
+  }
+  .clippy-stylized.beige .brows {
+    stroke: #8a5a2a;
+    stroke-width: 4;
+  }
+  .clippy-stylized.beige .eyes ellipse {
+    fill: #fff9ec;
+    stroke: #6b3a0e;
+    stroke-width: 2.4;
+  }
+  .clippy-stylized.beige .eyes circle:nth-of-type(odd) {
+    fill: #3a1a02;   /* darker brown pupils — warmer than pure black */
+  }
+  /* The halo behind the paperclip body (drawn earlier in the SVG as a
+     white "stroke-width 11" wrap for visibility against dark wallpapers)
+     stays white — the cream body sits ON TOP. */
+
   /* Body turns slightly toward the user when listening — like the user said,
      "turns to me." Combined with the ear popping out of the left side. */
   .clippy-stylized .body-group {
@@ -733,22 +841,41 @@
     transform: rotate(-8deg) translateX(2px);
   }
 
-  /* Big ear pops in with a bounce, then "scans" gently while listening as if
-     leaning forward to catch every word. */
+  /* Elephant ear — unfurls outward like a rolled palm leaf at activation,
+     then settles into a continuous gentle flap (slight rotation + tiny
+     downward bob) like an elephant listening. Ground shadow pulses in
+     sync to sell the motion. */
   .clippy-stylized .ear {
-    transform-origin: 30px 60px;
+    transform-origin: 32px 55px;
     animation:
-      ear-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
-      ear-listen 1.6s ease-in-out 360ms infinite;
+      ear-unfurl 440ms cubic-bezier(0.22, 1.2, 0.4, 1) both,
+      ear-flap 2.2s ease-in-out 440ms infinite;
   }
-  @keyframes ear-pop {
-    0%   { transform: scale(0) rotate(-30deg) translate(10px, 0); opacity: 0; }
-    60%  { transform: scale(1.18) rotate(10deg) translate(-1px, 3px); opacity: 1; }
-    100% { transform: scale(1.08) rotate(6deg) translate(0px, 2px);  opacity: 1; }
+  .clippy-stylized .ear .ear-leaf {
+    transform-origin: 32px 55px;
+    transform-box: fill-box;
   }
-  @keyframes ear-listen {
-    0%, 100% { transform: scale(1.08) rotate(6deg) translate(0px, 2px); }
-    50%      { transform: scale(1.12) rotate(11deg) translate(-1px, 4px); }
+  .clippy-stylized .ear .ear-shadow {
+    transform-origin: 6px 92px;
+    animation: ear-shadow-flap 2.2s ease-in-out 440ms infinite;
+  }
+  /* Roll-out: starts tucked tight against body (scaleX 0), unrolls leftward */
+  @keyframes ear-unfurl {
+    0%   { transform: scaleX(0.05) scaleY(0.55) rotate(8deg);  opacity: 0; }
+    35%  { transform: scaleX(0.55) scaleY(0.85) rotate(4deg);  opacity: 1; }
+    65%  { transform: scaleX(1.08) scaleY(1.04) rotate(-3deg); opacity: 1; }
+    85%  { transform: scaleX(0.97) scaleY(0.99) rotate(1deg);  opacity: 1; }
+    100% { transform: scaleX(1)    scaleY(1)    rotate(0);     opacity: 1; }
+  }
+  /* Continuous gentle flap — slight rotation + tiny vertical bob */
+  @keyframes ear-flap {
+    0%, 100% { transform: rotate(-2.5deg) translate(0, 0); }
+    50%      { transform: rotate(2.5deg)  translate(-1px, 1.5px); }
+  }
+  /* Shadow pulses subtly with the flap */
+  @keyframes ear-shadow-flap {
+    0%, 100% { transform: scaleX(1)    scaleY(1);   opacity: 1; }
+    50%      { transform: scaleX(0.92) scaleY(0.9); opacity: 0.75; }
   }
 
   /* Paper slides in from the right when writing, scribbles animate after. */
@@ -816,19 +943,6 @@
     100% { transform: translateY(-22px); opacity: 0; }
   }
 
-  .clippy-classic-svg {
-    width: 124px;
-    height: 162px;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35))
-            drop-shadow(0 0 8px rgba(255, 255, 255, 0.45));
-  }
-
-  .chippy {
-    width: 124px;
-    height: 124px;
-    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.35));
-  }
-
   @keyframes idle-bob {
     0%, 100% { transform: translateY(0) rotate(0deg); }
     50% { transform: translateY(-2px) rotate(-1deg); }
@@ -892,14 +1006,7 @@
     100% { transform: translateY(0) scale(1); }
   }
 
-  /* Chippy's smile widens on pasting */
-  .chippy[data-state="pasting"] .mouth {
-    d: path("M 60 88 Q 70 100, 80 88");
-  }
-
-  /* Speech bubble — pinned to the top of the window with explicit space
-     below so it never overlaps Clippy's head. The taller floater window
-     (190x230) gives the bubble its own dedicated band at the top. */
+  /* Speech bubble — pinned to the top of the window. */
   .bubble {
     position: absolute;
     top: 6px;
@@ -995,44 +1102,47 @@
     font-size: 11px;
   }
 
+  .bubble-emoji {
+    display: inline-block;
+    font-size: 13px;
+    animation: emoji-pop 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes emoji-pop {
+    0%   { transform: scale(0); }
+    60%  { transform: scale(1.2); }
+    100% { transform: scale(1); }
+  }
+
+  /* Toast variant — slightly more emphatic styling so it reads as an event,
+     not an ongoing state. */
+  .bubble[data-state="toast"] {
+    background: #1d1d1f;
+    color: #fff;
+    border-color: #1d1d1f;
+  }
+  .bubble[data-state="toast"]::after {
+    background: #1d1d1f;
+    border-color: #1d1d1f;
+  }
+  /* Error toast — red theme so failures aren't confused with neutral events. */
+  .bubble[data-state="toast-error"] {
+    background: #b3261e;
+    color: #fff;
+    border-color: #b3261e;
+    max-width: 200px;
+    white-space: normal;
+  }
+  .bubble[data-state="toast-error"]::after {
+    background: #b3261e;
+    border-color: #b3261e;
+  }
+
   @keyframes pencil-wiggle {
     0%, 100% { transform: rotate(-12deg); }
     50% { transform: rotate(8deg); }
   }
 
-  /* Hide button */
-  .controls {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    opacity: 0;
-    transition: opacity 200ms ease;
-    z-index: 2;
-  }
-
-  .clippy-stage:hover .controls {
-    opacity: 1;
-  }
-
-  .ctrl-btn {
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    color: #6e6e73;
-    width: 20px;
-    height: 20px;
-    border-radius: 10px;
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    pointer-events: auto;
-    line-height: 1;
-  }
-
-  .ctrl-btn:hover {
-    background: #fff;
-    color: #1d1d1f;
-  }
+  /* X dismiss button was removed — double-click Clippy to open the main
+     window instead. Hide via tray → Toggle Clippy. */
 </style>

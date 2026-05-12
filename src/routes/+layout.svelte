@@ -12,6 +12,7 @@
   let { children } = $props();
 
   let collapsed = $state(false);
+  let appVersion = $state<string>("");
 
   // Reactive theme application — sets document.body[data-theme] whenever the
   // settings.theme value changes. Valid values: "auto" | "light" | "dark" | "retro".
@@ -26,8 +27,8 @@
   const SKIN_OPTIONS: SkinOption[] = [
     { id: "off",         label: "Off" },
     { id: "stylized",    label: "Paperclip" },
+    { id: "beige",       label: "Cream" },
     { id: "real-clippy", label: "Clippy" },
-    { id: "chippy",      label: "Chippy" },
   ];
 
   async function pickSkin(s: Skin) {
@@ -38,6 +39,28 @@
   // Percentage of daily-limit used (Groq free tier: 2000 STT, 1000 LLM per UTC day).
   let sttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
   let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
+
+  // Groq's daily limits reset at UTC midnight. Show that moment in the
+  // user's local timezone so they don't have to do mental UTC math
+  // (especially relevant for IST users who are +5:30 from UTC).
+  function nextUtcMidnightLocal(): string {
+    const now = new Date();
+    const next = new Date(Date.UTC(
+      now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0
+    ));
+    const hours = Math.floor((next.getTime() - now.getTime()) / 3_600_000);
+    const mins = Math.floor((next.getTime() - now.getTime()) / 60_000) % 60;
+    const timeStr = next.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (hours >= 1) return `resets at ${timeStr} (${hours}h ${mins}m)`;
+    return `resets at ${timeStr} (${mins}m)`;
+  }
+  // Reactive, re-evaluates on each render. Cheap enough.
+  let resetLabel = $state(nextUtcMidnightLocal());
+  // Refresh every minute so the countdown stays accurate.
+  onMount(() => {
+    const t = setInterval(() => { resetLabel = nextUtcMidnightLocal(); }, 60_000);
+    return () => clearInterval(t);
+  });
   function pctClass(p: number): string {
     if (p < 50) return "ok";
     if (p < 85) return "warn";
@@ -50,8 +73,35 @@
     if (saved === "1") collapsed = true;
     usageStore.subscribe();
     skinStore.subscribe();
-    settings.init();
-    // Theme tracking effect runs in $effect block below.
+
+    // Init settings, then decide whether to show the main window. The
+    // window starts hidden (tauri.conf.json visible=false) so we don't
+    // flash it on screen if the user wants silent startup. After settings
+    // load, show it ONLY if "open_silently" is off.
+    (async () => {
+      await settings.init();
+      if (!settings.s.open_silently) {
+        try {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          await getCurrentWindow().show();
+          await getCurrentWindow().setFocus();
+        } catch (e) {
+          console.warn("show-main on startup failed", e);
+        }
+      }
+    })();
+
+    // Pull the app version from Tauri (single source of truth =
+    // tauri.conf.json) and show it under the brand. Helps the user track
+    // which build they're testing without having to check Settings → About.
+    (async () => {
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app");
+        appVersion = await getVersion();
+      } catch (e) {
+        console.warn("getVersion failed", e);
+      }
+    })();
 
     // Tray menu can request navigation via wispr:navigate event.
     let unlisten: (() => void) | undefined;
@@ -124,7 +174,12 @@
               <line x1="4.5" y1="10" x2="6" y2="10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
             </svg>
           </span>
-          {#if !collapsed}<span class="brand-text">wispr-fox</span>{/if}
+          {#if !collapsed}
+            <span class="brand-text">
+              wispr-fox
+              {#if appVersion}<span class="brand-version">v{appVersion}</span>{/if}
+            </span>
+          {/if}
         </button>
 
         <nav class="nav">
@@ -144,8 +199,8 @@
               <kbd>{shortcutDisplay(settings.s.light_hotkey)}</kbd>
             </div>
             <div class="hk-row">
-              <span class="hk-mode">Advanced</span>
-              <kbd>{shortcutDisplay(settings.s.advanced_hotkey)}</kbd>
+              <span class="hk-mode">Draft</span>
+              <kbd>{shortcutDisplay(settings.s.drafting_hotkey)}</kbd>
             </div>
           </div>
         {/if}
@@ -189,6 +244,7 @@
         {#if !collapsed}
           <div class="footer-block">
             <div class="footer-title">Today's usage</div>
+            <div class="footer-reset" title="Groq free-tier limits reset at midnight UTC">{resetLabel}</div>
 
             <div class="bar-row">
               <span class="bar-key">STT</span>
@@ -312,6 +368,15 @@
     line-height: 1;
   }
 
+  .brand-version {
+    margin-left: 6px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+
   .nav {
     display: flex;
     flex-direction: column;
@@ -359,6 +424,15 @@
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+
+  .footer-reset {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: -2px;
+    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
   }
 
   .footer-stat {
