@@ -8,25 +8,44 @@ account.
 
 Yes, that's Clippy. He's back.
 
+---
+
+## ⬇ Download
+
+### Windows — one click
+
+**[Download the latest installer (.exe)](https://github.com/kumaradarsh1993/wispr-fox/releases/latest)** →
+look for `wispr-fox_x.y.z_x64-setup.exe`.
+
+Run it, click through, done. Installs to your user folder — no admin needed.
+First launch walks you through a 2-minute onboarding (paste your API key,
+test your mic).
+
+### macOS
+
+Right-click → Open the DMG. Mac install is a little more involved — full
+walkthrough [below](#macos-first-time-install-walkthrough).
+
+---
+
 ![wispr-fox screenshot placeholder — F8 popup with Clippy reacting](docs/screenshot.png)
 
 ---
 
 ## What it does
 
-Three hotkeys, three behaviors:
+Two main hotkeys. Hold the key while you talk, release when you're done
+(or use sticky mode to press-once-start / press-again-stop).
 
 | Press | What happens |
 |---|---|
-| **F8** | You talk → raw transcript pastes into whatever app you're in |
-| **F9** | You talk → cleaned-up transcript (grammar fixes, no rewriting) |
-| **F10** | You talk → a polished draft based on your brief |
+| **F8** | You talk → raw transcript pastes into whatever app you're in. Toggle "Clean up raw" in Settings if you want light cleanup (spell + punctuation + paragraphing, no rewriting). |
+| **Shift+F8** | One-shot override: force the cleanup on for *this* recording only — handy when you usually want raw but occasionally need cleaner output. |
+| **F9** | You talk → a polished draft based on your brief. Best for emails, Slack, docs — describe what you want and the LLM writes it. |
+| **Win+F8 / Win+F9** | Sticky versions of the above — press once to start, press again to stop. |
 
-Hold the key while talking, release when done. Or press once to start
-and once to stop ("sticky mode" — toggle in Settings, or use `Win+F8/F9/F10`).
-
-Works in any app with a text field: browser, Slack, VS Code, Word,
-your terminal, anywhere.
+Works in any app with a text field: browser, Slack, Outlook, Teams, VS Code,
+Word, your terminal, anywhere.
 
 ---
 
@@ -48,14 +67,17 @@ your terminal, anywhere.
 
 ---
 
-## Install
+## Install (detailed)
 
 ### Windows
 
 1. Download the latest `wispr-fox_x.y.z_x64-setup.exe` from
-   [Releases](../../releases/latest).
+   [Releases](https://github.com/kumaradarsh1993/wispr-fox/releases/latest).
 2. Run it. Click through the installer.
-3. First launch will walk you through onboarding (~2 minutes).
+3. App **starts silently** by default — only the system-tray icon
+   and Clippy floater appear. **Double-click Clippy** or **left-click
+   the tray icon** to open the main window for Settings/History.
+4. First launch walks you through onboarding (~2 minutes).
 
 ### macOS (first-time install walkthrough)
 
@@ -64,9 +86,9 @@ and we're not there). So macOS treats it as untrusted on first launch.
 The dance below gets past it once; subsequent launches work normally.
 
 **1. Download the right DMG** from
-[Releases](../../releases/latest):
-- Apple Silicon (M1/M2/M3/M4): `wispr-fox_0.1.0_aarch64.dmg`
-- Intel Mac: `wispr-fox_0.1.0_x64.dmg`
+[Releases](https://github.com/kumaradarsh1993/wispr-fox/releases/latest):
+- Apple Silicon (M1/M2/M3/M4): `wispr-fox_x.y.z_aarch64.dmg`
+- Intel Mac: `wispr-fox_x.y.z_x64.dmg`
 - Not sure? Apple menu → About This Mac → "Chip" line says "Apple M…"
   for Apple Silicon, "Intel" for Intel.
 
@@ -176,21 +198,35 @@ hotkeys keep working. Right-click the tray icon to quit.
 
 ## Tips
 
-- **F8 is for raw speed.** Use it when you know what you want to say.
-- **F9 is for cleanup.** Use it when you mumbled, said "uh" a lot,
-  or want grammar fixes — but you don't want the AI rewriting your
-  voice.
-- **F10 is for drafts.** Say *"Reply to my boss, agree to the meeting,
+- **F8 is for raw speed.** Default behavior. Use it when you know what
+  you want to say. Toggle "Clean up raw" in Settings → Models → Modes
+  to flip every F8 to auto-cleanup.
+- **Shift+F8 = on-demand cleanup.** Useful when you usually prefer raw
+  but want this *one* recording cleaned. Doesn't change the toggle.
+- **F9 is for drafts.** Say *"Reply to my boss, agree to the meeting,
   push it to 3pm Friday"* and you'll get a full polished message.
+- **History page has three tabs per row** — Raw, Cleaned, Drafted.
+  Click a dimmed tab to generate that version on demand from the same
+  recording. No need to re-dictate.
+- **Long recordings work.** Files over ~3 min auto-chunk and stitch
+  the transcripts back together. No "file too large" errors.
+- **If you switch apps while it's processing**, wispr-fox won't yank
+  you back — it copies the result to your clipboard and Clippy
+  whispers "Copied to clipboard". Press Ctrl+V wherever you want it.
+  Opt out in Settings → Hotkeys → Behaviour.
 - **Customize the hotkeys.** Settings → Hotkeys → click Record →
   press any combo. `Win+F8` works great. Avoid `Win+Space` (Windows
   reserves it).
 - **Customize the prompts.** Settings → Models → Show system prompt
   for any mode. Edit, save. Reset to default any time.
-- **Switch Clippy off.** Settings → Look & Feel → Skin: Off. The
-  app still works the same.
+- **Pick a Clippy skin.** Sidebar Floater section: Off, Paperclip
+  (dark outline, elephant ear), Cream (warm beige variant, easier on
+  dark backgrounds), or Clippy (the real Microsoft sprite).
 - **Dark mode.** Settings → Look & Feel → Theme: Dark. Or Retro
   (Windows 98 vibes).
+- **Launch at login.** Settings → Startup → "Launch wispr-fox at
+  login". Pairs nicely with "Open silently" so it boots into the tray
+  without popping a window.
 
 ---
 
@@ -286,8 +322,8 @@ MIT. Use it however you want.
 
 Clippy's likeness is © Microsoft. The sprite asset is included under
 fair-use precedent (nostalgia / non-commercial reference). If
-Microsoft objects, we'll swap to the bundled "Chippy" potato-chip
-mascot.
+Microsoft objects, we'll swap to the bundled hand-drawn "Paperclip"
+or "Cream" SVG skins, which are original work.
 
 ---
 
