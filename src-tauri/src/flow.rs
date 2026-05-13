@@ -136,6 +136,14 @@ pub struct Flow {
     audio_dir: PathBuf,
     audio: AudioController,
     usage: UsageTracker,
+    /// Timestamp of the last accepted Down hotkey event. Used to debounce
+    /// Windows WM_HOTKEY auto-repeat (~30/sec while a function key is
+    /// held) and the spawned-task race where two concurrent Down events
+    /// both pass the `state.active.is_some()` check before the first one
+    /// sets it. Any Down within 150ms of the previous accepted Down is
+    /// dropped — well above the auto-repeat rate, well below a human's
+    /// minimum legitimate re-press cadence.
+    last_down_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl Flow {
@@ -153,6 +161,7 @@ impl Flow {
             audio_dir,
             audio,
             usage,
+            last_down_at: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -165,6 +174,34 @@ impl Flow {
     }
 
     pub fn handle_hotkey(&self, app: &AppHandle, evt: HotkeyEvent) {
+        // Synchronous debounce gate — kept BEFORE the spawn so two near-
+        // simultaneous Down events can't both spawn tasks and race each
+        // other through `start_recording_async`. The previous v0.3.1 fix
+        // checked `state.active.is_some()` AFTER the spawn, which left a
+        // ~ms window where both tasks read None and both called start →
+        // second one errored with "recording already in progress" →
+        // flow_error event → Clippy front-end force-reset state to idle
+        // (ear disappeared, red toast) even though the original recording
+        // task was still happily running on the audio thread.
+        //
+        // Up events bypass the gate — releasing a key is always a
+        // meaningful action and never auto-repeats.
+        if matches!(evt.edge, Edge::Down) {
+            const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+            let now = std::time::Instant::now();
+            let mut last = self.last_down_at.lock();
+            if let Some(prev) = *last {
+                if now.duration_since(prev) < DEBOUNCE {
+                    tracing::trace!(
+                        elapsed_ms = now.duration_since(prev).as_millis() as u64,
+                        "debouncing rapid Down event (auto-repeat or race)"
+                    );
+                    return;
+                }
+            }
+            *last = Some(now);
+        }
+
         let app = app.clone();
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -198,8 +235,15 @@ impl Flow {
                         let _ = app.emit("wispr:flow_error", e.to_string());
                     }
                 } else if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
-                    tracing::error!("start_recording (sticky start) failed: {e:#}");
-                    let _ = app.emit("wispr:flow_error", e.to_string());
+                    let raw = e.to_string();
+                    if raw.contains("recording already in progress") {
+                        // Race / late dispatch — another task won. Don't
+                        // alarm the user; the original recording is fine.
+                        tracing::debug!("sticky start: dropped duplicate ({raw})");
+                    } else {
+                        tracing::error!("start_recording (sticky start) failed: {e:#}");
+                        let _ = app.emit("wispr:flow_error", raw);
+                    }
                 } else {
                     let _ = app.emit("wispr:mode", mode_str);
                     let _ = app.emit("wispr:state", "recording");
@@ -208,25 +252,34 @@ impl Flow {
             }
 
             // Push-to-talk: down starts, up finishes.
+            //
+            // Note: the synchronous debounce gate at the top of
+            // `handle_hotkey` already swallows auto-repeats. This
+            // additional `active.is_some()` check covers the still-
+            // pathological case where a legitimate Down sneaks through
+            // > 150ms after the previous accepted Down but recording is
+            // still active (e.g. user spammed F8 + Win+F8 alternately).
             match evt.edge {
                 Edge::Down => {
-                    // Windows fires WM_HOTKEY repeatedly while the user
-                    // holds a function-key hotkey (auto-repeat, ~30/sec).
-                    // The first Down starts the recording; every subsequent
-                    // repeat would hit start_recording_async's "active is
-                    // some" guard and surface as a "recording already in
-                    // progress" red toast mid-dictation. Silently swallow
-                    // re-fires here so the user just sees one clean
-                    // recording session.
                     if this.state.lock().active.is_some() {
-                        tracing::trace!(
-                            "ignoring Down edge while a recording is already active (likely auto-repeat)"
-                        );
+                        tracing::trace!("ignoring Down: recording already active");
                         return;
                     }
                     if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
-                        tracing::error!("start_recording failed: {e:#}");
-                        let _ = app.emit("wispr:flow_error", e.to_string());
+                        let raw = e.to_string();
+                        if raw.contains("recording already in progress") {
+                            // Race-condition belt-and-suspenders: another
+                            // task set state.active between our check and
+                            // start_recording_async's own check. Silently
+                            // ignore — emitting flow_error here would make
+                            // the Clippy front-end reset state to idle
+                            // even though the OTHER task's recording is
+                            // still going. v0.4.0 user-reported bug.
+                            tracing::debug!("dropped duplicate start ({raw})");
+                        } else {
+                            tracing::error!("start_recording failed: {e:#}");
+                            let _ = app.emit("wispr:flow_error", raw);
+                        }
                     } else {
                         let _ = app.emit("wispr:mode", mode_str);
                         let _ = app.emit("wispr:state", "recording");

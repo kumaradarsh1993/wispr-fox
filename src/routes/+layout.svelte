@@ -26,6 +26,7 @@
   type SkinOption = { id: Skin; label: string };
   const SKIN_OPTIONS: SkinOption[] = [
     { id: "off",         label: "Off" },
+    { id: "fox",         label: "Fox" },
     { id: "stylized",    label: "Paperclip" },
     { id: "beige",       label: "Cream" },
     { id: "real-clippy", label: "Clippy" },
@@ -166,13 +167,13 @@
         <!-- Universal sidebar-toggle icon (à la Claude/ChatGPT) — clearer
              affordance than the paperclip emoji previously used. -->
         <button class="brand" onclick={toggleSidebar} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+          <!-- Fox favicon as the brand mark — replaces the earlier abstract
+               sidebar-toggle glyph. Same click handler (collapses/expands)
+               but now the icon also carries the wispr-FOX identity. The
+               bold flat fox face matches the design playbook reference
+               far better than the inline SVG placeholder did. -->
           <span class="brand-mark">
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-              <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-              <line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/>
-              <line x1="4.5" y1="7" x2="6" y2="7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              <line x1="4.5" y1="10" x2="6" y2="10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-            </svg>
+            <img src="/fox/fox-favicon.png" alt="" />
           </span>
           {#if !collapsed}
             <span class="brand-text">
@@ -295,39 +296,10 @@
              sitting in grass — see RELEASE_NOTES_v0.4.0 asset wishlist. -->
         {#if !collapsed}
           <div class="sidebar-fox" aria-hidden="true">
-            <svg viewBox="0 0 120 100" width="120" height="100">
-              <!-- Body / legs (sitting pose) -->
-              <ellipse cx="60" cy="84" rx="32" ry="10" fill="rgba(120, 80, 30, 0.15)" />
-              <path d="M 32 78 C 32 60, 88 60, 88 78 L 88 86 C 88 92, 32 92, 32 86 Z" fill="#e87029" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
-              <!-- Tail curling around -->
-              <path d="M 88 76 C 100 70, 102 56, 92 50 C 86 56, 84 66, 88 76 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
-              <path d="M 92 50 C 96 52, 98 54, 96 58" fill="none" stroke="#fde2c4" stroke-width="2" stroke-linecap="round" />
-              <!-- Chest fluff (cream) -->
-              <ellipse cx="60" cy="78" rx="14" ry="8" fill="#fde2c4" />
-              <!-- Head -->
-              <ellipse cx="60" cy="48" rx="22" ry="20" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" />
-              <!-- Ears -->
-              <path d="M 42 36 L 46 22 L 54 32 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
-              <path d="M 78 36 L 74 22 L 66 32 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
-              <path d="M 46 28 L 48 32 L 50 30 Z" fill="#7a3a14" />
-              <path d="M 74 28 L 72 32 L 70 30 Z" fill="#7a3a14" />
-              <!-- Face mask (cream) -->
-              <ellipse cx="60" cy="54" rx="14" ry="10" fill="#fde2c4" />
-              <!-- Eyes -->
-              <ellipse cx="52" cy="46" rx="2.6" ry="3" fill="#2b2218" />
-              <ellipse cx="68" cy="46" rx="2.6" ry="3" fill="#2b2218" />
-              <circle cx="51.5" cy="45" r="0.8" fill="#ffffff" />
-              <circle cx="67.5" cy="45" r="0.8" fill="#ffffff" />
-              <!-- Nose + mouth -->
-              <ellipse cx="60" cy="55" rx="2.2" ry="1.6" fill="#2b2218" />
-              <path d="M 60 56 Q 60 60, 57 60" fill="none" stroke="#2b2218" stroke-width="1.2" stroke-linecap="round" />
-              <path d="M 60 56 Q 60 60, 63 60" fill="none" stroke="#2b2218" stroke-width="1.2" stroke-linecap="round" />
-              <!-- A couple of grass blades + a small flower around the base -->
-              <path d="M 26 86 Q 24 80, 28 76" fill="none" stroke="#6cb16d" stroke-width="1.6" stroke-linecap="round" />
-              <path d="M 96 86 Q 99 80, 95 75" fill="none" stroke="#6cb16d" stroke-width="1.6" stroke-linecap="round" />
-              <circle cx="22" cy="84" r="3" fill="#d479ad" />
-              <circle cx="22" cy="84" r="1.2" fill="#fde2c4" />
-            </svg>
+            <!-- Pastoral watercolor fox in tall grass — the calm, ambient
+                 mascot at the bottom of the sidebar from the design
+                 playbook. Replaces v0.4.0's inline-SVG placeholder. -->
+            <img src="/fox/fox-hero.png" alt="" />
           </div>
         {/if}
       </div>
@@ -386,20 +358,24 @@
     gap: 12px;
   }
 
-  /* Sidebar mascot — placeholder inline SVG fox until the pastoral
-     illustration asset arrives. Sits centred at the very bottom of the
-     sidebar, below usage + active-models blocks. */
+  /* Sidebar mascot — watercolor fox sitting in tall grass. Sits centred
+     at the very bottom of the sidebar, below usage + active-models
+     blocks. The hero illustration is intentionally roomy (130×130) to
+     feel like a real character, not a tiny icon. */
   .sidebar-fox {
-    margin: 4px auto -8px;
-    width: 120px;
-    height: 100px;
+    margin: 8px auto -4px;
+    width: 130px;
+    height: 130px;
     pointer-events: none;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
   }
-  .sidebar-fox svg {
+  .sidebar-fox img {
     width: 100%;
     height: 100%;
-    overflow: visible;
-    filter: drop-shadow(0 2px 3px rgba(120, 80, 30, 0.18));
+    object-fit: contain;
+    filter: drop-shadow(0 4px 8px rgba(120, 80, 30, 0.12));
   }
 
   .brand {
@@ -425,6 +401,16 @@
   .brand-mark {
     font-size: 18px;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+  }
+  .brand-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
 
   .brand-version {

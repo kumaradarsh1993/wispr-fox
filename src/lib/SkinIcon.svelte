@@ -25,6 +25,11 @@
     <circle cx="40" cy="40" r="28" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="4 4" opacity="0.65"/>
     <line x1="20" y1="20" x2="60" y2="60" stroke="currentColor" stroke-width="3" opacity="0.65"/>
   </svg>
+{:else if skin === "fox"}
+  <!-- Watercolor fox favicon — the bold flat face from the asset pack
+       (different from the watercolor fox-logo so it reads clearly at
+       small picker sizes). -->
+  <img src="/fox/fox-favicon.png" alt="" width={size} height={size} style="object-fit: contain;" />
 {:else if skin === "stylized"}
   <svg viewBox="0 0 60 80" width={size * 0.75} height={size} aria-hidden="true">
     <path d="M 25 14 C 25 8, 35 8, 35 14 L 35 56 C 35 67, 19 67, 19 56 L 19 26 C 19 20, 29 20, 29 26 L 29 51"

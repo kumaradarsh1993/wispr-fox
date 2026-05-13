@@ -346,10 +346,14 @@
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
       state = next;
-      // Arm or disarm the watchdog based on whether we're in a non-idle
-      // state. Each non-idle transition resets the 90s window, so a slow
-      // legitimate pipeline (chunked STT + LLM) won't trip the alarm.
-      if (next === "idle") {
+      // Watchdog policy: arm ONLY for transient pipeline states that have
+      // a known upper bound (thinking/writing/pasting). Recording is
+      // user-controlled — a 5-minute monologue is legitimate, not a stuck
+      // pipeline. v0.4.1 had a bug where the watchdog armed on
+      // `listening` and fired at 90s mid-recording, force-resetting the
+      // UI to idle and showing "Took too long" even though Rust was
+      // happily still recording.
+      if (next === "idle" || next === "listening") {
         disarmWatchdog();
       } else {
         armWatchdog();
@@ -727,6 +731,22 @@
         </g>
       </g>
     </svg>
+  {:else if skin === "fox"}
+    <!-- Watercolor fox — wispr-fox's own mascot (default skin in v0.4.2+).
+         Renders one of the asset-pack PNGs based on the current pipeline
+         state; cross-fades between them via CSS opacity stacking so state
+         transitions feel soft instead of janky frame-swaps. The hover
+         class triggers a curious head-tilt overlay. -->
+    <div class="fox-stage" data-state={displayState} class:hover={hovering}>
+      <img class="fox-layer fox-idle"      src="/fox/fox-sitting.png"     alt="" />
+      <img class="fox-layer fox-listening" src="/fox/fox-recording.png"   alt="" />
+      <img class="fox-layer fox-thinking"  src="/fox/fox-curious.png"     alt="" />
+      <img class="fox-layer fox-writing"   src="/fox/fox-curious.png"     alt="" />
+      <img class="fox-layer fox-pasting"   src="/fox/fox-success.png"     alt="" />
+      <!-- Hover-only "curious" overlay sits on top of idle so even at rest
+           the fox reacts when you move the cursor over the floater. -->
+      <img class="fox-layer fox-hover"     src="/fox/fox-curious.png"     alt="" />
+    </div>
   {:else if skin === "real-clippy"}
     <!-- The REAL Microsoft Clippy via vendored clippyts library.
          clippyts injects a div.clippy directly into document.body and
@@ -762,6 +782,82 @@
   }
   :global(body > .clippy-balloon) {
     z-index: 100;
+  }
+
+  /* ─── Fox skin (watercolor PNG cross-fade) ────────────────────────────
+     Five stacked layers (one per state) all positioned in the same place
+     inside .fox-stage; opacity is toggled based on [data-state] and the
+     .hover class on the stage. Soft cross-fade timing makes transitions
+     feel painterly, not janky. The idle layer is the only one breathing
+     by default; other layers freeze when not visible so the fox doesn't
+     wiggle weirdly behind itself. */
+  .fox-stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+    filter: drop-shadow(0 6px 12px rgba(120, 80, 30, 0.18));
+  }
+  .fox-layer {
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 140px;
+    height: 140px;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity 240ms ease;
+  }
+  /* Default: idle visible. */
+  .fox-stage[data-state="idle"] .fox-idle {
+    opacity: 1;
+    animation: fox-idle-breathe 3.6s ease-in-out infinite;
+  }
+  .fox-stage[data-state="listening"] .fox-listening {
+    opacity: 1;
+    animation: fox-listen-perk 1.4s ease-in-out infinite;
+  }
+  .fox-stage[data-state="thinking"] .fox-thinking {
+    opacity: 1;
+    animation: fox-think-tilt 2s ease-in-out infinite;
+  }
+  .fox-stage[data-state="writing"] .fox-writing {
+    opacity: 1;
+    animation: fox-think-tilt 1.4s ease-in-out infinite;
+  }
+  .fox-stage[data-state="pasting"] .fox-pasting {
+    opacity: 1;
+    animation: fox-paste-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  /* Hover state — only when idle. When the cursor is over the floater
+     and Clippy is otherwise sitting calmly, show the curious head-tilt. */
+  .fox-stage.hover[data-state="idle"] .fox-idle  { opacity: 0; }
+  .fox-stage.hover[data-state="idle"] .fox-hover { opacity: 1; animation: fox-hover-tilt 2.2s ease-in-out infinite; }
+
+  @keyframes fox-idle-breathe {
+    0%, 100% { transform: translateX(-50%) translateY(0)   scale(1); }
+    50%      { transform: translateX(-50%) translateY(-2px) scale(1.015); }
+  }
+  @keyframes fox-listen-perk {
+    0%, 100% { transform: translateX(-50%) rotate(-1deg) translateY(0); }
+    50%      { transform: translateX(-50%) rotate(2deg)  translateY(-3px); }
+  }
+  @keyframes fox-think-tilt {
+    0%, 100% { transform: translateX(-50%) rotate(-3deg); }
+    50%      { transform: translateX(-50%) rotate(3deg); }
+  }
+  @keyframes fox-paste-bounce {
+    0%   { transform: translateX(-50%) translateY(0)    scale(1); }
+    40%  { transform: translateX(-50%) translateY(-10px) scale(1.08, 0.94); }
+    100% { transform: translateX(-50%) translateY(0)    scale(1); }
+  }
+  @keyframes fox-hover-tilt {
+    0%, 100% { transform: translateX(-50%) rotate(-2deg) translateY(0); }
+    50%      { transform: translateX(-50%) rotate(2deg)  translateY(-1px); }
   }
 
   .real-msg {
