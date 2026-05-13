@@ -538,7 +538,6 @@
     <svg
       class="character clippy-stylized"
       class:beige={skin === "beige"}
-      class:wiggle={clickWiggling}
       viewBox="-20 0 180 170"
       xmlns="http://www.w3.org/2000/svg"
       data-state={displayState}
