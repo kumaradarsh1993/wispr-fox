@@ -137,11 +137,77 @@
   </header>
 
   {#if history.loading && history.list.length === 0}
-    <p class="muted">Loading…</p>
-  {:else if history.list.length === 0}
+    <!-- Loading state: sleeping-fox placeholder SVG + caption. Replaced
+         later with the user-provided "curled-up sleeping fox" PNG. -->
     <div class="empty">
-      <p class="empty-title">No recordings yet</p>
-      <p class="empty-body">Hold your hotkey anywhere to dictate. The recording will appear here.</p>
+      <svg class="empty-fox sleeping" viewBox="0 0 200 120" width="160" height="100" aria-hidden="true">
+        <!-- shadow -->
+        <ellipse cx="100" cy="105" rx="60" ry="6" fill="rgba(120, 80, 30, 0.18)" />
+        <!-- body (oval) -->
+        <ellipse cx="100" cy="78" rx="56" ry="22" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" />
+        <!-- cream belly -->
+        <ellipse cx="100" cy="86" rx="40" ry="12" fill="#fde2c4" />
+        <!-- curled tail -->
+        <path d="M 152 78 C 168 70, 170 56, 156 50 C 148 56, 144 70, 152 78 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" />
+        <path d="M 156 50 Q 160 54, 158 60" fill="none" stroke="#fde2c4" stroke-width="2.5" stroke-linecap="round" />
+        <!-- head resting on body -->
+        <ellipse cx="50" cy="72" rx="22" ry="18" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" />
+        <!-- ears -->
+        <path d="M 34 60 L 36 48 L 44 56 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M 60 56 L 62 44 L 70 56 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round"/>
+        <!-- closed eyes (sleeping) -->
+        <path d="M 42 70 Q 46 73, 50 70" fill="none" stroke="#2b2218" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M 56 70 Q 60 73, 64 70" fill="none" stroke="#2b2218" stroke-width="1.8" stroke-linecap="round" />
+        <!-- nose -->
+        <ellipse cx="36" cy="76" rx="2" ry="1.4" fill="#2b2218" />
+        <!-- ZZZ -->
+        <text x="32" y="36" font-size="14" font-weight="600" fill="#7d6a55" font-family="Inter, sans-serif">z</text>
+        <text x="22" y="28" font-size="11" font-weight="600" fill="#b3a08a" font-family="Inter, sans-serif">z</text>
+      </svg>
+      <p class="empty-title">Loading transcripts…</p>
+    </div>
+  {:else if history.list.length === 0}
+    <!-- First-run empty state: sitting fox placeholder + helpful copy.
+         Replaced later with the user-provided "fox in flowers" PNG. -->
+    <div class="empty">
+      <svg class="empty-fox sitting" viewBox="0 0 160 140" width="160" height="140" aria-hidden="true">
+        <!-- ground shadow -->
+        <ellipse cx="80" cy="125" rx="48" ry="6" fill="rgba(120, 80, 30, 0.18)" />
+        <!-- grass + flower clumps -->
+        <path d="M 18 124 Q 14 116, 22 110" fill="none" stroke="#6cb16d" stroke-width="2" stroke-linecap="round" />
+        <path d="M 26 126 Q 30 118, 26 112" fill="none" stroke="#6cb16d" stroke-width="2" stroke-linecap="round" />
+        <path d="M 138 126 Q 134 118, 138 112" fill="none" stroke="#6cb16d" stroke-width="2" stroke-linecap="round" />
+        <path d="M 132 124 Q 136 116, 130 110" fill="none" stroke="#6cb16d" stroke-width="2" stroke-linecap="round" />
+        <circle cx="14" cy="120" r="4" fill="#d479ad" /><circle cx="14" cy="120" r="1.6" fill="#fde2c4" />
+        <circle cx="146" cy="118" r="4" fill="#8d5dce" /><circle cx="146" cy="118" r="1.6" fill="#fde2c4" />
+        <!-- legs / sitting body -->
+        <path d="M 42 110 C 42 84, 118 84, 118 110 L 118 122 C 118 128, 42 128, 42 122 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
+        <!-- chest fluff -->
+        <ellipse cx="80" cy="106" rx="22" ry="12" fill="#fde2c4" />
+        <!-- tail (visible behind) -->
+        <path d="M 118 100 C 138 92, 140 72, 124 64 C 116 72, 112 88, 118 100 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
+        <path d="M 124 64 Q 130 68, 128 74" fill="none" stroke="#fde2c4" stroke-width="3" stroke-linecap="round" />
+        <!-- head -->
+        <ellipse cx="80" cy="62" rx="30" ry="26" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" />
+        <!-- ears -->
+        <path d="M 54 46 L 58 28 L 70 42 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
+        <path d="M 106 46 L 102 28 L 90 42 Z" fill="#ec7c34" stroke="#a64a14" stroke-width="1.5" stroke-linejoin="round" />
+        <path d="M 58 36 L 60 42 L 64 39 Z" fill="#7a3a14" />
+        <path d="M 102 36 L 100 42 L 96 39 Z" fill="#7a3a14" />
+        <!-- face mask -->
+        <ellipse cx="80" cy="70" rx="18" ry="13" fill="#fde2c4" />
+        <!-- eyes -->
+        <ellipse cx="68" cy="60" rx="3.2" ry="3.8" fill="#2b2218" />
+        <ellipse cx="92" cy="60" rx="3.2" ry="3.8" fill="#2b2218" />
+        <circle cx="67" cy="59" r="1.1" fill="#ffffff" />
+        <circle cx="91" cy="59" r="1.1" fill="#ffffff" />
+        <!-- nose + mouth -->
+        <ellipse cx="80" cy="71" rx="2.6" ry="2" fill="#2b2218" />
+        <path d="M 80 73 Q 80 78, 76 78" fill="none" stroke="#2b2218" stroke-width="1.4" stroke-linecap="round" />
+        <path d="M 80 73 Q 80 78, 84 78" fill="none" stroke="#2b2218" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+      <p class="empty-title">No transcripts yet</p>
+      <p class="empty-body">Hold <kbd>F8</kbd> anywhere on your computer to dictate. Your recording will land here.</p>
     </div>
   {:else if filtered.length === 0}
     <div class="empty">
@@ -272,38 +338,44 @@
     flex-wrap: wrap;
   }
 
+  /* Filter pills — v0.4.0 design playbook. Individual rounded pills with
+     a soft cream fill by default and a vibrant orange fill when active.
+     No segmented-control container — each pill is its own button. */
   .filter-pills {
     display: flex;
-    gap: 4px;
-    background: var(--bg-subtle);
-    padding: 4px;
-    border-radius: 9px;
+    gap: 6px;
   }
 
   .pill {
-    background: transparent;
-    border: none;
-    padding: 5px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 5px 14px;
     font-size: 12px;
     color: var(--text-secondary);
-    border-radius: 6px;
+    border-radius: 999px;
     cursor: pointer;
-    transition: all 100ms ease;
+    transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
     font-weight: 500;
+    font-family: inherit;
   }
 
   .pill:hover {
     color: var(--text-primary);
+    border-color: var(--text-secondary);
   }
 
   .pill.active {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.10);
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+    box-shadow: 0 1px 2px rgba(184, 84, 18, 0.25);
   }
 
   .pill.error-pill.active {
-    color: var(--danger);
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #ffffff;
+    box-shadow: 0 1px 2px rgba(168, 58, 42, 0.30);
   }
 
   .controls-right {
@@ -397,17 +469,47 @@
     color: var(--text-secondary);
     text-align: center;
     padding: 40px;
+    gap: 4px;
+  }
+
+  /* Placeholder fox SVGs — to be replaced by user-provided pastoral
+     illustrations in v0.4.1+. The SVG is built inline so it inherits the
+     theme palette and shows up even before the real asset lands. */
+  .empty-fox {
+    margin-bottom: 14px;
+    filter: drop-shadow(0 4px 8px rgba(120, 80, 30, 0.18));
+  }
+  .empty-fox.sleeping {
+    animation: fox-breathe 3.4s ease-in-out infinite;
+  }
+  @keyframes fox-breathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-2px) scale(1.01); }
   }
 
   .empty-title {
-    font-size: 16px;
+    font-size: 17px;
     color: var(--text-primary);
     margin: 0 0 6px;
-    font-weight: 500;
+    font-weight: 600;
   }
 
   .empty-body {
     font-size: 13px;
     margin: 0;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+
+  .empty-body kbd {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-family: ui-monospace, "SF Mono", Cascadia, Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    margin: 0 2px;
   }
 </style>

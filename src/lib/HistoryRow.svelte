@@ -53,6 +53,27 @@
   let showInspector = $state(false);
   let inspectorHasNews = $derived(isError || !!rec.error);
 
+  // Kebab (3-dot) menu — holds Retry + Delete per the v0.4.0 design
+  // playbook. Closes on outside click or Escape.
+  let kebabOpen = $state(false);
+  $effect(() => {
+    if (!kebabOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest(".kebab-wrap")) return;
+      kebabOpen = false;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") kebabOpen = false;
+    };
+    window.addEventListener("click", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  });
+
   function timeShort(iso: string): string {
     try {
       const d = new Date(iso);
@@ -314,21 +335,54 @@
         </button>
       {/if}
 
-      <!-- Retry: always visible. Highlighted for errored rows since
-           it's the obvious recovery action; a normal subtle button on
-           successful rows since most users won't click it. -->
-      <button
-        class="action-btn retry"
-        class:emphasized={isError}
-        onclick={retry}
-        disabled={retryDisabled}
-        title={isError ? "Retry transcription" : "Re-run transcription on this audio"}
-      >
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-      </button>
+      <!-- 3-dot kebab menu — destination for less-frequently-used row
+           actions (Retry, Delete) per the v0.4.0 design playbook. Retry
+           used to be a top-level button; on the new layout we keep Play
+           + Copy prominent and tuck the rest behind this menu. -->
+      <div class="kebab-wrap">
+        <button
+          class="action-btn kebab"
+          class:emphasized={isError}
+          onclick={(e) => { e.stopPropagation(); kebabOpen = !kebabOpen; }}
+          aria-haspopup="menu"
+          aria-expanded={kebabOpen}
+          title="More"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <circle cx="8" cy="3" r="1.6" fill="currentColor" />
+            <circle cx="8" cy="8" r="1.6" fill="currentColor" />
+            <circle cx="8" cy="13" r="1.6" fill="currentColor" />
+          </svg>
+        </button>
+        {#if kebabOpen}
+          <div class="kebab-menu" role="menu" onclick={(e) => e.stopPropagation()}>
+            <button
+              class="kebab-item"
+              class:emphasized={isError}
+              role="menuitem"
+              disabled={retryDisabled}
+              onclick={() => { kebabOpen = false; retry(); }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+              <span>{isError ? "Retry" : "Re-run transcription"}</span>
+            </button>
+            <button
+              class="kebab-item danger"
+              role="menuitem"
+              disabled={busy}
+              onclick={() => { kebabOpen = false; remove(); }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path d="M 3 4 L 13 4 M 5 4 V 13 A 1 1 0 0 0 6 14 H 10 A 1 1 0 0 0 11 13 V 4 M 7 7 V 11 M 9 7 V 11 M 6 4 V 3 A 1 1 0 0 1 7 2 H 9 A 1 1 0 0 1 10 3 V 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              <span>Delete recording</span>
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </header>
 
@@ -592,6 +646,68 @@
     border-color: var(--warning, var(--accent));
   }
 
+  /* Kebab (3-dot menu) button + popover. Sits at the right end of the
+     row's action group; opens a small popover with Retry + Delete. */
+  .kebab-wrap {
+    position: relative;
+  }
+  .action-btn.kebab:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .action-btn.kebab.emphasized {
+    color: var(--warning);
+    border-color: var(--warning);
+    background: var(--warning-fade);
+  }
+  .kebab-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 6px;
+    min-width: 180px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(120, 80, 30, 0.18);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    z-index: 50;
+  }
+  .kebab-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+  }
+  .kebab-item:hover:not(:disabled) {
+    background: var(--bg-subtle);
+  }
+  .kebab-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .kebab-item.danger {
+    color: var(--danger);
+  }
+  .kebab-item.danger:hover:not(:disabled) {
+    background: var(--danger-fade);
+  }
+  .kebab-item.emphasized {
+    color: var(--warning);
+    font-weight: 500;
+  }
+
   .action-btn.retry.emphasized {
     background: var(--warning-fade);
     border-color: var(--warning);
@@ -753,62 +869,71 @@
     overflow: hidden;
   }
 
-  /* Inline version tabs — Raw / Cleaned / Drafted as a compact iOS-style
-     segmented control that sits IN the metadata row alongside time +
-     duration. No separate bar under the body any more. Each tab is a
-     small pill; the active one has a subtle filled background, dim
-     (= not-yet-generated) tabs are still clickable to trigger on-demand
-     generation. */
+  /* Inline version tabs — Raw / Cleaned / Drafted. v0.4.0 design playbook
+     gives them their own visual identity: the active tab is filled with
+     the accent orange + white text (the playbook's "Cleaned" pill), other
+     tabs are subtle cream-fill outlines. Dim (= not yet generated) tabs
+     are translucent and italic to read as a CTA, not data. */
   .tabs-inline {
     display: inline-flex;
     align-items: center;
-    background: var(--bg-subtle);
-    padding: 2px;
-    border-radius: 999px;
-    margin-left: 6px;
-    border: 1px solid var(--border-subtle);
+    gap: 4px;
+    margin-left: 8px;
   }
 
   .tab {
-    background: transparent;
-    border: none;
-    padding: 2px 9px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 2px 10px;
     font-size: 10px;
-    line-height: 1.4;
+    line-height: 1.5;
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
     border-radius: 999px;
-    transition: background 100ms ease, color 100ms ease;
+    transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
     font-family: inherit;
+    letter-spacing: 0.01em;
   }
 
   .tab:hover:not(:disabled) {
     color: var(--text-primary);
+    border-color: var(--text-secondary);
   }
 
   .tab.active {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    box-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.10);
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 1px 2px rgba(184, 84, 18, 0.25);
+  }
+  .tab.active:hover {
+    background: var(--accent-hover, var(--accent));
+    border-color: var(--accent-hover, var(--accent));
+    color: #ffffff;
   }
 
-  /* Dim = version doesn't exist yet; still a click target. Slight italic
-     hints "this is a CTA, not the data". */
+  /* Dim = version doesn't exist yet; still a click target. */
   .tab.dim {
+    background: transparent;
     color: var(--text-secondary);
-    opacity: 0.5;
+    opacity: 0.6;
     font-style: italic;
+    border-style: dashed;
   }
   .tab.dim:hover:not(:disabled) {
-    opacity: 0.9;
+    opacity: 1;
     color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-fade);
   }
 
   .tab.loading {
     color: var(--accent);
     opacity: 1;
     font-style: italic;
+    border-color: var(--accent);
+    background: var(--accent-fade);
   }
 
   .tab:disabled {

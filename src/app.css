@@ -3,49 +3,78 @@
 /* ────────────────────────────────────────────────────────────────────────
    Theme tokens. Set on <body data-theme="..."> by the layout.
    "auto" tracks prefers-color-scheme; explicit values lock the theme.
+
+   v0.4.0 — "Foxy" palette is the new default light theme. Warm cream
+   surfaces, orange accent, brown text. Brings the app's visual identity
+   in line with its name (wispr-FOX) and the cottage-core fox mascot.
+   The old "Apple-light" palette is retired; existing "dark" + "retro"
+   themes are preserved as-is for users who picked them.
    ──────────────────────────────────────────────────────────────────────── */
 :root {
-  --bg-surface: #fafafa;
-  --bg-card: #ffffff;
-  --bg-sidebar: #f5f5f7;
-  --bg-elev: #ffffff;
-  --bg-subtle: rgba(0, 0, 0, 0.04);
-  --border: rgba(0, 0, 0, 0.08);
-  --border-subtle: rgba(0, 0, 0, 0.04);
-  --text-primary: #1d1d1f;
-  --text-secondary: #6e6e73;
-  --text-muted: #86868b;
-  --accent: #0a84ff;
-  --accent-fade: rgba(10, 132, 255, 0.12);
-  --success: #34c759;
-  --success-fade: rgba(52, 199, 89, 0.16);
-  --warning: #ff9f0a;
-  --warning-fade: rgba(255, 159, 10, 0.16);
-  --danger: #ff453a;
-  --danger-fade: rgba(255, 69, 58, 0.10);
+  /* Surfaces — warm cream → very cream → almost-white-cream */
+  --bg-surface: #faf6ec;       /* main app background */
+  --bg-card: #ffffff;           /* lifted cards on top of surface */
+  --bg-sidebar: #f4ead6;        /* sidebar — deeper cream so it reads as nav */
+  --bg-elev: #ffffff;           /* elevated panels (history-head, toasts) */
+  --bg-subtle: rgba(120, 80, 30, 0.05);
+
+  /* Borders — warm tan, low contrast so the cream stays soft */
+  --border: rgba(120, 80, 30, 0.16);
+  --border-subtle: rgba(120, 80, 30, 0.08);
+
+  /* Text — dark warm brown family, not pure black */
+  --text-primary: #2b2218;
+  --text-secondary: #7d6a55;
+  --text-muted: #b3a08a;
+
+  /* Accent — the fox orange. Used for primary buttons, active tabs,
+     focus rings, link highlights. */
+  --accent: #ec7c34;
+  --accent-hover: #d56a26;
+  --accent-pressed: #b85412;
+  --accent-fade: rgba(236, 124, 52, 0.14);
+  --accent-soft: #fde2c4;       /* "Soft" button variant + active-tab background */
+
+  /* Semantic — toned-down to fit the cream theme, no neon */
+  --success: #6cb16d;
+  --success-fade: rgba(108, 177, 109, 0.16);
+  --warning: #e89150;
+  --warning-fade: rgba(232, 145, 80, 0.18);
+  --danger: #cf5a47;
+  --danger-fade: rgba(207, 90, 71, 0.12);
+  --info: #5c92c8;
+  --info-fade: rgba(92, 146, 200, 0.14);
+
   color-scheme: light;
 }
 
-/* Dark — Apple-style dark surfaces */
+/* Dark — Foxy after-hours. Dark warm browns + the same orange accent so
+   the brand identity carries through even after sunset. Less Apple-y,
+   more "fox curled up in front of a fireplace". */
 [data-theme="dark"] {
-  --bg-surface: #1c1c1e;
-  --bg-card: #2c2c2e;
-  --bg-sidebar: #232325;
-  --bg-elev: #3a3a3c;
-  --bg-subtle: rgba(255, 255, 255, 0.05);
-  --border: rgba(255, 255, 255, 0.10);
-  --border-subtle: rgba(255, 255, 255, 0.05);
-  --text-primary: #f5f5f7;
-  --text-secondary: #98989d;
-  --text-muted: #6e6e73;
-  --accent: #0a84ff;
-  --accent-fade: rgba(10, 132, 255, 0.18);
-  --success: #30d158;
-  --success-fade: rgba(48, 209, 88, 0.18);
-  --warning: #ff9f0a;
-  --warning-fade: rgba(255, 159, 10, 0.18);
-  --danger: #ff453a;
-  --danger-fade: rgba(255, 69, 58, 0.16);
+  --bg-surface: #1f1812;       /* deep warm brown */
+  --bg-card: #2c2218;
+  --bg-sidebar: #1a130d;
+  --bg-elev: #36281d;
+  --bg-subtle: rgba(255, 240, 220, 0.04);
+  --border: rgba(255, 220, 180, 0.10);
+  --border-subtle: rgba(255, 220, 180, 0.05);
+  --text-primary: #f5ead5;
+  --text-secondary: #b3a08a;
+  --text-muted: #7d6a55;
+  --accent: #f08d4a;            /* slightly lighter orange for dark backgrounds */
+  --accent-hover: #ec7c34;
+  --accent-pressed: #d56a26;
+  --accent-fade: rgba(240, 141, 74, 0.18);
+  --accent-soft: rgba(240, 141, 74, 0.22);
+  --success: #76b076;
+  --success-fade: rgba(118, 176, 118, 0.20);
+  --warning: #e89150;
+  --warning-fade: rgba(232, 145, 80, 0.20);
+  --danger: #d65f47;
+  --danger-fade: rgba(214, 95, 71, 0.18);
+  --info: #5c92c8;
+  --info-fade: rgba(92, 146, 200, 0.18);
   color-scheme: dark;
 }
 
@@ -72,7 +101,9 @@
   color-scheme: light;
 }
 
-/* Auto follows the system. Only applies if no explicit data-theme set. */
+/* Auto follows the system. Only kicks in when the user has data-theme="auto"
+   explicitly. Otherwise the foxy light palette in :root wins regardless of
+   system theme — by design, since foxy IS our brand identity. */
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] {
     --bg-surface: #1c1c1e;
@@ -85,9 +116,10 @@
     --text-primary: #f5f5f7;
     --text-secondary: #98989d;
     --text-muted: #6e6e73;
-    --accent-fade: rgba(10, 132, 255, 0.18);
-    --success: #30d158;
-    --success-fade: rgba(48, 209, 88, 0.18);
+    --accent: #ec7c34;
+    --accent-fade: rgba(236, 124, 52, 0.20);
+    --success: #6cb16d;
+    --success-fade: rgba(108, 177, 109, 0.20);
     color-scheme: dark;
   }
 }
@@ -96,10 +128,12 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  /* Inter preferred (matches the design playbook), falls back to system. */
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg-surface);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
 }
 
 * {
