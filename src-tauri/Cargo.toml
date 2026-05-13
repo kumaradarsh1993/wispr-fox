@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "0.3.0"
+version = "0.3.1"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"

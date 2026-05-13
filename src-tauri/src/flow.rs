@@ -210,6 +210,20 @@ impl Flow {
             // Push-to-talk: down starts, up finishes.
             match evt.edge {
                 Edge::Down => {
+                    // Windows fires WM_HOTKEY repeatedly while the user
+                    // holds a function-key hotkey (auto-repeat, ~30/sec).
+                    // The first Down starts the recording; every subsequent
+                    // repeat would hit start_recording_async's "active is
+                    // some" guard and surface as a "recording already in
+                    // progress" red toast mid-dictation. Silently swallow
+                    // re-fires here so the user just sees one clean
+                    // recording session.
+                    if this.state.lock().active.is_some() {
+                        tracing::trace!(
+                            "ignoring Down edge while a recording is already active (likely auto-repeat)"
+                        );
+                        return;
+                    }
                     if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
                         tracing::error!("start_recording failed: {e:#}");
                         let _ = app.emit("wispr:flow_error", e.to_string());

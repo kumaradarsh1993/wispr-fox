@@ -157,16 +157,24 @@ fn classify_inner(process_name: &str, window_title: &str) -> AppKind {
 /// Convert an `AppKind` to a short hint line that gets prepended to the
 /// LLM's system prompt for F9 drafting. Returns None for `Default` so the
 /// caller can skip augmentation entirely.
+///
+/// HINTS ARE TONE NUDGES, NOT FORMAT MANDATES. The previous v0.3.0 wording
+/// over-forced email/letter format every time the user pressed F9 in
+/// Outlook — even when they just wanted a paragraph mid-reply. Each hint
+/// now sets the REGISTER (formal vs casual) but defers to the brief for
+/// the actual FORMAT (paragraph vs email vs bullets). Combined with the
+/// drafting system prompt's "only do email format if explicitly asked"
+/// rule, this keeps F9 from email-ifying everything.
 pub fn context_hint(kind: AppKind) -> Option<&'static str> {
     Some(match kind {
-        AppKind::Email => "Context: the user is dictating into an EMAIL composer. Match register: formal-to-professional. Use proper greetings + sign-offs where natural. Structured paragraphs.",
-        AppKind::ChatCasual => "Context: the user is dictating into a CASUAL CHAT (WhatsApp, Telegram, etc). Match register: short, conversational, lowercase often OK, no formal preamble, no sign-off.",
-        AppKind::ChatWork => "Context: the user is dictating into a WORK CHAT (Slack, Teams, Discord). Match register: brief and professional. No formal greeting unless this is clearly a first message. Skip sign-off.",
-        AppKind::SocialPublic => "Context: the user is dictating into a PUBLIC SOCIAL POST (LinkedIn, X/Twitter). Match register: polished, punchy. Short hooks, no fluff, line breaks for rhythm.",
-        AppKind::SocialCasual => "Context: the user is dictating into a CASUAL SOCIAL POST (Reddit, HN, casual forum). Match register: conversational, opinionated OK. Match the platform's relaxed tone.",
-        AppKind::Document => "Context: the user is dictating into a LONG-FORM DOCUMENT (Word, Notion, Google Docs). Match register: structured prose. Sub-headings or sections where the content naturally calls for them.",
-        AppKind::Code => "Context: the user is dictating into a CODE EDITOR. Match register: concise and technical. If this reads like a code comment, format as one. No prose padding.",
-        AppKind::AiChat => "Context: the user is dictating into an AI CHAT input box (ChatGPT, Claude, Gemini). Match register: direct, first-person instruction to the AI. Skip preamble — ask the question or state the task.",
+        AppKind::Email => "Context hint: the user is in an email composer. Default register: professional. Format as a normal paragraph unless the brief explicitly says \"email\", \"reply\", \"write to\" etc — in which case it's safe to add greeting/sign-off.",
+        AppKind::ChatCasual => "Context hint: the user is in a casual chat (WhatsApp / Telegram / Messages). Default register: conversational, short, lowercase often natural. Never add a sign-off.",
+        AppKind::ChatWork => "Context hint: the user is in a work chat (Slack / Teams / Discord). Default register: brief and professional. No greeting / sign-off boilerplate.",
+        AppKind::SocialPublic => "Context hint: the user is composing a public social post (LinkedIn / X / Twitter). Default register: polished and punchy. Short hooks; line breaks for rhythm where natural.",
+        AppKind::SocialCasual => "Context hint: the user is on a casual social platform (Reddit / HN / forums). Default register: conversational, opinionated OK.",
+        AppKind::Document => "Context hint: the user is in a long-form document editor (Word / Notion / Google Docs). Default register: clear written prose. Structure (paragraphs, occasional sub-heading) only when content naturally calls for it.",
+        AppKind::Code => "Context hint: the user is in a code editor. Default register: concise and technical. If the brief reads like a code comment, format as one. No prose padding.",
+        AppKind::AiChat => "Context hint: the user is composing a message in an AI chat (ChatGPT / Claude / Gemini). Default register: direct first-person instruction to the AI. Skip preamble.",
         AppKind::Default => return None,
     })
 }

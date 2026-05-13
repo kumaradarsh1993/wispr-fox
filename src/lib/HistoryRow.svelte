@@ -234,7 +234,43 @@
       <span class="when">{timeShort(rec.created_at)}</span>
       <span class="dot">·</span>
       <span class="dur">{durationShort(rec.duration_ms)}</span>
-      <span class="mode {rec.mode}">{rec.mode}</span>
+
+      <!-- Version tabs inline with the metadata row. Compact, iOS-style
+           segmented control. The original mode badge ("light"/"drafting")
+           is gone — the active tab tells you the same thing without
+           wasting vertical space below the body. Click stops propagation
+           so a tab click doesn't also toggle row expansion. -->
+      {#if rec.transcript || rec.cleaned_text || rec.drafted_text}
+        <span class="tabs-inline" role="presentation" onclick={(e) => e.stopPropagation()}>
+          <button
+            class="tab"
+            class:active={activeTab === "raw"}
+            class:dim={!rec.transcript}
+            disabled={!rec.transcript}
+            onclick={() => (activeTab = "raw")}
+            title="Raw transcript"
+          >Raw</button>
+          <button
+            class="tab"
+            class:active={activeTab === "cleaned"}
+            class:dim={!rec.cleaned_text}
+            class:loading={generating === "cleaned"}
+            disabled={generating !== null}
+            onclick={() => onTabClick("cleaned")}
+            title={rec.cleaned_text ? "Cleaned" : "Generate a cleaned version"}
+          >{generating === "cleaned" ? "…" : "Cleaned"}</button>
+          <button
+            class="tab"
+            class:active={activeTab === "drafted"}
+            class:dim={!rec.drafted_text}
+            class:loading={generating === "drafted"}
+            disabled={generating !== null}
+            onclick={() => onTabClick("drafted")}
+            title={rec.drafted_text ? "Drafted" : "Generate a drafted version"}
+          >{generating === "drafted" ? "…" : "Drafted"}</button>
+        </span>
+      {/if}
+
       {#if rec.retry_count > 0}
         <span class="retry-count" title="Number of retry attempts">↻ {rec.retry_count}</span>
       {/if}
@@ -297,42 +333,6 @@
   </header>
 
   <div class="body" class:clamped={!expanded}>
-    <!-- Version tabs (Raw / Cleaned / Drafted). The Raw tab is always
-         enabled because we always have a transcript once STT runs.
-         Cleaned + Drafted are enabled if their column has text; clicking
-         a dimmed one triggers on-demand LLM generation. Stops click-
-         bubbling so a tab click doesn't also toggle row expansion. -->
-    {#if rec.transcript || rec.cleaned_text || rec.drafted_text}
-      <div class="tabs" role="presentation" onclick={(e) => e.stopPropagation()}>
-        <button
-          class="tab"
-          class:active={activeTab === "raw"}
-          class:dim={!rec.transcript}
-          disabled={!rec.transcript}
-          onclick={() => (activeTab = "raw")}
-          title="Raw transcript (exact Whisper output)"
-        >Raw</button>
-        <button
-          class="tab"
-          class:active={activeTab === "cleaned"}
-          class:dim={!rec.cleaned_text}
-          class:loading={generating === "cleaned"}
-          disabled={generating !== null}
-          onclick={() => onTabClick("cleaned")}
-          title={rec.cleaned_text ? "Cleaned version" : "Click to generate a cleaned version (spell/punctuation/paragraphing, no content change)"}
-        >{generating === "cleaned" ? "Cleaning…" : "Cleaned"}</button>
-        <button
-          class="tab"
-          class:active={activeTab === "drafted"}
-          class:dim={!rec.drafted_text}
-          class:loading={generating === "drafted"}
-          disabled={generating !== null}
-          onclick={() => onTabClick("drafted")}
-          title={rec.drafted_text ? "Drafted version" : "Click to generate a drafted version (treats the transcript as a brief and produces a polished output)"}
-        >{generating === "drafted" ? "Drafting…" : "Drafted"}</button>
-      </div>
-    {/if}
-
     {#if isError}
       <div class="err">
         <strong>Failed:</strong> {rec.error || "unknown error"}
@@ -753,31 +753,32 @@
     overflow: hidden;
   }
 
-  /* 3-tab bar — Raw / Cleaned / Drafted. Sits centred above the transcript
-     body so the row reads visually balanced. Active tab is highlighted,
-     missing-version tabs are dimmed; dimmed tabs are still clickable to
-     trigger on-demand generation. */
-  .tabs {
-    display: flex;
-    justify-content: center;
-    gap: 0;
-    margin: 0 auto 10px;
+  /* Inline version tabs — Raw / Cleaned / Drafted as a compact iOS-style
+     segmented control that sits IN the metadata row alongside time +
+     duration. No separate bar under the body any more. Each tab is a
+     small pill; the active one has a subtle filled background, dim
+     (= not-yet-generated) tabs are still clickable to trigger on-demand
+     generation. */
+  .tabs-inline {
+    display: inline-flex;
+    align-items: center;
     background: var(--bg-subtle);
-    padding: 3px;
-    border-radius: 8px;
+    padding: 2px;
+    border-radius: 999px;
+    margin-left: 6px;
     border: 1px solid var(--border-subtle);
-    width: fit-content;
   }
 
   .tab {
     background: transparent;
     border: none;
-    padding: 4px 12px;
-    font-size: 11px;
+    padding: 2px 9px;
+    font-size: 10px;
+    line-height: 1.4;
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    border-radius: 5px;
+    border-radius: 999px;
     transition: background 100ms ease, color 100ms ease;
     font-family: inherit;
   }
@@ -789,14 +790,14 @@
   .tab.active {
     background: var(--bg-card);
     color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.10);
   }
 
-  /* Dim tabs (= version doesn't exist yet) — still clickable to trigger
-     generation. Slight italic so it reads as "this is a CTA, not the data". */
+  /* Dim = version doesn't exist yet; still a click target. Slight italic
+     hints "this is a CTA, not the data". */
   .tab.dim {
     color: var(--text-secondary);
-    opacity: 0.55;
+    opacity: 0.5;
     font-style: italic;
   }
   .tab.dim:hover:not(:disabled) {
