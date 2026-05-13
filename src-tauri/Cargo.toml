@@ -90,8 +90,13 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [profile.release]
+# Trade a few percent of binary size for build reliability on lower-RAM
+# machines. Previous profile (lto = true, codegen-units = 1) consumed
+# ~6-8 GB during the final codegen step and OOM'd rustc on Windows
+# during the v1.0.0 build. Thin LTO + default codegen-units = 16 still
+# strips dead code and inlines hot paths, just less aggressively.
 panic = "abort"
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = "thin"
 opt-level = "s"
 strip = true
