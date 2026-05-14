@@ -289,6 +289,15 @@
           </div>
         {/if}
 
+        <!-- Replay onboarding — small dev-mode helper so testers can re-walk
+             the 3-screen flow without nuking their keys. TODO: hide behind
+             a settings.dev_mode flag once the flow is locked. -->
+        {#if !collapsed}
+          <a class="replay-onboarding" href="/onboarding" data-sveltekit-preload-data="off">
+            ↻ Replay onboarding
+          </a>
+        {/if}
+
         <!-- Sidebar fox mascot. Placeholder inline SVG (a stylised fox face)
              until the user-provided pastoral fox illustration lands. Hidden
              when the sidebar is collapsed since it'd just be visual noise
@@ -362,6 +371,22 @@
      at the very bottom of the sidebar, below usage + active-models
      blocks. The hero illustration is intentionally roomy (130×130) to
      feel like a real character, not a tiny icon. */
+  .replay-onboarding {
+    display: block;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 6px 8px;
+    margin: 4px 0 0;
+    border-radius: 6px;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .replay-onboarding:hover {
+    background: var(--bg-subtle);
+    color: var(--accent);
+  }
+
   .sidebar-fox {
     margin: 8px auto -4px;
     width: 130px;
