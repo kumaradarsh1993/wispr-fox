@@ -25,9 +25,11 @@
   }
 
   // ── Notification sounds ────────────────────────────────────────────────
+  // Start + stop sounds are always synced now — the v1.0.0 UX feedback
+  // was that two separate pickers + an opt-in toggle was clutter. Picking
+  // a cue sets both start and stop to the same file.
   let availableSounds = $state<string[]>([]);
   let soundsDir = $state<string>("");
-  let soundSync = $state(false);
   let previewAudio: HTMLAudioElement | null = null;
 
   async function refreshSounds() {
@@ -40,38 +42,47 @@
     }
   }
 
-  async function setStartSound(name: string) {
+  async function setCueSound(name: string) {
     await settings.set("start_sound", name);
-    if (soundSync) {
-      await settings.set("stop_sound", name);
-    }
-    await api.configureCues(name, soundSync ? name : settings.s.stop_sound, settings.s.cues_enabled);
-    flash("Start sound updated");
-  }
-  async function setStopSound(name: string) {
-    if (soundSync) return; // ignored when synced
     await settings.set("stop_sound", name);
-    await api.configureCues(settings.s.start_sound, name, settings.s.cues_enabled);
-    flash("Stop sound updated");
+    await api.configureCues(name, name, settings.s.cues_enabled);
+    previewSound(name);
+    flash(name ? "Cue sound updated" : "Built-in tone selected");
   }
+
   async function setCuesEnabled(on: boolean) {
     await settings.set("cues_enabled", on);
     await api.configureCues(settings.s.start_sound, settings.s.stop_sound, on);
   }
-  function toggleSync() {
-    soundSync = !soundSync;
-    if (soundSync && settings.s.start_sound) {
-      setStartSound(settings.s.start_sound); // mirror to stop
-    }
-  }
 
-  // Preview a sound by name (or null = built-in beep — falls back to system).
+  // Preview a sound by name. Empty string = built-in tone; we synthesize
+  // a brief WebAudio chirp so the user gets audible feedback for that
+  // choice too (used to be silent which read as "nothing happened").
   async function previewSound(name: string) {
     if (previewAudio) {
       previewAudio.pause();
       previewAudio = null;
     }
-    if (!name) return;
+    if (!name) {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.setValueAtTime(880, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.12);
+        g.gain.setValueAtTime(0.0001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+        o.connect(g).connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.2);
+        setTimeout(() => ctx.close(), 300);
+      } catch (e) {
+        console.warn("built-in tone preview failed", e);
+      }
+      return;
+    }
     const paths = await api.appPaths();
     const fileUrl = `file://${paths.sounds_dir.replace(/\\/g, "/")}/${encodeURIComponent(name)}`;
     try {
@@ -138,7 +149,7 @@
   </div>
 
   <h3>Audio cues</h3>
-  <p class="lede">Short sounds that play when recording starts and stops. Click any tile to preview it.</p>
+  <p class="lede">A short sound plays when recording starts and stops. Click any tile to pick it (and hear a preview).</p>
 
   <label class="check-row">
     <input
@@ -150,21 +161,17 @@
   </label>
 
   {#if settings.s.cues_enabled}
-    <label class="check-row">
-      <input type="checkbox" checked={soundSync} onchange={toggleSync} />
-      <span>Sync start + stop sounds — use the same file for both</span>
-    </label>
-
     <div class="sound-section">
       <div class="sound-section-head">
-        <span class="sound-section-title">Start sound</span>
+        <span class="sound-section-title">Cue sound</span>
         <button class="btn-secondary small" onclick={uploadSound}>+ Upload file</button>
       </div>
       <div class="sound-tiles">
         <button
           class="sound-tile"
           class:active={settings.s.start_sound === ""}
-          onclick={() => setStartSound("")}
+          onclick={() => setCueSound("")}
+          title="System-default soft chirp"
         >
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path d="M 5 9 L 5 15 L 9 15 L 14 19 L 14 5 L 9 9 Z M 18 8 L 18 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
@@ -175,43 +182,8 @@
           <button
             class="sound-tile"
             class:active={settings.s.start_sound === f}
-            onclick={() => { setStartSound(f); previewSound(f); }}
+            onclick={() => setCueSound(f)}
             title="Click to select + preview"
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <path d="M 4 12 L 7 12 M 9 8 L 9 16 M 12 6 L 12 18 M 15 9 L 15 15 M 18 11 L 18 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <span class="sound-tile-label">{f}</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="sound-section" class:disabled={soundSync}>
-      <div class="sound-section-head">
-        <span class="sound-section-title">
-          Stop sound
-          {#if soundSync}<span class="sound-locked">— synced with start</span>{/if}
-        </span>
-      </div>
-      <div class="sound-tiles">
-        <button
-          class="sound-tile"
-          class:active={(soundSync ? settings.s.start_sound : settings.s.stop_sound) === ""}
-          onclick={() => setStopSound("")}
-          disabled={soundSync}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path d="M 5 9 L 5 15 L 9 15 L 14 19 L 14 5 L 9 9 Z M 18 8 L 18 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-          </svg>
-          <span class="sound-tile-label">Built-in tone</span>
-        </button>
-        {#each availableSounds as f (f)}
-          <button
-            class="sound-tile"
-            class:active={(soundSync ? settings.s.start_sound : settings.s.stop_sound) === f}
-            onclick={() => { setStopSound(f); previewSound(f); }}
-            disabled={soundSync}
           >
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path d="M 4 12 L 7 12 M 9 8 L 9 16 M 12 6 L 12 18 M 15 9 L 15 15 M 18 11 L 18 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>

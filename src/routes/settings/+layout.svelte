@@ -14,6 +14,7 @@
   type NavItem = { href: string; label: string; icon: string };
   const NAV: NavItem[] = [
     { href: "/settings/providers",  label: "Providers & Models", icon: "🔑" },
+    { href: "/settings/modes",      label: "Modes",              icon: "✨" },
     { href: "/settings/dictation",  label: "Dictation",          icon: "⌨" },
     { href: "/settings/general",    label: "General",            icon: "⚙" },
     { href: "/settings/appearance", label: "Appearance",         icon: "🎨" },

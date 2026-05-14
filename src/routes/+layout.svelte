@@ -592,9 +592,9 @@
 
   .skin-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-    padding: 0 4px 8px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0 2px 8px;
   }
 
   .skin-grid-collapsed {

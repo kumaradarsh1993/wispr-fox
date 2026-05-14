@@ -14,14 +14,15 @@
       {
         "label": "main",
         "title": "wispr-fox",
-        "width": 960,
-        "height": 680,
+        "width": 1200,
+        "height": 800,
         "minWidth": 720,
         "minHeight": 480,
         "decorations": true,
         "resizable": true,
         "visible": false,
-        "center": true
+        "center": true,
+        "theme": "Light"
       },
       {
         "label": "clippy",

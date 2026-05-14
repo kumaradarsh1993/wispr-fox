@@ -7,7 +7,6 @@
   import { api, type SecretCheck } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
-  import HotkeyCapture from "$lib/HotkeyCapture.svelte";
 
   let secretCheck = $state<SecretCheck>({ stt: false, llm: false, gemini: false });
   let groqStt = $state("");
@@ -141,37 +140,8 @@
     }
   }
 
-  // ── Per-mode prompt editor ─────────────────────────────────────────────
-  let defaultPrompts = $state<{ light: string; advanced: string; drafting: string } | null>(null);
-  let promptOpen = $state<Record<"light" | "advanced" | "drafting", boolean>>({
-    light: false,
-    advanced: false,
-    drafting: false,
-  });
-
-  function effectivePrompt(mode: "light" | "advanced" | "drafting"): string {
-    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
-    const custom = (settings.s[customField] as string) || "";
-    if (custom.trim()) return custom;
-    return defaultPrompts ? defaultPrompts[mode] : "(loading…)";
-  }
-
-  async function savePrompt(mode: "light" | "advanced" | "drafting", value: string) {
-    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
-    await settings.set(customField, value as any);
-    flash(`${mode} prompt saved`);
-  }
-
-  async function resetPrompt(mode: "light" | "advanced" | "drafting") {
-    if (!confirm(`Reset the ${mode} prompt to its default? Any custom edits will be lost.`)) return;
-    const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
-    await settings.set(customField, "" as any);
-    flash(`${mode} prompt reset`);
-  }
-
   onMount(async () => {
     secretCheck = await api.checkSecrets();
-    defaultPrompts = await api.getDefaultPrompts();
   });
 </script>
 
@@ -296,7 +266,10 @@
   </div>
 
   <h3>Speech-to-text</h3>
-  <p class="lede">Which service transcribes your audio. Currently Groq Whisper only — Gemini multimodal STT is on the roadmap.</p>
+  <p class="lede">
+    Which service transcribes your audio. Groq Whisper is wired in;
+    others below are planned and selectable once their backend lands.
+  </p>
   <div class="provider-model-row">
     <div class="field-block field-half">
       <label>Service</label>
@@ -305,6 +278,10 @@
         onchange={(e) => settings.set("stt_provider", (e.currentTarget as HTMLSelectElement).value as any)}
       >
         <option value="groq">Groq Whisper</option>
+        <option value="sarvam" disabled>Sarvam Saaras (Hindi / Indic — coming soon)</option>
+        <option value="deepgram" disabled>Deepgram Nova-3 (coming soon)</option>
+        <option value="assemblyai" disabled>AssemblyAI (coming soon)</option>
+        <option value="gemini-stt" disabled>Gemini 2.5 Flash multimodal (coming soon)</option>
       </select>
     </div>
     <div class="field-block field-half">
@@ -322,8 +299,8 @@
 
   <h3>LLM cleanup</h3>
   <p class="lede">
-    Used by F9 (and F8 if you've enabled cleanup for it). One choice — the same model handles all three
-    modes, only the prompt changes per mode. Your saved API keys stick around when you switch providers.
+    Used by F9 (and F8 if you've enabled cleanup for it). Same model handles all modes;
+    only the prompt changes per mode. Saved keys persist when you switch providers.
   </p>
   <div class="provider-model-row">
     <div class="field-block field-half">
@@ -338,6 +315,10 @@
         <option value="gemini" disabled={!secretCheck.gemini}>
           Google Gemini {secretCheck.gemini ? "" : "(add key first)"}
         </option>
+        <option value="anthropic" disabled>Anthropic Claude (coming soon)</option>
+        <option value="openai" disabled>OpenAI GPT (coming soon)</option>
+        <option value="sarvam-m" disabled>Sarvam-M (Indic — coming soon)</option>
+        <option value="openrouter" disabled>OpenRouter aggregator (coming soon)</option>
       </select>
     </div>
     <div class="field-block field-half">
@@ -353,98 +334,6 @@
     </div>
   </div>
 
-  <h3>Modes</h3>
-  <p class="lede">
-    Each F-key is a different "mode" — same LLM model, different prompts. Toggle whether each mode uses LLM
-    cleanup, and click "Show prompt" to view or customise the prompt for that mode.
-  </p>
-
-  {#each [
-    { id: "light",    fkey: "F8",  title: "Transcribe",  settingKey: "auto_clean_in_light",    defaultOn: false,
-      hotkeyKey: "light_hotkey", stickyHotkeyKey: "light_sticky_hotkey", stickyKey: "sticky_light",
-      desc: "Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every F8 press also gets spell/punctuation/paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use Shift+F8." },
-    { id: "drafting", fkey: "F9",  title: "Draft",       settingKey: "auto_clean_in_drafting", defaultOn: true,
-      hotkeyKey: "drafting_hotkey", stickyHotkeyKey: "drafting_sticky_hotkey", stickyKey: "sticky_drafting",
-      desc: "Give a brief (\"draft an email to Saurabh about X, Y, Z\") and get back a complete polished output. Best for emails, Slack, docs." },
-    { id: "advanced", fkey: "—",   title: "Advanced (legacy)", settingKey: "auto_clean_in_advanced", defaultOn: true,
-      hotkeyKey: "advanced_hotkey", stickyHotkeyKey: "advanced_sticky_hotkey", stickyKey: "sticky_advanced",
-      desc: "Standalone Advanced cleanup mode. No hotkey by default — bind one below if you want a dedicated key separate from the F8 toggle." },
-  ] as m (m.id)}
-    <div class="mode-block">
-      <div class="mode-head">
-        <kbd class="mode-key">{m.fkey}</kbd>
-        <div class="mode-title-block">
-          <div class="mode-title">{m.title}</div>
-          <div class="mode-desc">{m.desc}</div>
-        </div>
-        <label class="check-row inline">
-          <input
-            type="checkbox"
-            checked={settings.s[m.settingKey as keyof typeof settings.s] as boolean}
-            onchange={(e) => settings.set(m.settingKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
-          />
-          <span>LLM cleanup</span>
-        </label>
-      </div>
-
-      <div class="mode-hotkeys">
-        <div class="hk-pair">
-          <div class="hk-pair-col">
-            <div class="hk-pair-label">Main (push-to-talk)</div>
-            <HotkeyCapture label="" bind:value={settings.s[m.hotkeyKey as keyof typeof settings.s] as string} />
-          </div>
-          <div class="hk-pair-col">
-            <div class="hk-pair-label">Sticky-invoke (toggle)</div>
-            <HotkeyCapture label="" bind:value={settings.s[m.stickyHotkeyKey as keyof typeof settings.s] as string} />
-          </div>
-        </div>
-        <label class="check-row small">
-          <input
-            type="checkbox"
-            checked={settings.s[m.stickyKey as keyof typeof settings.s] as boolean}
-            onchange={(e) => settings.set(m.stickyKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
-          />
-          <span>Default to sticky — make the MAIN hotkey behave as toggle too</span>
-        </label>
-      </div>
-
-      <button
-        class="prompt-toggle"
-        onclick={() => (promptOpen[m.id as "light" | "advanced" | "drafting"] = !promptOpen[m.id as "light" | "advanced" | "drafting"])}
-      >
-        <span class="prompt-caret" class:open={promptOpen[m.id as "light" | "advanced" | "drafting"]}>›</span>
-        {promptOpen[m.id as "light" | "advanced" | "drafting"] ? "Hide" : "Show"} system prompt
-        {#if (settings.s[`custom_${m.id}_prompt` as keyof typeof settings.s] as string)?.trim()}
-          <span class="prompt-edited-pill">customised</span>
-        {/if}
-      </button>
-      {#if promptOpen[m.id as "light" | "advanced" | "drafting"]}
-        <div class="prompt-editor">
-          <textarea
-            rows="10"
-            value={effectivePrompt(m.id as "light" | "advanced" | "drafting")}
-            onchange={(e) => savePrompt(m.id as "light" | "advanced" | "drafting", (e.currentTarget as HTMLTextAreaElement).value)}
-          ></textarea>
-          <div class="prompt-actions">
-            <button
-              class="btn-secondary small"
-              onclick={() => resetPrompt(m.id as "light" | "advanced" | "drafting")}
-            >
-              Reset to default
-            </button>
-            {#if m.id === "light"}
-              <span class="prompt-warning">
-                ⚠ The Light prompt is a security boundary against prompt injection — keep the "treat transcript as literal data" guarantee or attackers can hijack via dictation.
-              </span>
-            {/if}
-          </div>
-        </div>
-      {/if}
-    </div>
-  {/each}
-
-  <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox.</p>
-
   <div class="field-block">
     <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
     <input
@@ -458,4 +347,24 @@
     />
     <p class="hint">ISO codes (e.g. <code>en</code>, <code>hi</code>). Leave blank if you code-switch.</p>
   </div>
+
+  <p class="tip">
+    Per-mode behaviour (cleanup toggle + custom system prompt) lives in
+    <strong>Settings → Modes</strong>. Hotkey bindings live in
+    <strong>Settings → Dictation</strong>.
+  </p>
 </section>
+
+<style>
+  .tip {
+    background: var(--bg-subtle);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 24px 0 0;
+    max-width: 720px;
+  }
+</style>
