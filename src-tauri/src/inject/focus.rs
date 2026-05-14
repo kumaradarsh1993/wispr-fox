@@ -111,6 +111,112 @@ pub fn classify_app(_ctx: &CapturedFocus) -> AppKind {
     AppKind::Default
 }
 
+/// Human-readable display name for the captured app. Used by the floater
+/// to surface "Listening for Outlook" instead of just "Listening".
+///
+/// Privacy: returns ONLY a short brand string ("Outlook", "Gmail", etc.) —
+/// never the raw window title or process path. Returns None when we can't
+/// confidently identify the app, in which case the floater falls back to
+/// the generic "Listening".
+#[cfg(windows)]
+pub fn friendly_app_name(ctx: &CapturedFocus) -> Option<String> {
+    friendly_app_name_inner(&ctx.process_name, &ctx.window_title)
+}
+
+#[cfg(not(windows))]
+pub fn friendly_app_name(_ctx: &CapturedFocus) -> Option<String> {
+    None
+}
+
+fn friendly_app_name_inner(process_name: &str, window_title: &str) -> Option<String> {
+    let exe = process_name.to_ascii_lowercase();
+    let title = window_title.to_ascii_lowercase();
+
+    // Direct exe matches — most reliable signal.
+    let direct = match exe.as_str() {
+        "outlook.exe" => Some("Outlook"),
+        "thunderbird.exe" => Some("Thunderbird"),
+        "whatsapp.exe" => Some("WhatsApp"),
+        "telegram.exe" => Some("Telegram"),
+        "signal.exe" => Some("Signal"),
+        "teams.exe" | "ms-teams.exe" => Some("Teams"),
+        "slack.exe" => Some("Slack"),
+        "discord.exe" => Some("Discord"),
+        "winword.exe" => Some("Word"),
+        "notion.exe" => Some("Notion"),
+        "obsidian.exe" => Some("Obsidian"),
+        "code.exe" => Some("VS Code"),
+        "cursor.exe" => Some("Cursor"),
+        "idea64.exe" => Some("IntelliJ"),
+        "devenv.exe" => Some("Visual Studio"),
+        "rustrover64.exe" => Some("RustRover"),
+        "pycharm64.exe" => Some("PyCharm"),
+        "explorer.exe" => Some("Explorer"),
+        "powershell.exe" | "pwsh.exe" => Some("PowerShell"),
+        "windowsterminal.exe" | "wt.exe" => Some("Terminal"),
+        _ => None,
+    };
+    if let Some(name) = direct {
+        return Some(name.to_string());
+    }
+
+    // Browsers — process name doesn't distinguish content. Title gives us
+    // which site the user is on, which is way more useful than "Chrome".
+    let is_browser = matches!(
+        exe.as_str(),
+        "chrome.exe" | "msedge.exe" | "firefox.exe" | "brave.exe"
+            | "arc.exe" | "opera.exe" | "vivaldi.exe"
+    );
+    if is_browser {
+        // Order matters — more specific patterns first.
+        if title.contains("gmail") { return Some("Gmail".into()); }
+        if title.contains("outlook") { return Some("Outlook web".into()); }
+        if title.contains("chatgpt") { return Some("ChatGPT".into()); }
+        if title.contains("claude.ai") || title.contains(" - claude") { return Some("Claude".into()); }
+        if title.contains("gemini") { return Some("Gemini".into()); }
+        if title.contains("linkedin") { return Some("LinkedIn".into()); }
+        if title.contains("twitter") || title.contains(" / x") || title.starts_with("x (") {
+            return Some("X".into());
+        }
+        if title.contains("reddit") { return Some("Reddit".into()); }
+        if title.contains("hacker news") || title.contains("news.ycombinator") {
+            return Some("HN".into());
+        }
+        if title.contains("github") { return Some("GitHub".into()); }
+        if title.contains("whatsapp") { return Some("WhatsApp web".into()); }
+        if title.contains("telegram") { return Some("Telegram web".into()); }
+        if title.contains("discord") { return Some("Discord web".into()); }
+        if title.contains("google docs") { return Some("Google Docs".into()); }
+        if title.contains("notion") { return Some("Notion".into()); }
+        if title.contains("slack") { return Some("Slack web".into()); }
+        // Generic browser fall-through.
+        let browser = match exe.as_str() {
+            "chrome.exe" => "Chrome",
+            "msedge.exe" => "Edge",
+            "firefox.exe" => "Firefox",
+            "brave.exe" => "Brave",
+            "arc.exe" => "Arc",
+            "opera.exe" => "Opera",
+            "vivaldi.exe" => "Vivaldi",
+            _ => "Browser",
+        };
+        return Some(browser.to_string());
+    }
+
+    // UWP apps live behind ApplicationFrameHost.exe — fall back to title.
+    if exe == "applicationframehost.exe" && !window_title.is_empty() {
+        // Title is typically the app name itself for UWP, possibly with
+        // a doc name suffix. Take what's before " - " (or the whole thing).
+        let head = window_title.split(" - ").next().unwrap_or(window_title);
+        let trimmed = head.trim();
+        if !trimmed.is_empty() && trimmed.len() <= 32 {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
 fn classify_inner(process_name: &str, window_title: &str) -> AppKind {
     let exe = process_name.to_ascii_lowercase();
     let title = window_title.to_ascii_lowercase();

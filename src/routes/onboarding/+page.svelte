@@ -79,11 +79,16 @@
   // Recording state mirror driven by wispr:state events. We don't drive the
   // flow ourselves; the existing Rust hotkey/audio/STT pipeline runs as
   // normal and we just listen for state transitions to update the demo UI.
-  type RecState = "idle" | "listening" | "thinking" | "writing" | "pasting" | "done";
+  // Payload values are the raw Rust FlowState strings.
+  type RecState = "idle" | "recording" | "transcribing" | "cleaning" | "injecting";
   let recState = $state<RecState>("idle");
-  let recElapsed = $state(0); // seconds while listening
+  let recElapsed = $state(0); // seconds while recording
   let demoCompleted = $state(false);
   let recTimer: ReturnType<typeof setInterval> | null = null;
+  // Friendly app name from Rust; empty until first F8 press fires
+  // wispr:active_app. Used only in the tip line; the demo box itself is
+  // always the target since it's the focused element.
+  let activeApp = $state("");
 
   function startRecCounter() {
     recElapsed = 0;
@@ -127,6 +132,7 @@
   // teardown directly in Svelte 5 (return type is Promise<void>, not a
   // disposer). onDestroy below picks these up.
   let unlistenState: (() => void) | null = null;
+  let unlistenActiveApp: (() => void) | null = null;
   let priorTheme: string | null = null;
 
   onMount(async () => {
@@ -141,7 +147,7 @@
     unlistenState = await listen<string>("wispr:state", (e) => {
       const s = e.payload as RecState;
       recState = s;
-      if (s === "listening") {
+      if (s === "recording") {
         startRecCounter();
       } else {
         stopRecCounter();
@@ -149,6 +155,10 @@
           demoCompleted = true;
         }
       }
+    });
+
+    unlistenActiveApp = await listen<string>("wispr:active_app", (e) => {
+      activeApp = e.payload ?? "";
     });
 
     // Force light theme during onboarding — first-run shouldn't be the
@@ -159,6 +169,7 @@
 
   onDestroy(() => {
     unlistenState?.();
+    unlistenActiveApp?.();
     if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
     stopRecCounter();
   });
@@ -357,15 +368,15 @@
           bind:this={demoBox}
           bind:value={demoText}
           class="demo-box"
-          class:recording={recState === "listening"}
-          class:thinking={recState === "thinking" || recState === "writing" || recState === "pasting"}
+          class:recording={recState === "recording"}
+          class:thinking={recState === "transcribing" || recState === "cleaning" || recState === "injecting"}
           placeholder="Press F8 anywhere — your words appear here."
           rows="6"
           autofocus
         ></textarea>
 
         <div class="rec-ring">
-          {#if recState === "listening"}
+          {#if recState === "recording"}
             <div class="ring listening">
               <span class="ring-label">Listening · {recElapsed.toFixed(1)}s</span>
               {#if recElapsed < 5}
@@ -374,11 +385,11 @@
                 <span class="ring-hint">good — release F8 when done</span>
               {/if}
             </div>
-          {:else if recState === "thinking"}
+          {:else if recState === "transcribing"}
             <div class="ring thinking">
               <span class="ring-label">Transcribing…</span>
             </div>
-          {:else if recState === "writing" || recState === "pasting"}
+          {:else if recState === "cleaning" || recState === "injecting"}
             <div class="ring thinking">
               <span class="ring-label">Writing it down…</span>
             </div>

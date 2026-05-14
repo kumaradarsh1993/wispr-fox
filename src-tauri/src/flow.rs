@@ -295,7 +295,7 @@ impl Flow {
         });
     }
 
-    async fn start_recording_async(&self, _app: &AppHandle, mode: Mode, force_clean: bool) -> Result<()> {
+    async fn start_recording_async(&self, app: &AppHandle, mode: Mode, force_clean: bool) -> Result<()> {
         {
             let state = self.state.lock();
             if state.active.is_some() {
@@ -315,6 +315,17 @@ impl Flow {
         // itself shift focus (Outlook ribbon keytips), and we want the HWND
         // of where the user actually started speaking.
         let captured_focus = inject::focus::capture();
+
+        // Surface a friendly app name to the floater so it can show
+        // "Listening for Outlook" instead of just "Listening". Empty payload
+        // = unknown / no capture; the floater falls back to the generic
+        // status line. We emit before audio.start so the floater paints the
+        // app label simultaneously with the recording state transition.
+        let friendly = captured_focus
+            .as_ref()
+            .and_then(inject::focus::friendly_app_name)
+            .unwrap_or_default();
+        let _ = app.emit("wispr:active_app", friendly);
 
         self.audio
             .start(path.clone())

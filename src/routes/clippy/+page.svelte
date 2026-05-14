@@ -324,6 +324,7 @@
     let unlistenMode: (() => void) | undefined;
     let unlistenMsg: (() => void) | undefined;
     let unlistenErr: (() => void) | undefined;
+    let unlistenActiveApp: (() => void) | undefined;
     listen<string>("wispr:clippy_message", (e) => {
       console.log("[clippy] wispr:clippy_message", e.payload);
       showToast(e.payload, "info", 3000);
@@ -370,6 +371,11 @@
       console.log("[clippy] wispr:mode", m);
       mode = m;
     }).then((u) => (unlistenMode = u));
+    // Friendly app name from Rust focus-capture. Empty payload = unknown.
+    listen<string>("wispr:active_app", (e) => {
+      console.log("[clippy] wispr:active_app", e.payload);
+      activeApp = e.payload ?? "";
+    }).then((u) => (unlistenActiveApp = u));
 
     // Blinks during idle AND listening so Clippy feels alive while attentive.
     // Uses displayState (the visible state) so blinks follow what's drawn.
@@ -423,6 +429,7 @@
       unlistenMode?.();
       unlistenMsg?.();
       unlistenErr?.();
+      unlistenActiveApp?.();
       disarmWatchdog();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
@@ -457,10 +464,15 @@
   // Labels driving the bubble text. The themed-per-skin map collapsed back
   // to a single set when the "chippy" skin was retired — kept as a derived
   // so future skin-specific overrides have a single place to land.
+  // Friendly app name surfaced from Rust via `wispr:active_app` (emitted at
+  // recording start). Empty string = unknown / no foreground app captured;
+  // the bubble falls back to a generic "listening…" in that case.
+  let activeApp = $state("");
+
   let labels = $derived({
-    listening: "listening…",
+    listening: activeApp ? `listening · ${activeApp}` : "listening…",
     thinking: "thinking",
-    writing: "polishing",
+    writing: activeApp ? `polishing for ${activeApp}` : "polishing",
     writingIcon: "✏️",
     pasting: "done!",
   });
