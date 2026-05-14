@@ -423,20 +423,29 @@
   }
 
   /* Pastoral landscape banner at the bottom of the list. Subtle —
-     low opacity, soft top fade, fixed aspect — so it reads as ambient
-     decoration, not an actual UI element. */
+     low opacity, soft top fade, clamped height — so it reads as ambient
+     decoration, not an actual UI element.
+     The aspect-ratio + max-height combo prevents the first-paint layout
+     shift that used to make the banner "overflow" momentarily on app
+     launch (image loaded after the first frame, suddenly took its
+     natural height, shoved everything around). */
   .history-horizon {
     margin-top: 40px;
     width: 100%;
+    max-height: 220px;
+    overflow: hidden;
     pointer-events: none;
     opacity: 0.7;
+    aspect-ratio: 4 / 1;
     mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
   }
   .history-horizon img {
     width: 100%;
-    height: auto;
+    height: 100%;
     display: block;
+    object-fit: cover;
+    object-position: center bottom;
   }
 
   /* Watercolor fox illustrations from the design playbook (PNGs in

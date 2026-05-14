@@ -401,6 +401,14 @@
     height: 100%;
     object-fit: contain;
     filter: drop-shadow(0 4px 8px rgba(120, 80, 30, 0.12));
+    /* App-launch entrance: gentle fade + scale-up so the fox doesn't
+       pop in cold. Plays once per mount; CSS handles it without JS. */
+    animation: fox-arrival 700ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+  @keyframes fox-arrival {
+    0%   { opacity: 0; transform: translateY(10px) scale(0.92); }
+    60%  { opacity: 1; }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .brand {
@@ -712,5 +720,17 @@
     height: 100vh;
     min-width: 0;
     transition: background 200ms ease, color 200ms ease;
+  }
+
+  /* Narrow windows — Tauri lets the user shrink the window pretty far.
+     Tighten the sidebar and drop the hero fox so things don't overlap.
+     The "Replay onboarding" link also gets a smaller hit area. */
+  @media (max-width: 720px) {
+    .sidebar { width: 172px; }
+    .sidebar-fox { width: 100px; height: 100px; }
+  }
+  @media (max-width: 560px) {
+    .sidebar-fox { display: none; }
+    .sidebar { width: 156px; }
   }
 </style>
