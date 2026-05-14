@@ -10,6 +10,12 @@
 #                        into the draft created in step 1
 #   3. publish-release   flips draft -> published once all builds succeed
 #
+# Channels (tag-name driven):
+#   - Stable:  tags like `v1.2.3` -> published as Latest, prerelease=false
+#   - Nightly: tags like `nightly-2026-05-14` or `v1.2.3-nightly.1`/
+#              `-rc.1`/`-beta.1` -> published as Pre-release, NOT Latest
+#   Detection lives in the create-release script (isPrerelease).
+#
 # Why the 3-job split: tauri-action with releaseDraft:true is racy when
 # run in parallel from a matrix - each job tries to create-or-find the
 # draft, and whichever loses the race ends up looking for a draft that
@@ -36,6 +42,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       release_id: ${{ steps.create.outputs.result }}
+      is_prerelease: ${{ steps.create.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +52,12 @@ jobs:
         with:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
-            const body = [
+            const isPrerelease = tag.startsWith('nightly-') || /-(nightly|pre|rc|alpha|beta)\b/.test(tag);
+            core.setOutput('is_prerelease', String(isPrerelease));
+            const channelHeader = isPrerelease
+              ? '> Pre-release / nightly build. Not the latest stable.\n> Stable users: see [Releases page](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/releases) and pick the most recent "Latest" tag.\n\n'
+              : '';
+            const body = channelHeader + [
               `Built from commit ${context.sha}.`,
               '',
               '**Pick your installer:**',
@@ -78,7 +90,7 @@ jobs:
               name: `wispr-fox ${tag}`,
               body,
               draft: true,
-              prerelease: false,
+              prerelease: isPrerelease,
             });
             return data.id;
           result-encoding: string
@@ -163,12 +175,15 @@ jobs:
         uses: actions/github-script@v7
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          IS_PRERELEASE: ${{ needs.create-release.outputs.is_prerelease }}
         with:
           script: |
+            const isPrerelease = process.env.IS_PRERELEASE === 'true';
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: process.env.RELEASE_ID,
               draft: false,
-              make_latest: 'true',
+              prerelease: isPrerelease,
+              make_latest: isPrerelease ? 'false' : 'true',
             });
