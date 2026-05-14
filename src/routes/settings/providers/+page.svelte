@@ -265,87 +265,91 @@
     </div>
   </div>
 
-  <h3>Speech-to-text</h3>
-  <p class="lede">
-    Which service transcribes your audio. Groq Whisper is wired in;
-    others below are planned and selectable once their backend lands.
-  </p>
-  <div class="provider-model-row">
-    <div class="field-block field-half">
-      <label>Service</label>
-      <select
-        value={settings.s.stt_provider}
-        onchange={(e) => settings.set("stt_provider", (e.currentTarget as HTMLSelectElement).value as any)}
-      >
-        <option value="groq">Groq Whisper</option>
-        <option value="sarvam" disabled>Sarvam Saaras (Hindi / Indic — coming soon)</option>
-        <option value="deepgram" disabled>Deepgram Nova-3 (coming soon)</option>
-        <option value="assemblyai" disabled>AssemblyAI (coming soon)</option>
-        <option value="gemini-stt" disabled>Gemini 2.5 Flash multimodal (coming soon)</option>
-      </select>
+  <div class="settings-card">
+    <h3>Speech-to-text</h3>
+    <p class="lede">
+      Which service transcribes your audio. Groq Whisper is wired in;
+      others below are planned and selectable once their backend lands.
+    </p>
+    <div class="provider-model-row">
+      <div class="field-block field-half">
+        <label>Service</label>
+        <select
+          value={settings.s.stt_provider}
+          onchange={(e) => settings.set("stt_provider", (e.currentTarget as HTMLSelectElement).value as any)}
+        >
+          <option value="groq">Groq Whisper</option>
+          <option value="sarvam" disabled>Sarvam Saaras (Hindi / Indic — coming soon)</option>
+          <option value="deepgram" disabled>Deepgram Nova-3 (coming soon)</option>
+          <option value="assemblyai" disabled>AssemblyAI (coming soon)</option>
+          <option value="gemini-stt" disabled>Gemini 2.5 Flash multimodal (coming soon)</option>
+        </select>
+      </div>
+      <div class="field-block field-half">
+        <label>Model</label>
+        <select
+          value={settings.s.stt_model}
+          onchange={(e) => settings.set("stt_model", (e.currentTarget as HTMLSelectElement).value as any)}
+        >
+          {#each STT_MODELS as m (m.id)}
+            <option value={m.id}>{m.label} — {m.quality}</option>
+          {/each}
+        </select>
+      </div>
     </div>
-    <div class="field-block field-half">
-      <label>Model</label>
-      <select
-        value={settings.s.stt_model}
-        onchange={(e) => settings.set("stt_model", (e.currentTarget as HTMLSelectElement).value as any)}
-      >
-        {#each STT_MODELS as m (m.id)}
-          <option value={m.id}>{m.label} — {m.quality}</option>
-        {/each}
-      </select>
+
+    <div class="field-block">
+      <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
+      <input
+        type="text"
+        placeholder="auto"
+        value={settings.s.language_hint ?? ""}
+        onchange={(e) => {
+          const v = (e.currentTarget as HTMLInputElement).value.trim();
+          settings.set("language_hint", v.length ? v : null);
+        }}
+      />
+      <p class="hint">ISO codes (e.g. <code>en</code>, <code>hi</code>). Leave blank if you code-switch.</p>
     </div>
   </div>
 
-  <h3>LLM cleanup</h3>
-  <p class="lede">
-    Used by F9 (and F8 if you've enabled cleanup for it). Same model handles all modes;
-    only the prompt changes per mode. Saved keys persist when you switch providers.
-  </p>
-  <div class="provider-model-row">
-    <div class="field-block field-half">
-      <label>Service</label>
-      <select
-        value={settings.s.llm_provider}
-        onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}
-      >
-        <option value="groq" disabled={!secretCheck.llm && !secretCheck.stt}>
-          Groq {(!secretCheck.llm && !secretCheck.stt) ? "(add key first)" : ""}
-        </option>
-        <option value="gemini" disabled={!secretCheck.gemini}>
-          Google Gemini {secretCheck.gemini ? "" : "(add key first)"}
-        </option>
-        <option value="anthropic" disabled>Anthropic Claude (coming soon)</option>
-        <option value="openai" disabled>OpenAI GPT (coming soon)</option>
-        <option value="sarvam-m" disabled>Sarvam-M (Indic — coming soon)</option>
-        <option value="openrouter" disabled>OpenRouter aggregator (coming soon)</option>
-      </select>
+  <div class="settings-card">
+    <h3>LLM cleanup</h3>
+    <p class="lede">
+      Used by F9 (and F8 if you've enabled cleanup for it). Same model handles all modes;
+      only the prompt changes per mode. Saved keys persist when you switch providers.
+    </p>
+    <div class="provider-model-row">
+      <div class="field-block field-half">
+        <label>Service</label>
+        <select
+          value={settings.s.llm_provider}
+          onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="groq" disabled={!secretCheck.llm && !secretCheck.stt}>
+            Groq {(!secretCheck.llm && !secretCheck.stt) ? "(add key first)" : ""}
+          </option>
+          <option value="gemini" disabled={!secretCheck.gemini}>
+            Google Gemini {secretCheck.gemini ? "" : "(add key first)"}
+          </option>
+          <option value="anthropic" disabled>Anthropic Claude (coming soon)</option>
+          <option value="openai" disabled>OpenAI GPT (coming soon)</option>
+          <option value="sarvam-m" disabled>Sarvam-M (Indic — coming soon)</option>
+          <option value="openrouter" disabled>OpenRouter aggregator (coming soon)</option>
+        </select>
+      </div>
+      <div class="field-block field-half">
+        <label>Model</label>
+        <select
+          value={settings.s.llm_model}
+          onchange={(e) => settings.set("llm_model", (e.currentTarget as HTMLSelectElement).value as any)}
+        >
+          {#each modelsForProvider(settings.s.llm_provider) as m (m.id)}
+            <option value={m.id}>{m.label} — {m.quality}</option>
+          {/each}
+        </select>
+      </div>
     </div>
-    <div class="field-block field-half">
-      <label>Model</label>
-      <select
-        value={settings.s.llm_model}
-        onchange={(e) => settings.set("llm_model", (e.currentTarget as HTMLSelectElement).value as any)}
-      >
-        {#each modelsForProvider(settings.s.llm_provider) as m (m.id)}
-          <option value={m.id}>{m.label} — {m.quality}</option>
-        {/each}
-      </select>
-    </div>
-  </div>
-
-  <div class="field-block">
-    <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
-    <input
-      type="text"
-      placeholder="auto"
-      value={settings.s.language_hint ?? ""}
-      onchange={(e) => {
-        const v = (e.currentTarget as HTMLInputElement).value.trim();
-        settings.set("language_hint", v.length ? v : null);
-      }}
-    />
-    <p class="hint">ISO codes (e.g. <code>en</code>, <code>hi</code>). Leave blank if you code-switch.</p>
   </div>
 
   <p class="tip">

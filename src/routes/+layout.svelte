@@ -357,6 +357,24 @@
     gap: 4px;
     padding: 12px 8px;
     min-height: 0;
+    /* When window is short, sidebar-top's content can't fit in the
+       space sidebar-bottom leaves. Without this overflow rule it would
+       visually bleed into sidebar-bottom (FLOATER picker rendering
+       behind / on top of TODAY'S USAGE — reported in v1.0.0-nightly.3).
+       overflow-y: auto turns the excess into a scrollable region with
+       a thin matching scrollbar. */
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .sidebar-top::-webkit-scrollbar { width: 6px; }
+  .sidebar-top::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-top::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .sidebar-top::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
   }
 
   .sidebar-bottom {
@@ -365,6 +383,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    flex-shrink: 0;
   }
 
   /* Sidebar mascot — watercolor fox sitting in tall grass. Sits centred
@@ -732,5 +751,15 @@
   @media (max-width: 560px) {
     .sidebar-fox { display: none; }
     .sidebar { width: 156px; }
+  }
+
+  /* Short windows — the hero fox is the biggest non-essential thing
+     in sidebar-bottom. Shrink, then hide, so today's-usage + active
+     models keep their space and don't fight sidebar-top for room. */
+  @media (max-height: 720px) {
+    .sidebar-fox { width: 96px; height: 96px; }
+  }
+  @media (max-height: 580px) {
+    .sidebar-fox { display: none; }
   }
 </style>

@@ -151,6 +151,31 @@
   margin-top: 14px;
 }
 
+/* Generic card wrapper for form sections that aren't provider-specific —
+   used to give every page the same "white container" visual rhythm
+   instead of stranding field-blocks on the cream surface. */
+.settings-card {
+  border: 1px solid var(--border);
+  border-radius: var(--settings-card-radius);
+  background: var(--bg-card);
+  padding: 18px 20px;
+  max-width: 720px;
+  margin-bottom: 14px;
+}
+.settings-card > h3:first-child,
+.settings-card > h3:nth-child(2) { /* if h3 is right after a sibling h3 nope */
+  margin-top: 0;
+}
+.settings-card > h3 {
+  margin-top: 0;
+}
+.settings-card > .lede + h3 {
+  margin-top: 18px;
+}
+.settings-card > :last-child {
+  margin-bottom: 0;
+}
+
 /* Consecutive check-row labels get an automatic gap so we don't need
    inline styles in the templates. */
 .section-body .check-row + .check-row {
