@@ -137,7 +137,7 @@
     <p class="hint">On by default. Turn off if you want the main window to pop open every time the app starts.</p>
   </div>
 
-  <h3 style="margin-top: 32px;">Audio cues</h3>
+  <h3>Audio cues</h3>
   <p class="lede">Short sounds that play when recording starts and stops. Click any tile to preview it.</p>
 
   <label class="check-row">
@@ -150,7 +150,7 @@
   </label>
 
   {#if settings.s.cues_enabled}
-    <label class="check-row" style="margin-top: 12px;">
+    <label class="check-row">
       <input type="checkbox" checked={soundSync} onchange={toggleSync} />
       <span>Sync start + stop sounds — use the same file for both</span>
     </label>

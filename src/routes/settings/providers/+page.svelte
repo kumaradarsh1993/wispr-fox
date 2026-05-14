@@ -248,7 +248,7 @@
   </div>
 
   <!-- ── Google Gemini ───────────────────────────────────────────────── -->
-  <div class="provider-card" style="margin-top: 18px;">
+  <div class="provider-card">
     <div class="provider-head">
       <div>
         <div class="provider-name">Google Gemini</div>
@@ -295,7 +295,7 @@
     </div>
   </div>
 
-  <h3 style="margin-top: 32px;">Speech-to-text</h3>
+  <h3>Speech-to-text</h3>
   <p class="lede">Which service transcribes your audio. Currently Groq Whisper only — Gemini multimodal STT is on the roadmap.</p>
   <div class="provider-model-row">
     <div class="field-block field-half">
@@ -320,7 +320,7 @@
     </div>
   </div>
 
-  <h3 style="margin-top: 28px;">LLM cleanup</h3>
+  <h3>LLM cleanup</h3>
   <p class="lede">
     Used by F9 (and F8 if you've enabled cleanup for it). One choice — the same model handles all three
     modes, only the prompt changes per mode. Your saved API keys stick around when you switch providers.
@@ -353,7 +353,7 @@
     </div>
   </div>
 
-  <h3 style="margin-top: 32px;">Modes</h3>
+  <h3>Modes</h3>
   <p class="lede">
     Each F-key is a different "mode" — same LLM model, different prompts. Toggle whether each mode uses LLM
     cleanup, and click "Show prompt" to view or customise the prompt for that mode.

@@ -1,9 +1,17 @@
 /* Shared Settings styles — imported by /settings/+layout.svelte as global CSS
-   so sub-route pages can reuse the same class names without re-declaring. */
+   so sub-route pages can reuse the same class names without re-declaring.
+   All colors flow through the Foxy palette tokens defined in app.css so
+   themes (auto/light/dark/retro) work uniformly. */
+
+:root {
+  --settings-section-gap: 32px;
+  --settings-field-gap: 14px;
+  --settings-card-radius: 12px;
+}
 
 .settings {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 220px 1fr;
   height: 100vh;
   background: var(--bg-surface);
   color: var(--text-primary);
@@ -11,38 +19,40 @@
 
 .section-nav {
   border-right: 1px solid var(--border);
-  padding: 18px 12px;
+  padding: 24px 14px;
   overflow-y: auto;
   background: var(--bg-sidebar);
 }
 
 .section-nav h1 {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
-  margin: 0 0 14px 8px;
+  margin: 0 0 20px 10px;
   color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
 .section-nav nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .nav-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
+  padding: 9px 12px;
   background: transparent;
   border: none;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   text-align: left;
   font-size: 13px;
   color: var(--text-primary);
   text-decoration: none;
-  transition: background 100ms ease;
+  transition: background 120ms ease, color 120ms ease;
+  position: relative;
 }
 
 .nav-btn:hover {
@@ -52,70 +62,99 @@
 .nav-btn.active {
   background: var(--accent-fade);
   color: var(--accent);
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.nav-btn.active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 0 3px 3px 0;
 }
 
 .nav-icon {
   width: 18px;
   text-align: center;
   font-size: 13px;
+  opacity: 0.85;
 }
 
 .section-body {
   overflow-y: auto;
-  padding: 28px 36px;
+  padding: 32px 40px 48px;
   position: relative;
 }
 
 .section-body section h2 {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 6px;
+  letter-spacing: -0.01em;
 }
 
+/* H3 = subsection heading. Major gap above by default; the first H3 right
+   after the page lede gets less space since the lede already separates it. */
 .section-body section h3 {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 24px 0 8px;
+  margin: var(--settings-section-gap) 0 10px;
+  letter-spacing: 0.01em;
 }
 
-.section-body .section-subtitle {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 0 0 18px;
-  font-style: italic;
+.section-body section .lede + h3 {
+  margin-top: 8px;
 }
 
 .lede {
   font-size: 13px;
   color: var(--text-secondary);
-  margin: 0 0 18px;
-  max-width: 620px;
-  line-height: 1.5;
+  margin: 0 0 20px;
+  max-width: 640px;
+  line-height: 1.55;
+}
+
+/* Compact "secondary" lede right after an H3, no top gap. */
+.lede.tight {
+  margin-top: -4px;
 }
 
 .toast {
   position: absolute;
-  top: 16px;
-  right: 24px;
-  background: rgba(52, 199, 89, 0.14);
-  color: #1c7c3a;
-  padding: 6px 12px;
-  border-radius: 8px;
+  top: 20px;
+  right: 28px;
+  background: var(--success-fade);
+  color: var(--success);
+  padding: 7px 14px;
+  border-radius: 9999px;
   font-size: 12px;
   font-weight: 500;
   z-index: 10;
+  border: 1px solid var(--success-fade);
 }
 
 /* ── Provider card ─────────────────────────────────────────────────────── */
 .provider-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--settings-card-radius);
   background: var(--bg-card);
-  padding: 18px;
+  padding: 20px;
   max-width: 720px;
+}
+
+.provider-card + .provider-card {
+  margin-top: 14px;
+}
+
+/* Consecutive check-row labels get an automatic gap so we don't need
+   inline styles in the templates. */
+.section-body .check-row + .check-row {
+  margin-top: 10px;
 }
 
 .provider-head {
@@ -139,11 +178,13 @@
 
 .link-out {
   font-size: 12px;
-  color: #0a84ff;
+  color: var(--accent);
   text-decoration: none;
+  font-weight: 500;
 }
 
 .link-out:hover {
+  color: var(--accent-hover);
   text-decoration: underline;
 }
 
@@ -152,12 +193,14 @@
 }
 
 .help-box {
-  background: rgba(0, 0, 0, 0.025);
-  border-radius: 8px;
-  padding: 10px 14px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 14px;
   margin-bottom: 16px;
   font-size: 12px;
   color: var(--text-primary);
+  line-height: 1.5;
 }
 
 .help-box ul {
@@ -171,10 +214,11 @@
 }
 
 .help-box li code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--bg-card);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 4px;
   color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
 }
 
 .key-row {
@@ -197,11 +241,20 @@
 
 .input-row input {
   flex: 1;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", Cascadia, monospace;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.input-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-fade);
 }
 
 .test-block {
@@ -213,45 +266,49 @@
 
 .test-msg { font-size: 12px; }
 .test-msg.testing { color: var(--text-secondary); }
-.test-msg.ok      { color: #1c7c3a; }
-.test-msg.error   { color: #b3261e; word-break: break-word; }
+.test-msg.ok      { color: var(--success); }
+.test-msg.error   { color: var(--danger); word-break: break-word; }
 
-/* ── Buttons ───────────────────────────────────────────────────────────── */
+/* ── Buttons (Foxy palette) ───────────────────────────────────────────── */
 .btn-primary {
-  background: #0a84ff;
+  background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
+  border-radius: 8px;
+  padding: 7px 16px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 100ms ease;
+  transition: background 120ms ease, transform 80ms ease;
 }
-.btn-primary:hover:not(:disabled) { background: #0070dd; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-primary:active:not(:disabled) { background: var(--accent-pressed); transform: translateY(1px); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-secondary {
   background: var(--bg-card);
   color: var(--text-primary);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 14px;
+  border-radius: 8px;
+  padding: 7px 14px;
   font-size: 12px;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
 }
-.btn-secondary.small { padding: 3px 10px; font-size: 11px; }
-.btn-secondary:hover { background: rgba(0, 0, 0, 0.04); }
+.btn-secondary.small { padding: 4px 10px; font-size: 11px; }
+.btn-secondary:hover { background: var(--bg-subtle); border-color: var(--border); }
 
 .btn-danger {
   background: transparent;
-  color: #ff453a;
-  border: 1px solid rgba(255, 69, 58, 0.3);
-  border-radius: 6px;
-  padding: 6px 12px;
+  color: var(--danger);
+  border: 1px solid var(--danger-fade);
+  border-radius: 8px;
+  padding: 7px 13px;
   font-size: 12px;
   cursor: pointer;
+  transition: background 120ms ease;
 }
-.btn-danger:hover { background: rgba(255, 69, 58, 0.08); }
+.btn-danger:hover { background: var(--danger-fade); }
 
 /* ── Generic field block ───────────────────────────────────────────────── */
 .field-block {
@@ -275,15 +332,30 @@
 .field-block input,
 .field-block select {
   width: 100%;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   background: var(--bg-card);
+  color: var(--text-primary);
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.field-block input[type="range"] { padding: 0; }
+.field-block input:focus,
+.field-block select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-fade);
+}
+
+.field-block input[type="range"] {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  accent-color: var(--accent);
+}
 
 .provider-model-row {
   display: grid;
@@ -421,9 +493,10 @@
 }
 
 .hint code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--bg-subtle);
   padding: 1px 4px;
   border-radius: 3px;
+  border: 1px solid var(--border-subtle);
 }
 
 .check-row {
@@ -461,12 +534,13 @@
 
 .hk-tag {
   font-size: 10px;
-  font-weight: 400;
+  font-weight: 500;
   color: var(--text-secondary);
-  padding: 1px 6px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-  margin-left: 4px;
+  padding: 2px 8px;
+  background: var(--bg-subtle);
+  border-radius: 9999px;
+  margin-left: 6px;
+  border: 1px solid var(--border-subtle);
 }
 
 .hk-desc {
@@ -709,10 +783,10 @@
   transition: all 120ms ease;
 }
 
-.radio-card:hover { border-color: rgba(10, 132, 255, 0.4); }
+.radio-card:hover { border-color: var(--accent); }
 .radio-card.active {
-  border-color: #0a84ff;
-  background: rgba(10, 132, 255, 0.05);
+  border-color: var(--accent);
+  background: var(--accent-fade);
 }
 
 .radio-card-head {
@@ -722,7 +796,7 @@
   margin-bottom: 4px;
 }
 
-.radio-dot { color: #0a84ff; font-size: 13px; }
+.radio-dot { color: var(--accent); font-size: 13px; }
 .radio-label {
   font-size: 13px;
   font-weight: 500;

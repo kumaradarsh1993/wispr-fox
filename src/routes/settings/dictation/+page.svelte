@@ -22,7 +22,7 @@
     This page is kept for cross-cutting bindings (the force-clean override)
     and post-dictation behaviour.
   </p>
-  <p class="lede" style="margin-top: -10px;">
+  <p class="lede tight">
     Every mode has TWO hotkeys: a <strong>main</strong> (push-to-talk by default —
     hold to record) and a <strong>sticky-invoke</strong> (press once to start,
     press again to stop). Optionally check <strong>"Default to sticky"</strong>
@@ -130,7 +130,7 @@
   <button class="btn-primary" onclick={saveHotkeys}>Save hotkeys</button>
   <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox. F10 is retired by default — it activates the menu bar in Outlook, which steals focus from your text field.</p>
 
-  <h3 style="margin-top: 32px;">Behaviour</h3>
+  <h3>Behaviour</h3>
   <p class="lede">
     How wispr-fox delivers the result when you've moved on during the LLM gap.
   </p>
