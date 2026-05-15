@@ -469,8 +469,30 @@
   // the bubble falls back to a generic "listening…" in that case.
   let activeApp = $state("");
 
+  // Seconds elapsed in the current listening state. Drives a series of
+  // increasingly hammy labels — Clippy / Foxy quietly start commenting if
+  // the user holds F8 forever. Resets when state leaves "listening".
+  let listenElapsed = $state(0);
+  $effect(() => {
+    if (displayState !== "listening") return;
+    listenElapsed = 0;
+    const t = setInterval(() => { listenElapsed += 1; }, 1000);
+    return () => clearInterval(t);
+  });
+
+  function listenLabel(secs: number, app: string): string {
+    const tail = app ? ` · ${app}` : "";
+    if (secs < 15)  return `listening…${tail}`;
+    if (secs < 30)  return `still listening…${tail}`;
+    if (secs < 45)  return `wow, you have a lot to say${tail}`;
+    if (secs < 60)  return `how long is this going to go?${tail}`;
+    if (secs < 90)  return `did another you grab F8?${tail}`;
+    if (secs < 120) return `okay, I'll keep waiting${tail}`;
+    return `marathon mode${tail}`;
+  }
+
   let labels = $derived({
-    listening: activeApp ? `listening · ${activeApp}` : "listening…",
+    listening: listenLabel(listenElapsed, activeApp),
     thinking: "thinking",
     writing: activeApp ? `polishing for ${activeApp}` : "polishing",
     writingIcon: "✏️",
@@ -518,13 +540,14 @@
     <div class="shadow" class:pulse={displayState === "listening"}></div>
   {/if}
 
-  {#if skin === "stylized" || skin === "beige"}
+  {#if skin === "stylized" || skin === "fox"}
 
-    <!-- State-driven bubble (SVG skins only — real Clippy uses its own
-         balloon for these). Hidden while toast is showing so we don't
-         stack two bubbles. -->
+    <!-- State-driven bubble — shown for skins that don't have their own
+         balloon (real Clippy has its own). Hidden while a toast is up so
+         we don't stack two bubbles. Same bubble for stylized + fox so
+         the dialog vocabulary feels consistent across skins. -->
     {#if !toastMessage}
-      <div class="bubble" class:show={displayState !== "idle"} data-state={displayState}>
+      <div class="bubble" class:show={displayState !== "idle"} data-state={displayState} data-skin={skin}>
         {#if displayState === "listening"}
           <span class="bubble-text">{labels.listening}</span>
           <span class="bubble-eq"><span></span><span></span><span></span><span></span></span>
@@ -541,19 +564,15 @@
     {/if}
   {/if}
 
-  {#if skin === "stylized" || skin === "beige"}
+  {#if skin === "stylized"}
     <!-- Stylized paperclip with rich state-specific animations:
          - listening: turns toward viewer, big ear pops out, alert sway
          - phew transition: brief sweat-drop right after listening ends
          - thinking advanced: brain bubble overhead
          - writing: paper slides in beside Clippy, pen scribbles
-         - pasting: paper flies away, Clippy bounces.
-         When skin === "beige" the same SVG renders with a cream body fill
-         + warm dark-brown outline (theme inversion). All animations are
-         identical because they target the same CSS classes. -->
+         - pasting: paper flies away, Clippy bounces. -->
     <svg
       class="character clippy-stylized"
-      class:beige={skin === "beige"}
       viewBox="-20 0 180 170"
       xmlns="http://www.w3.org/2000/svg"
       data-state={displayState}
@@ -815,11 +834,11 @@
   }
   .fox-layer {
     position: absolute;
-    bottom: 4px;
+    bottom: 6px;
     left: 50%;
     transform: translateX(-50%);
-    width: 140px;
-    height: 140px;
+    width: 116px;
+    height: 116px;
     object-fit: contain;
     opacity: 0;
     transition: opacity 240ms ease;
@@ -959,32 +978,6 @@
   /* (v0.3.0 click-giggle removed per user feedback — Clippy #1 stays the
      v0.2.0 baseline. Click-driven idle animations will live on the new
      fox skin instead.) */
-
-  /* ─── Beige skin variant ────────────────────────────────────────────
-     Theme-reversed Clippy: warm cream outline + brown features instead
-     of the default near-black-on-transparent. Reuses ALL the same SVG
-     paths and animation classes — only the colour palette changes via
-     CSS overrides (SVG inline `stroke=` attrs are overridden by CSS
-     `stroke:` declarations of higher specificity). */
-  .clippy-stylized.beige .body {
-    stroke: #f0e3c6;
-    filter: drop-shadow(0 1px 1.5px rgba(80, 50, 10, 0.35));
-  }
-  .clippy-stylized.beige .brows {
-    stroke: #8a5a2a;
-    stroke-width: 4;
-  }
-  .clippy-stylized.beige .eyes ellipse {
-    fill: #fff9ec;
-    stroke: #6b3a0e;
-    stroke-width: 2.4;
-  }
-  .clippy-stylized.beige .eyes circle:nth-of-type(odd) {
-    fill: #3a1a02;   /* darker brown pupils — warmer than pure black */
-  }
-  /* The halo behind the paperclip body (drawn earlier in the SVG as a
-     white "stroke-width 11" wrap for visibility against dark wallpapers)
-     stays white — the cream body sits ON TOP. */
 
   /* Body turns slightly toward the user when listening — like the user said,
      "turns to me." Combined with the ear popping out of the left side. */
@@ -1185,9 +1178,18 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    white-space: nowrap;
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     z-index: 5;
+  }
+  /* Bubble text wraps inside the fixed-width bubble. The duration-aware
+     listening copy can get long ("how long is this going to go?") — let
+     it wrap to a second line rather than overflow the window. */
+  .bubble-text {
+    white-space: normal;
+    line-height: 1.3;
+    text-align: left;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .bubble.show {
@@ -1206,6 +1208,21 @@
     background: #fff;
     border-right: 1px solid rgba(0, 0, 0, 0.12);
     border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  }
+
+  /* Fox skin gets a warmer cream-tinted bubble + dark-brown text so the
+     dialog reads as part of the Foxy palette instead of pure-white iOS-ish
+     pop. Stylized skin keeps the original neutral palette. */
+  .bubble[data-skin="fox"] {
+    background: #faf6ec;
+    color: #2b2218;
+    border-color: rgba(120, 80, 30, 0.18);
+    box-shadow: 0 4px 12px rgba(120, 80, 30, 0.18);
+  }
+  .bubble[data-skin="fox"]::after {
+    background: #faf6ec;
+    border-right-color: rgba(120, 80, 30, 0.18);
+    border-bottom-color: rgba(120, 80, 30, 0.18);
   }
 
   .bubble-text { font-weight: 500; }

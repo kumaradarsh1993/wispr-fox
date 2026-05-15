@@ -10,7 +10,6 @@
     { id: "off",         label: "Off",       desc: "Hide the floating character entirely" },
     { id: "fox",         label: "Fox",       desc: "Watercolor fox mascot — the Foxy identity, default since v1.0" },
     { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
-    { id: "beige",       label: "Cream",     desc: "Theme-reversed paperclip — warm cream outline + brown features. Easier on the eyes on dark backgrounds." },
     { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
   ];
 

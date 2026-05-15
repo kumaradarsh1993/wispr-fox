@@ -3,26 +3,32 @@
 //
 // Skin values:
 //   "off"         — floater window hidden
-//   "fox"         — watercolor fox PNGs (v0.4.2 new default; uses the
-//                   asset pack at static/fox/*.png; state-mapped between
+//   "fox"         — watercolor fox PNGs (default; uses the asset pack at
+//                   static/fox/*.png; state-mapped between
 //                   sitting/recording/curious/success/error)
 //   "stylized"    — hand-built SVG paperclip (dark outline, transparent body)
-//   "beige"       — light/cream-filled paperclip variant
 //   "real-clippy" — Microsoft Clippy via clippyts
+//
+// Removed in v1.0.0-nightly.5: "beige" — the cream-variant paperclip.
+// User feedback was that it read as boring next to the more characterful
+// fox + stylized + real-clippy options. Existing saved value migrates to
+// "stylized" (closest cousin) on load.
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type Skin = "off" | "fox" | "stylized" | "beige" | "real-clippy";
+export type Skin = "off" | "fox" | "stylized" | "real-clippy";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "beige", "real-clippy"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
     ? localStorage.getItem(STORAGE_KEY)
     : null) as string | null;
+  // Migrate retired "beige" → "stylized" (same paperclip shape, different theme).
+  if (raw === "beige") return "stylized";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
   // Default: the watercolor fox — wispr-fox's own mascot, matches the
   // design playbook. Previously defaulted to real Clippy; new users now
@@ -39,7 +45,9 @@ class SkinStore {
     if (this.subscribed) return;
     this.subscribed = true;
     await listen<string>(EVENT, (e) => {
-      const v = e.payload as Skin;
+      let v = e.payload as Skin;
+      // Migrate stale "beige" emission from older windows still running.
+      if ((v as string) === "beige") v = "stylized";
       if (VALID_SKINS.includes(v)) {
         this.current = v;
         try {

@@ -28,7 +28,6 @@
     { id: "off",         label: "Off" },
     { id: "fox",         label: "Fox" },
     { id: "stylized",    label: "Paperclip" },
-    { id: "beige",       label: "Cream" },
     { id: "real-clippy", label: "Clippy" },
   ];
 
