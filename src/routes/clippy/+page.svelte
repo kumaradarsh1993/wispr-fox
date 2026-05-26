@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
+  import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
@@ -396,6 +397,26 @@
       lookDir = dirs[Math.floor(Math.random() * dirs.length)];
     }, 6000 + Math.random() * 6000);
 
+    // Resume watchdog. This window is a transparent, always-on-top WebView2
+    // floater; on Windows its DirectComposition surface is torn down when the
+    // machine sleeps (DWM restarts on resume) and the fox goes invisible even
+    // though the window is still "shown". The webview's JS keeps running, so a
+    // wall-clock timer is a reliable suspend detector: if far more than the
+    // 2s interval elapsed between ticks, the host was almost certainly
+    // suspended (or heavily throttled) — ask Rust to force a repaint.
+    let lastBeat = Date.now();
+    const resumeWatch = setInterval(() => {
+      const now = Date.now();
+      const gap = now - lastBeat;
+      lastBeat = now;
+      if (gap > 6000) {
+        console.warn(`[clippy] resume detected (gap ${gap}ms) — recovering floater`);
+        invoke("recover_clippy_window").catch((e) =>
+          console.warn("[clippy] recover_clippy_window failed", e),
+        );
+      }
+    }, 2000);
+
     const saved = localStorage.getItem("wispr.clippy.pos");
     if (saved) {
       try {
@@ -433,6 +454,7 @@
       disarmWatchdog();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
+      clearInterval(resumeWatch);
       window.removeEventListener("mouseup", onMove);
     };
   });

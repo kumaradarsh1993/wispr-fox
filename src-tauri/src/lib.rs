@@ -158,6 +158,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::recover_clippy_window,
             commands::check_secrets,
             commands::save_secret,
             commands::delete_secret,

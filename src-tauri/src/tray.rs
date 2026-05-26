@@ -54,7 +54,11 @@ pub fn install(app: &AppHandle) -> Result<()> {
                     match w.is_visible() {
                         Ok(true) => { let _ = w.hide(); }
                         _ => {
-                            let _ = w.show();
+                            // force_repaint (show + size nudge) rather than a
+                            // bare show() so a blank-after-resume floater comes
+                            // back painted, giving the user a manual recovery
+                            // path that actually works.
+                            crate::commands::force_repaint(&w);
                             let _ = w.set_focus();
                         }
                     }

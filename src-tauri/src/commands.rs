@@ -17,6 +17,41 @@ pub fn ping() -> &'static str {
     "pong"
 }
 
+/// Nudge a transparent, always-on-top window so WebView2 rebuilds its
+/// composition surface. On Windows the floater's DirectComposition surface
+/// is torn down when DWM restarts (system sleep/resume, RDP reconnect, fast
+/// user-switching, GPU driver reset) — the window stays "visible" but paints
+/// nothing, so the fox vanishes. A plain `show()` is NOT enough to bring it
+/// back (that's why the tray's "Toggle Clippy" didn't help); the reliable fix
+/// is to change the window size, which forces WebView2 to recreate its swap
+/// chain and repaint. We bump by 1px then restore the exact size.
+pub(crate) fn force_repaint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.show();
+    if let Ok(size) = window.outer_size() {
+        let bumped = tauri::PhysicalSize::new(size.width + 1, size.height + 1);
+        let _ = window.set_size(bumped);
+        let _ = window.set_size(size);
+    }
+    let _ = window.set_always_on_top(true);
+}
+
+/// Force the Clippy floater to repaint after the machine resumes from sleep.
+/// Called from the floater's own resume-watchdog (a clock-drift timer in the
+/// webview) when it detects a large time gap — the tell-tale of a suspend.
+/// No-op when the floater is intentionally hidden (user toggled it off via
+/// the tray) so we never resurrect a window they dismissed.
+#[tauri::command]
+pub fn recover_clippy_window(app: AppHandle) {
+    let Some(w) = app.get_webview_window("clippy") else {
+        return;
+    };
+    if !w.is_visible().unwrap_or(true) {
+        return;
+    }
+    tracing::info!("recovering Clippy floater (resume / surface-loss repaint)");
+    force_repaint(&w);
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SecretCheck {
     pub stt: bool,

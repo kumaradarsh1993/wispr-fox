@@ -23,6 +23,34 @@ const DEFAULT_MODEL: &str = "whisper-large-v3-turbo";
 /// instead of letting Groq return a cryptic 413.
 const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// How many times we'll attempt a single transcription request before
+/// giving up. The first try plus two retries. Tuned against the outer 120s
+/// STT cap in `flow.rs` — 3 attempts × 30s timeout + backoff stays well
+/// under it.
+const MAX_ATTEMPTS: usize = 3;
+/// Base backoff between retries; multiplied by the attempt number so the
+/// gaps grow (~400ms, ~800ms). Short enough not to feel laggy, long enough
+/// to let a just-resumed Wi-Fi adapter or a momentary DNS blip settle.
+const RETRY_BASE_DELAY_MS: u64 = 400;
+
+/// True for reqwest errors worth retrying — transport-level failures
+/// (TCP connect refused/reset, request never made it out, timeout) that
+/// commonly happen on flaky Wi-Fi or in the first few seconds after the
+/// machine resumes from sleep, when the network stack is briefly
+/// unavailable. These are exactly the "error sending request for url …"
+/// failures users hit: a fresh attempt after a short pause almost always
+/// succeeds. We deliberately do NOT retry decode/redirect errors — those
+/// won't fix themselves.
+fn is_transient(e: &reqwest::Error) -> bool {
+    e.is_connect() || e.is_timeout() || e.is_request()
+}
+
+/// Sleep before the next retry. Gap grows with the attempt index
+/// (~400ms after attempt 1, ~800ms after attempt 2).
+async fn sleep_backoff(attempt: usize) {
+    let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * attempt as u64);
+    tokio::time::sleep(delay).await;
+}
 
 pub struct GroqStt {
     client: reqwest::Client,
@@ -69,45 +97,86 @@ impl GroqStt {
             .unwrap_or("clip.wav")
             .to_owned();
 
-        let file_part = multipart::Part::bytes(bytes)
-            .file_name(filename)
-            .mime_str("audio/wav")
-            .map_err(|e| SttError::Decode(e.to_string()))?;
+        // Retry loop. `multipart::Form` is consumed by `.send()` (its parts
+        // hold the file bytes), so we rebuild the form from the in-memory
+        // `bytes` on every attempt rather than trying to clone a sent form.
+        let mut last_err: Option<SttError> = None;
 
-        let mut form = multipart::Form::new()
-            .part("file", file_part)
-            .text("model", self.model.clone())
-            .text("response_format", "verbose_json");
+        for attempt in 1..=MAX_ATTEMPTS {
+            let file_part = multipart::Part::bytes(bytes.clone())
+                .file_name(filename.clone())
+                .mime_str("audio/wav")
+                .map_err(|e| SttError::Decode(e.to_string()))?;
 
-        if let Some(lang) = hint_lang {
-            form = form.text("language", lang.to_owned());
+            let mut form = multipart::Form::new()
+                .part("file", file_part)
+                .text("model", self.model.clone())
+                .text("response_format", "verbose_json");
+
+            if let Some(lang) = hint_lang {
+                form = form.text("language", lang.to_owned());
+            }
+
+            let send_result = self
+                .client
+                .post(ENDPOINT)
+                .bearer_auth(&self.api_key)
+                .multipart(form)
+                .send()
+                .await;
+
+            match send_result {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        let parsed: GroqResponse = resp
+                            .json()
+                            .await
+                            .map_err(|e| SttError::Decode(e.to_string()))?;
+                        if attempt > 1 {
+                            tracing::info!(attempt, "Groq STT succeeded after retry");
+                        }
+                        return Ok(Transcript {
+                            text: parsed.text,
+                            language: parsed.language,
+                            duration_seconds: parsed.duration,
+                        });
+                    }
+
+                    let code = status.as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    // Retry only on server-side hiccups (5xx). 4xx (bad key,
+                    // malformed request) and 429 (rate limit) won't improve on
+                    // an immediate retry — surface them straight away so the
+                    // user gets the right message instead of a delayed failure.
+                    if (500..=599).contains(&code) && attempt < MAX_ATTEMPTS {
+                        tracing::warn!(attempt, status = code, "Groq STT 5xx — retrying");
+                        last_err = Some(SttError::Http { status: code, body });
+                        sleep_backoff(attempt).await;
+                        continue;
+                    }
+                    return Err(SttError::Http { status: code, body });
+                }
+                Err(e) => {
+                    if is_transient(&e) && attempt < MAX_ATTEMPTS {
+                        tracing::warn!(
+                            attempt,
+                            error = %e,
+                            "Groq STT transient network error — retrying"
+                        );
+                        last_err = Some(SttError::Network(e.to_string()));
+                        sleep_backoff(attempt).await;
+                        continue;
+                    }
+                    return Err(SttError::Network(e.to_string()));
+                }
+            }
         }
 
-        let resp = self
-            .client
-            .post(ENDPOINT)
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| SttError::Network(e.to_string()))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SttError::Http { status: status.as_u16(), body });
-        }
-
-        let parsed: GroqResponse = resp
-            .json()
-            .await
-            .map_err(|e| SttError::Decode(e.to_string()))?;
-
-        Ok(Transcript {
-            text: parsed.text,
-            language: parsed.language,
-            duration_seconds: parsed.duration,
-        })
+        // Loop only falls through here if every attempt set `last_err` and
+        // hit the `attempt < MAX_ATTEMPTS` guard on the final pass — i.e. we
+        // exhausted retries on a transient/5xx failure.
+        Err(last_err.unwrap_or_else(|| SttError::Network("STT failed after retries".into())))
     }
 }
 
