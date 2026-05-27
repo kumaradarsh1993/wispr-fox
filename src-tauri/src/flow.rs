@@ -25,30 +25,27 @@ use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
 
+/// Pretty display name for a provider id (as returned by `*.name()`).
+fn pretty_provider(name: &str) -> &str {
+    match name {
+        "gemini" => "Gemini",
+        "groq" => "Groq",
+        other => other,
+    }
+}
+
 /// Map a raw error string (from `anyhow::Error::to_string()`) to a short
-/// user-readable message. Pattern-matches the common failure modes we see
-/// in production — auth, rate limit, network, timeout. Anything we don't
-/// recognise falls through to a generic catch-all so the toast still says
-/// something useful and not an opaque stack-y string.
+/// user-readable message. We now attribute BOTH the stage (transcription vs
+/// cleanup) and the provider where we can tell, so the floater toast says
+/// e.g. "Transcription failed (Groq) — network issue" instead of a vague
+/// "something went wrong". The stage/provider come from the `.context(...)`
+/// wrappers added at each pipeline step.
 fn user_friendly_error(raw: &str) -> String {
     let s = raw.to_ascii_lowercase();
+
+    // Missing-key and local failures are stage-agnostic — handle first.
     if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") {
         return "API key missing — open Settings → Provider & Keys.".to_string();
-    }
-    if s.contains("401") || s.contains("unauthorized") || s.contains("403") || s.contains("forbidden") {
-        return "API key rejected — check Settings → Provider & Keys.".to_string();
-    }
-    if s.contains("429") || s.contains("rate limit") {
-        return "Rate limit hit — wait a minute and retry from History.".to_string();
-    }
-    if s.contains("timed out") || s.contains("timeout") {
-        return "Took too long — try a shorter clip, or retry from History.".to_string();
-    }
-    if s.contains("dns") || s.contains("no such host") || s.contains("connect") || s.contains("network") {
-        return "Network issue — recording saved to History, retry when back online.".to_string();
-    }
-    if s.contains("500") || s.contains("502") || s.contains("503") || s.contains("504") || s.contains("upstream") {
-        return "Provider had a hiccup — retry from History.".to_string();
     }
     if s.contains("recording too short") {
         return "Recording too short — hold the hotkey longer.".to_string();
@@ -56,7 +53,63 @@ fn user_friendly_error(raw: &str) -> String {
     if s.contains("injection") || s.contains("clipboard") {
         return "Couldn't paste — text is on the clipboard, press Ctrl+V manually.".to_string();
     }
-    format!("Something went wrong — {}", raw.lines().next().unwrap_or(raw))
+
+    // Which stage failed? Inferred from the context wrappers ("Groq Whisper
+    // request" / "Whisper STT timed out" for transcription; cleanup wraps
+    // mention clean/clippy/draft).
+    let stage = if s.contains("whisper") || s.contains("transcrib") {
+        "Transcription"
+    } else if s.contains("clean") || s.contains("clippy") || s.contains("draft") {
+        "Cleanup"
+    } else {
+        ""
+    };
+    // Which provider? Gemini only ever appears in cleanup; Whisper/Groq STT
+    // is always Groq.
+    let provider = if s.contains("gemini") {
+        " (Gemini)"
+    } else if s.contains("groq") || s.contains("whisper") {
+        " (Groq)"
+    } else {
+        ""
+    };
+
+    // Short reason phrase.
+    let reason = if s.contains("401") || s.contains("unauthorized") || s.contains("403") || s.contains("forbidden") {
+        "API key rejected — check Settings"
+    } else if s.contains("429") || s.contains("rate limit") {
+        "rate limit — wait a minute"
+    } else if s.contains("timed out") || s.contains("timeout") {
+        "took too long — check your connection"
+    } else if s.contains("dns") || s.contains("no such host") || s.contains("connect") || s.contains("network") {
+        "network issue — check your connection"
+    } else if s.contains("500") || s.contains("502") || s.contains("503") || s.contains("504") || s.contains("upstream") {
+        "server hiccup — retry from History"
+    } else {
+        return format!("Something went wrong — {}", raw.lines().next().unwrap_or(raw));
+    };
+
+    if stage.is_empty() {
+        // Couldn't attribute a stage — still give the reason.
+        let r = reason.to_string();
+        format!("{}{}", r[..1].to_uppercase(), &r[1..])
+    } else {
+        format!("{stage}{provider} failed — {reason}.")
+    }
+}
+
+/// Build the floater notice shown when cleanup couldn't run but we still
+/// pasted the raw transcript. Non-fatal — the user got their text, they just
+/// didn't get the LLM polish, and they deserve to know why.
+fn cleanup_failure_message(note: &str, provider: &str) -> String {
+    let p = pretty_provider(provider);
+    match note {
+        "clippy_auth" => format!("Cleanup skipped — {p} key rejected. Pasted raw text."),
+        "clippy_rate_limited" => format!("Cleanup skipped — {p} rate limit. Pasted raw text."),
+        "clippy_upstream" => format!("Cleanup skipped — {p} server hiccup. Pasted raw text."),
+        "clippy_timeout" => format!("Cleanup timed out ({p}) — pasted raw text."),
+        _ => format!("Cleanup failed ({p}) — pasted raw text."),
+    }
 }
 
 /// Pick the user-customised system prompt for the given mode, if set.
@@ -403,6 +456,10 @@ impl Flow {
             .ok_or_else(|| anyhow!("no Groq STT key — open Settings to add one"))?;
         let stt_settings = self.settings();
         let stt = GroqStt::with_model(stt_key, stt_settings.stt_model.clone());
+        // Tell the floater which service is doing the transcription so its
+        // bubble can read "transcribing · Groq" — and so a stall is clearly
+        // attributable rather than a mystery spinner.
+        let _ = app.emit("wispr:stt_provider", stt.name());
 
         let wav_size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
         tracing::info!(
@@ -460,6 +517,11 @@ impl Flow {
             let _ = mode; // mode is used downstream in clippy::clean for prompt selection
 
             let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
+            // Surface which LLM is doing cleanup so the floater reads
+            // "polishing · Gemini" / "polishing · Groq". This is the single
+            // most-requested bit of visibility: when cleanup is slow or fails,
+            // the user wants to know whether it's the Groq or the Gemini call.
+            let _ = app.emit("wispr:llm_provider", llm.name());
             self.usage.record_llm();
             let custom = custom_prompt_for(&clippy_settings, mode);
             // App-context hint: ONLY for Drafting (the mode that's allowed to
@@ -478,6 +540,23 @@ impl Flow {
                 None
             };
             let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), app_hint, llm.as_ref()).await;
+            // Cleanup couldn't run (timeout, auth, rate limit, upstream) but
+            // we still have the raw transcript to paste. Previously this was
+            // SILENT — the user just saw a slow result and never knew the LLM
+            // step failed. Now we tell them, attributed to the provider, as a
+            // non-fatal floater notice (the pipeline continues + pastes raw).
+            // `light_length_drift` is excluded: that's an intentional safety
+            // fallback, not a failure.
+            if !cleaned.used_clippy {
+                if let Some(note) = cleaned.note {
+                    if note != "light_length_drift" {
+                        let _ = app.emit(
+                            "wispr:clippy_warning",
+                            cleanup_failure_message(note, llm.name()),
+                        );
+                    }
+                }
+            }
             // Drafting mode (F9) writes to `drafted_text`; everything else
             // (Light cleanup, Advanced cleanup) writes to `cleaned_text`.
             // This lets the history UI show both versions independently.

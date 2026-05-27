@@ -126,6 +126,30 @@
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
 
+  // Ask the backend to force-repaint the floater (size nudge) — used to heal
+  // a blank-after-resume WebView2 surface. Safe to over-call: the backend
+  // no-ops when the window is hidden.
+  function recoverFloater(why: string) {
+    console.warn(`[clippy] ${why} — recovering floater`);
+    invoke("recover_clippy_window").catch((e) =>
+      console.warn("[clippy] recover_clippy_window failed", e),
+    );
+  }
+
+  // Recover on skin change too. If the surface died after resume, the user's
+  // instinct is to fiddle with the avatar picker — so a skin switch should
+  // itself force a repaint. Skip the very first run (initial mount, healthy
+  // window) to avoid a needless nudge.
+  let _skinInit = false;
+  $effect(() => {
+    skin; // track
+    if (!_skinInit) {
+      _skinInit = true;
+      return;
+    }
+    recoverFloater("skin changed");
+  });
+
   // For "real-clippy" — the actual Microsoft Clippy via vendored clippyts.
   let realClippyAgent: any = null;
   let realClippyError = $state<string | null>(null);
@@ -326,6 +350,9 @@
     let unlistenMsg: (() => void) | undefined;
     let unlistenErr: (() => void) | undefined;
     let unlistenActiveApp: (() => void) | undefined;
+    let unlistenSttProv: (() => void) | undefined;
+    let unlistenLlmProv: (() => void) | undefined;
+    let unlistenWarn: (() => void) | undefined;
     listen<string>("wispr:clippy_message", (e) => {
       console.log("[clippy] wispr:clippy_message", e.payload);
       showToast(e.payload, "info", 3000);
@@ -348,6 +375,12 @@
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
       state = next;
+      // Clear stale provider labels at the start/end of a run so a finished
+      // pipeline doesn't leave "transcribing · Groq" hanging around.
+      if (next === "idle" || next === "listening") {
+        sttProvider = "";
+        llmProvider = "";
+      }
       // Watchdog policy: arm ONLY for transient pipeline states that have
       // a known upper bound (thinking/writing/pasting). Recording is
       // user-controlled — a 5-minute monologue is legitimate, not a stuck
@@ -377,6 +410,20 @@
       console.log("[clippy] wispr:active_app", e.payload);
       activeApp = e.payload ?? "";
     }).then((u) => (unlistenActiveApp = u));
+    // Provider attribution for the in-progress stages.
+    listen<string>("wispr:stt_provider", (e) => {
+      sttProvider = e.payload ?? "";
+    }).then((u) => (unlistenSttProv = u));
+    listen<string>("wispr:llm_provider", (e) => {
+      llmProvider = e.payload ?? "";
+    }).then((u) => (unlistenLlmProv = u));
+    // Non-fatal cleanup warning (LLM step failed, raw text pasted). Shown as
+    // an error-styled toast WITHOUT resetting pipeline state — unlike
+    // flow_error, the run actually succeeded (the user got their text).
+    listen<string>("wispr:clippy_warning", (e) => {
+      console.warn("[clippy] wispr:clippy_warning", e.payload);
+      showToast(e.payload, "error", 5000);
+    }).then((u) => (unlistenWarn = u));
 
     // Blinks during idle AND listening so Clippy feels alive while attentive.
     // Uses displayState (the visible state) so blinks follow what's drawn.
@@ -402,20 +449,25 @@
     // machine sleeps (DWM restarts on resume) and the fox goes invisible even
     // though the window is still "shown". The webview's JS keeps running, so a
     // wall-clock timer is a reliable suspend detector: if far more than the
-    // 2s interval elapsed between ticks, the host was almost certainly
+    // 1s interval elapsed between ticks, the host was almost certainly
     // suspended (or heavily throttled) — ask Rust to force a repaint.
     let lastBeat = Date.now();
     const resumeWatch = setInterval(() => {
       const now = Date.now();
       const gap = now - lastBeat;
       lastBeat = now;
-      if (gap > 6000) {
-        console.warn(`[clippy] resume detected (gap ${gap}ms) — recovering floater`);
-        invoke("recover_clippy_window").catch((e) =>
-          console.warn("[clippy] recover_clippy_window failed", e),
-        );
-      }
-    }, 2000);
+      if (gap > 4000) recoverFloater(`resume detected (gap ${gap}ms)`);
+    }, 1000);
+    // Also self-heal the instant the floater regains visibility/focus —
+    // covers the case where the surface is dead and the 1s tick hasn't fired
+    // yet. These are cheap; the backend only nudges when the window is
+    // actually meant to be on-screen.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recoverFloater("became visible");
+    };
+    const onFocus = () => recoverFloater("regained focus");
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
 
     const saved = localStorage.getItem("wispr.clippy.pos");
     if (saved) {
@@ -451,10 +503,15 @@
       unlistenMsg?.();
       unlistenErr?.();
       unlistenActiveApp?.();
+      unlistenSttProv?.();
+      unlistenLlmProv?.();
+      unlistenWarn?.();
       disarmWatchdog();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
       clearInterval(resumeWatch);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
       window.removeEventListener("mouseup", onMove);
     };
   });
@@ -491,6 +548,17 @@
   // the bubble falls back to a generic "listening…" in that case.
   let activeApp = $state("");
 
+  // Which provider is handling each stage, surfaced from Rust so the bubble
+  // can read "transcribing · Groq" / "polishing · Gemini" and any stall is
+  // clearly attributable. Cleared when we return to idle.
+  let sttProvider = $state("");
+  let llmProvider = $state("");
+  function prettyProvider(name: string): string {
+    if (name === "groq") return "Groq";
+    if (name === "gemini") return "Gemini";
+    return name;
+  }
+
   // Seconds elapsed in the current listening state. Drives a series of
   // increasingly hammy labels — Clippy / Foxy quietly start commenting if
   // the user holds F8 forever. Resets when state leaves "listening".
@@ -515,8 +583,8 @@
 
   let labels = $derived({
     listening: listenLabel(listenElapsed, activeApp),
-    thinking: "thinking",
-    writing: activeApp ? `polishing for ${activeApp}` : "polishing",
+    thinking: sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : "thinking",
+    writing: llmProvider ? `polishing · ${prettyProvider(llmProvider)}` : "polishing",
     writingIcon: "✏️",
     pasting: "done!",
   });

@@ -23,6 +23,15 @@ const DEFAULT_MODEL: &str = "whisper-large-v3-turbo";
 /// instead of letting Groq return a cryptic 413.
 const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// How long to wait for the TCP+TLS handshake specifically. The overall
+/// `TIMEOUT` covers the whole request (including the upload + Whisper's
+/// processing time), but without a separate connect cap a half-dead socket
+/// — common in the first seconds after resume, or on flaky Wi-Fi — can hang
+/// for many seconds before failing. Bounding the connect to 6s means a bad
+/// connection is abandoned quickly and we move on to a fresh retry instead
+/// of stalling. A healthy handshake to Groq is well under a second even
+/// from India, so 6s is comfortable headroom.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 /// How many times we'll attempt a single transcription request before
 /// giving up. The first try plus two retries. Tuned against the outer 120s
 /// STT cap in `flow.rs` — 3 attempts × 30s timeout + backoff stays well
@@ -66,6 +75,7 @@ impl GroqStt {
     pub fn with_model(api_key: String, model: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .expect("reqwest client construction is infallible with default config");
         Self { client, api_key, model }

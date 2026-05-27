@@ -150,6 +150,17 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
 
                 let duration_ms = rec.started_at.elapsed().as_millis() as i64;
 
+                // Tail drain. WASAPI hands us audio in buffered chunks, so at
+                // the instant the key is released the final ~tens-to-hundreds
+                // of milliseconds of speech are still sitting in the OS capture
+                // buffer, not yet delivered to our callback. Closing the writer
+                // and dropping the stream right now discards them — that's the
+                // long-standing "it ate my last word" bug. Keep the stream
+                // alive a beat longer so those trailing callbacks land in the
+                // WAV first, THEN finalise. (Any genuine silence captured here
+                // gets removed by trim_trailing_silence downstream.)
+                std::thread::sleep(std::time::Duration::from_millis(220));
+
                 // Close the gate; then drop the stream so the mic indicator
                 // turns off and the device is released to other apps.
                 if let Some(w) = writer.lock().take() {
@@ -328,7 +339,11 @@ pub fn trim_trailing_silence(path: &Path, threshold: i16, min_tail_ms: u32) -> R
         None => return Ok(()),
     };
 
-    let buffer_samples = (sample_rate as usize * 150) / 1000;
+    // Keep a generous 300ms pad after the last loud sample. Soft word
+    // endings (consonants, trailing-off speech) sit below the loudness
+    // threshold; a tight pad would clip them. 300ms keeps the ending intact
+    // while still trimming long silent tails that make Whisper hallucinate.
+    let buffer_samples = (sample_rate as usize * 300) / 1000;
     let trim_to = (last_loud_idx + buffer_samples).min(samples.len());
 
     let removed_samples = samples.len() - trim_to;

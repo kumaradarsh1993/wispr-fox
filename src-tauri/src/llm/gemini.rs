@@ -31,6 +31,7 @@ impl GeminiLlm {
     pub fn new(api_key: String, model: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(TIMEOUT)
+            .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("reqwest client construction is infallible with default config");
         Self { client, api_key, model }
