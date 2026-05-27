@@ -95,3 +95,24 @@ fn make_source() -> Result<CGEventSource> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow!("CGEventSource::new(HIDSystemState) failed"))
 }
+
+/// Whether the app currently holds macOS **Accessibility** permission.
+///
+/// Our CGEvent keystroke injection — and the Cmd+V clipboard fallback, which
+/// also posts CGEvents — only reach other apps when the user has granted
+/// Accessibility (System Settings → Privacy & Security → Accessibility).
+/// Without it, dictated text still lands on the clipboard but won't auto-
+/// paste. The frontend uses this to show a one-time setup nudge.
+///
+/// `AXIsProcessTrusted` is a read-only check (no prompt, no side effects) so
+/// it's safe to call on every launch.
+pub fn is_accessibility_trusted() -> bool {
+    // `Boolean` in the macOS SDK is an unsigned char (0/1), not Rust's bool —
+    // bind it as c_uchar and compare to avoid relying on bool's ABI.
+    type Boolean = std::os::raw::c_uchar;
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> Boolean;
+    }
+    unsafe { AXIsProcessTrusted() != 0 }
+}

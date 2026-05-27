@@ -139,26 +139,32 @@ pub struct AppSettings {
 
 impl Default for AppSettings {
     fn default() -> Self {
+        // Platform-split hotkey defaults.
+        //
+        // Windows: F-keys are nearly always free system-wide. (F10 is the one
+        // exception — Windows reserves it as the menu-activation key, which
+        // stole focus to Outlook's ribbon, so it was retired in favour of F9.)
+        //   F8 = transcribe (Light), F9 = draft (Drafting).
+        //
+        // macOS: the function row sends media/volume events by default, NOT
+        // F8/F9 keycodes — so a global F8/F9 shortcut never fires (it just
+        // plays/pauses music). We default Mac to ⌃⌥ (Control+Option) chords,
+        // which fire regardless of the "use F1/F2 as standard function keys"
+        // setting and rarely collide with app shortcuts:
+        //   ⌃⌥D = dictate (Light), ⌃⌥F = draft (Drafting), ⌃⌥C = force-clean.
+        // Sticky-toggle variants add Shift. (Existing Mac installs are
+        // migrated off F8/F9 by the frontend settings store.)
+        let mac = cfg!(target_os = "macos");
         Self {
-            // F-keys are nearly always free system-wide. F10 is UNIQUELY
-            // cursed on Windows — it's the system "menu activation" key
-            // (WM_SYSKEYUP routes to the foreground window even when our
-            // global hotkey eats the keypress), so dictating into Outlook
-            // silently moves focus to the ribbon. We retired F10 as a
-            // default and collapsed the three-mode model into two:
-            //   F8 = transcribe (Light, optional LLM cleanup via toggle)
-            //   F9 = draft (Drafting — instruction-aware elaboration)
-            // The Advanced enum + per-mode settings are kept for back-compat
-            // but no hotkey is bound by default — user can rebind via UI.
-            light_hotkey: "F8".to_string(),
+            light_hotkey: if mac { "Ctrl+Alt+D" } else { "F8" }.to_string(),
             advanced_hotkey: String::new(),
-            drafting_hotkey: "F9".to_string(),
+            drafting_hotkey: if mac { "Ctrl+Alt+F" } else { "F9" }.to_string(),
             sticky_light: false,
             sticky_advanced: false,
             sticky_drafting: false,
-            light_sticky_hotkey: "Super+F8".to_string(),
+            light_sticky_hotkey: if mac { "Ctrl+Alt+Shift+D" } else { "Super+F8" }.to_string(),
             advanced_sticky_hotkey: String::new(),
-            drafting_sticky_hotkey: "Super+F9".to_string(),
+            drafting_sticky_hotkey: if mac { "Ctrl+Alt+Shift+F" } else { "Super+F9" }.to_string(),
             force_clean_hotkey: default_force_clean_hotkey(),
             force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
             // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
@@ -212,11 +218,11 @@ fn default_open_silently() -> bool {
 }
 
 fn default_force_clean_hotkey() -> String {
-    "Shift+F8".to_string()
+    if cfg!(target_os = "macos") { "Ctrl+Alt+C" } else { "Shift+F8" }.to_string()
 }
 
 fn default_force_clean_sticky_hotkey() -> String {
-    "Shift+Super+F8".to_string()
+    if cfg!(target_os = "macos") { "Ctrl+Alt+Shift+C" } else { "Shift+Super+F8" }.to_string()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

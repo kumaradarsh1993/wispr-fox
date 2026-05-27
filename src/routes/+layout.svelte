@@ -7,12 +7,38 @@
   import { usageStore } from "$lib/usage-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
   import { settings } from "$lib/settings-store.svelte";
+  import { api } from "$lib/api";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
   let { children } = $props();
 
   let collapsed = $state(false);
   let appVersion = $state<string>("");
+
+  // macOS auto-paste needs Accessibility permission (CGEvent injection + the
+  // Cmd+V fallback both require it). `accessibility_ok` returns true on
+  // Windows/Linux, so this banner only ever appears on a Mac that hasn't
+  // granted it yet. Starts assumed-OK so it never flashes before the check
+  // resolves or on non-Mac platforms.
+  let accessibilityOk = $state(true);
+  let a11yDismissed = $state(false);
+  let showA11yBanner = $derived(!accessibilityOk && !a11yDismissed);
+
+  async function checkAccessibility() {
+    try {
+      accessibilityOk = await api.accessibilityOk();
+    } catch (e) {
+      console.warn("accessibility check failed", e);
+      accessibilityOk = true; // fail open — never nag if the check itself errors
+    }
+  }
+  async function grantAccessibility() {
+    try {
+      await api.openAccessibilitySettings();
+    } catch (e) {
+      console.warn("open accessibility settings failed", e);
+    }
+  }
 
   // Reactive theme application — sets document.body[data-theme] whenever the
   // settings.theme value changes. Valid values: "auto" | "light" | "dark" | "retro".
@@ -110,6 +136,15 @@
     }).then((u) => (unlisten = u));
 
     return () => unlisten?.();
+  });
+
+  // Accessibility-permission check (macOS auto-paste). Re-check on window
+  // focus so the banner clears the moment the user grants it and tabs back.
+  onMount(() => {
+    checkAccessibility();
+    const onFocus = () => checkAccessibility();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   });
 
   function toggleSidebar() {
@@ -314,6 +349,17 @@
     </aside>
 
     <main class="main-content">
+      {#if showA11yBanner}
+        <div class="a11y-banner" role="alert">
+          <span class="a11y-text">
+            Auto-paste needs <strong>Accessibility</strong> permission. Until you grant it,
+            dictated text is copied to your clipboard but won't paste itself.
+          </span>
+          <button class="a11y-btn" onclick={grantAccessibility}>Open Settings</button>
+          <button class="a11y-btn ghost" onclick={() => checkAccessibility()}>Re-check</button>
+          <button class="a11y-x" onclick={() => (a11yDismissed = true)} aria-label="Dismiss">✕</button>
+        </div>
+      {/if}
       {@render children?.()}
     </main>
   </div>
@@ -738,6 +784,61 @@
     height: 100vh;
     min-width: 0;
     transition: background 200ms ease, color 200ms ease;
+  }
+
+  /* macOS Accessibility nudge — floats over content (position: fixed) so it
+     never disrupts page layout/scroll. Only rendered when the backend
+     reports the permission is missing (i.e. macOS, not yet granted). */
+  .a11y-banner {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    max-width: min(680px, calc(100vw - 80px));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--warning-fade, #fff4e0);
+    color: var(--text-primary);
+    border: 1px solid var(--warning, #ff9f0a);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .a11y-text {
+    flex: 1 1 auto;
+  }
+  .a11y-btn {
+    flex: 0 0 auto;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 7px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 120ms ease;
+  }
+  .a11y-btn:hover {
+    opacity: 0.9;
+  }
+  .a11y-btn.ghost {
+    background: transparent;
+    color: var(--accent);
+  }
+  .a11y-x {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    line-height: 1;
   }
 
   /* Narrow windows — Tauri lets the user shrink the window pretty far.

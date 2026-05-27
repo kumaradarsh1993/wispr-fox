@@ -146,6 +146,10 @@ export const api = {
   testSavedGeminiKey: () => invoke<string[]>("test_saved_gemini_key"),
   configureCues: (start: string, stop: string, enabled: boolean) =>
     invoke<void>("configure_cues", { start, stop, enabled }),
+  // macOS auto-paste permission (Accessibility). Always true off-macOS.
+  accessibilityOk: () => invoke<boolean>("accessibility_ok"),
+  openAccessibilitySettings: () =>
+    invoke<void>("open_accessibility_settings"),
 };
 
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */

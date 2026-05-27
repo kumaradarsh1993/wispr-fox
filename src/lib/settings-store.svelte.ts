@@ -126,6 +126,56 @@ class SettingsStore {
       migrated = true;
     }
 
+    // 2b) macOS hotkey migration. F8/F9 collide with the Mac media keys, so
+    //     macOS defaults to ⌃⌥ chords (see Rust AppSettings::default). Mac
+    //     installs created before this split carry the Windows F-key values
+    //     — remap any still sitting at those exact defaults. One-time, gated
+    //     by a store marker so we never re-clobber a deliberate later choice.
+    const isMac =
+      typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+    if (isMac) {
+      let macDone = false;
+      try {
+        const store = await this.getStore();
+        macDone = (await store.get<boolean>("macHotkeyMigrated")) ?? false;
+      } catch {
+        /* ignore — treat as not-yet-migrated */
+      }
+      if (!macDone) {
+        if (this.s.light_hotkey === "F8") {
+          this.s.light_hotkey = "Ctrl+Alt+D";
+          migrated = true;
+        }
+        if (this.s.drafting_hotkey === "F9") {
+          this.s.drafting_hotkey = "Ctrl+Alt+F";
+          migrated = true;
+        }
+        if (this.s.light_sticky_hotkey === "Super+F8") {
+          this.s.light_sticky_hotkey = "Ctrl+Alt+Shift+D";
+          migrated = true;
+        }
+        if (this.s.drafting_sticky_hotkey === "Super+F9") {
+          this.s.drafting_sticky_hotkey = "Ctrl+Alt+Shift+F";
+          migrated = true;
+        }
+        if (this.s.force_clean_hotkey === "Shift+F8") {
+          this.s.force_clean_hotkey = "Ctrl+Alt+C";
+          migrated = true;
+        }
+        if (this.s.force_clean_sticky_hotkey === "Shift+Super+F8") {
+          this.s.force_clean_sticky_hotkey = "Ctrl+Alt+Shift+C";
+          migrated = true;
+        }
+        try {
+          const store = await this.getStore();
+          await store.set("macHotkeyMigrated", true);
+          await store.save();
+        } catch {
+          /* best-effort marker */
+        }
+      }
+    }
+
     // 3) Push to Rust so the backend flow has the right state.
     try {
       await api.setSettings(this.s);

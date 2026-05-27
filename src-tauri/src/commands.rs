@@ -27,12 +27,18 @@ pub fn ping() -> &'static str {
 /// chain and repaint. We bump by 1px then restore the exact size.
 pub(crate) fn force_repaint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     let _ = window.show();
+    let _ = window.set_always_on_top(true);
+    // The size-nudge is a Windows-only workaround: WebView2 loses its
+    // DirectComposition surface after sleep and only a resize forces it to
+    // rebuild. On macOS/Linux (WKWebView / WebKitGTK) the surface survives
+    // resume, so the nudge is pointless there — and a 1px resize on a
+    // transparent always-on-top floater can cause a visible jitter. Skip it.
+    #[cfg(windows)]
     if let Ok(size) = window.outer_size() {
         let bumped = tauri::PhysicalSize::new(size.width + 1, size.height + 1);
         let _ = window.set_size(bumped);
         let _ = window.set_size(size);
     }
-    let _ = window.set_always_on_top(true);
 }
 
 /// Force the Clippy floater to repaint after the machine resumes from sleep.
@@ -50,6 +56,37 @@ pub fn recover_clippy_window(app: AppHandle) {
     }
     tracing::info!("recovering Clippy floater (resume / surface-loss repaint)");
     force_repaint(&w);
+}
+
+/// Whether text auto-paste will work. On macOS this reflects the
+/// Accessibility permission (required for CGEvent injection + the Cmd+V
+/// fallback). On Windows/Linux there's no such gate, so it's always `true`.
+/// The frontend shows a setup nudge when this is `false`.
+#[tauri::command]
+pub fn accessibility_ok() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::inject::macos::is_accessibility_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Open the OS pane where the user grants the permission auto-paste needs.
+/// macOS deep-links straight to Privacy & Security → Accessibility; other
+/// platforms are a no-op (the gate doesn't exist there).
+#[tauri::command]
+pub fn open_accessibility_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
