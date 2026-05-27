@@ -55,6 +55,14 @@ activation key. WM_SYSKEYUP leaks past RegisterHotKey and steals
 focus to Outlook's ribbon. Settings store auto-migrates old F10
 configs to F9 on first launch.
 
+**macOS uses different defaults** (since nightly.8): the Mac function
+row sends media/volume events, not F8/F9 keycodes, so a global F8/F9
+shortcut never fires. macOS defaults to ⌃⌥ chords — `Ctrl+Alt+D`
+(dictate/Light), `Ctrl+Alt+F` (draft), `Ctrl+Alt+C` (force-clean),
+`+Shift` for sticky variants. Set per-platform in `AppSettings::default`
+via `cfg!(target_os="macos")`; existing Mac installs are remapped off
+F8/F9 by a one-time, marker-gated migration in `settings-store.svelte.ts`.
+
 ## STT + LLM providers
 
 - **STT**: Groq Whisper Large v3 Turbo. Free tier: 2000 req/day,
@@ -142,6 +150,23 @@ explicit user permission:
 - **Electron same-window paste**: Slack/Discord/Teams have their
   own focus management that overrides Win32 `SetFocus` from outside.
   We don't fight it — clipboard fallback (default on) is the answer.
+- **macOS platform notes** (audited nightly.8):
+  - **Transparent floater needs `macOSPrivateApi: true`** in
+    tauri.conf.json + the `macos-private-api` tauri Cargo feature.
+    Without it the floater renders as an opaque white block. (Rules
+    out Mac App Store — fine, we ship unsigned outside it.)
+  - **Auto-paste requires Accessibility permission** (CGEvent inject +
+    the Cmd+V fallback both need it). `accessibility_ok` command checks
+    `AXIsProcessTrusted`; a dismissible layout banner deep-links to the
+    Settings pane. Until granted, text lands on clipboard only.
+  - **Mic permission** is declared in `src-tauri/Info.plist`
+    (`NSMicrophoneUsageDescription`) — present and working.
+  - **`force_repaint` size-nudge is Windows-only** (`#[cfg(windows)]`):
+    WebView2 DComp surface-loss is a Windows thing; nudging a Mac
+    transparent window just causes jitter.
+  - **`inject/focus.rs` is stubbed on non-Windows**: no "· AppName"
+    label, no focus-restore, no app-tone for drafting. Graceful
+    degrade to plain inject. Future work: AXUIElement/NSWorkspace.
 - **Live2D fox roadmap**: Live2D Sample models (Wankoromochi,
   Tororo/Hijiki, Hiyori, Mao) are the legally clean path under the
   Live2D Sample License (free + commercial OK under the revenue
