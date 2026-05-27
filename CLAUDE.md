@@ -13,8 +13,10 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-Current version: **v1.0.0** (commit `e89057c`, tagged + pushed
-2026-05-13). Single owner. No paid users yet.
+Current stable: **v1.0.0** (commit `e89057c`, 2026-05-13). Nightly
+channel is ahead at **v1.0.0-nightly.7** (commit `48b5f67`,
+2026-05-27) — reliability + visibility fixes awaiting the user's
+go-ahead to promote to a stable `v1.1.0`. Single owner, no paid users.
 
 ## Architecture (90-second tour)
 
@@ -100,9 +102,14 @@ configs to F9 on first launch.
 These were settled mid-development; don't re-litigate without
 explicit user permission:
 
-1. **No auto-building.** Code edits + commits happen on Claude's
-   own initiative. `npm run tauri build` only runs when the user
-   says *"build"* or *"ship"* (or equivalent).
+1. **Nightlies auto-build on CI; stable needs a signal.** After a
+   coherent set of changes, Claude may commit, tag `v*-nightly.N`,
+   and push — GitHub Actions builds all-platform installers on the
+   web. No need to ask first, and do NOT run `npm run tauri build`
+   locally (the user runs a loaded machine; keep builds off it).
+   Promotion to a **stable** release (marked Latest, no `-nightly`
+   suffix) happens ONLY on an explicit *"promote to stable"* / *"ship
+   it"* signal. (Decided 2026-05-27.)
 2. **Batch fixes before shipping.** Single-bug commits are fine, but
    wait for explicit ship signal before pushing release. Multiple
    small fixes group into one version bump.
@@ -123,9 +130,12 @@ explicit user permission:
   `[profile.release]`. Full LTO + codegen-units=1 OOM'd rustc on
   this 8 GB machine — see commit `1cb6724`. Don't tighten back to
   full LTO without confirming the host has 16+ GB RAM.
-- **macOS DMG**: not in CI yet. README references DMG file names
-  but they don't exist. Either build manually + attach to release,
-  or remove the macOS section from README until CI handles it.
+- **macOS DMG**: CI now builds `wispr-fox_1.0.0_aarch64.dmg` (Apple
+  Silicon) on every release tag, alongside Windows NSIS `.exe` + MSI
+  and Linux AppImage/deb/rpm. So every nightly ships all platforms in
+  lockstep — no platform drifts behind. Unsigned: first macOS launch
+  needs right-click → Open, or `xattr -dr com.apple.quarantine
+  /Applications/wispr-fox.app`. No Intel (x86_64) Mac build yet.
 - **Cubism SDK license**: free for indie under ¥10M/yr revenue.
   Document this in `LICENSE.md` if the Live2D-fox skin ever ships
   (see roadmap).
