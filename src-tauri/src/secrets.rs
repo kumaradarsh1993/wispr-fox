@@ -1,12 +1,19 @@
-//! API-key storage with automatic fallback.
+//! API-key storage with secure-first, fall-back-to-file-only-if-needed semantics.
 //!
-//! Primary: Windows Credential Manager via keyring-rs (secure, no plaintext on disk).
-//! Fallback: JSON file in app-data dir (less secure but always works).
+//! Primary: OS keychain via keyring-rs
+//!   - Windows: Credential Manager (DPAPI under the hood)
+//!   - macOS:   Keychain Services
+//!   - Linux:   Secret Service (libsecret) / kwallet
 //!
-//! On write: try keyring → always write file as backup.
-//! On read: try keyring → if empty, check file.
-//! This way if the user fixes their Credential Manager later, the secure path
-//! kicks in automatically, while the app never blocks on a broken keyring.
+//! Fallback: JSON file in app-data dir, used ONLY when the keyring write
+//! fails (uncommon — broken Credential Manager, headless Linux without a
+//! secret service, sandboxed Keychain, etc). We deliberately do not write
+//! the file on the happy path: an unconditional plaintext fallback meant
+//! any other process running as the user could read the keys.
+//!
+//! Reads prefer the keyring; if a value is only present in the fallback
+//! file, we opportunistically migrate it into the keyring and delete it
+//! from the file so subsequent reads/writes converge on the secure path.
 
 use std::collections::HashMap;
 use std::fs;
@@ -55,7 +62,7 @@ impl SecretKey {
     }
 }
 
-// ── Keyring helpers (best-effort) ──────────────────────────────────────────
+// ── Keyring helpers ────────────────────────────────────────────────────────
 
 fn keyring_entry(key: SecretKey) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, key.entry_name())
@@ -74,7 +81,16 @@ fn keyring_get(key: SecretKey) -> Option<String> {
         .and_then(|e| e.get_password().ok())
 }
 
-// ── File-based fallback ────────────────────────────────────────────────────
+fn keyring_delete(key: SecretKey) {
+    if let Ok(entry) = keyring_entry(key) {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => tracing::warn!("keyring delete failed for {:?}: {e:#}", key),
+        }
+    }
+}
+
+// ── File-based fallback (used ONLY when keyring is unavailable) ────────────
 
 fn file_read_all() -> HashMap<String, String> {
     let path = fallback_path();
@@ -86,6 +102,16 @@ fn file_read_all() -> HashMap<String, String> {
 
 fn file_write_all(map: &HashMap<String, String>) -> Result<()> {
     let path = fallback_path();
+    if map.is_empty() {
+        // Don't leave an empty file on disk if everything migrated to the
+        // keyring — fewer footprints for forensics, and it's the most
+        // honest signal that no plaintext is being kept.
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("removing empty fallback file {}", path.display()))?;
+        }
+        return Ok(());
+    }
     let json = serde_json::to_string_pretty(map)?;
     fs::write(&path, json).with_context(|| format!("writing fallback key file {}", path.display()))
 }
@@ -106,37 +132,70 @@ fn file_delete(key: SecretKey) -> Result<()> {
     file_write_all(&map)
 }
 
-// ── Public API (keyring-first, file-fallback) ──────────────────────────────
+/// Returns true if there's an entry for `key` in the fallback file.
+fn file_has(key: SecretKey) -> bool {
+    file_read_all().contains_key(key.entry_name())
+}
+
+// ── Public API (keyring-first; file only on keyring failure) ───────────────
 
 pub fn set(key: SecretKey, value: &str) -> Result<()> {
-    // Always write file fallback so reads never fail.
-    file_set(key, value)?;
-    // Best-effort keyring write — log but don't block on failure.
-    if let Err(e) = keyring_set(key, value) {
-        tracing::warn!("keyring write failed for {:?}, using file fallback: {e:#}", key);
+    // Try the secure path first. Only if that genuinely fails do we accept
+    // the plaintext-on-disk cost.
+    match keyring_set(key, value) {
+        Ok(()) => {
+            // Belt and braces: drop any stale plaintext copy from a previous
+            // version that always wrote the file.
+            if file_has(key) {
+                if let Err(e) = file_delete(key) {
+                    tracing::warn!(
+                        "couldn't clean stale plaintext entry for {:?}: {e:#}",
+                        key
+                    );
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(
+                "keyring write failed for {:?} ({e:#}); falling back to file storage",
+                key
+            );
+            file_set(key, value)
+                .with_context(|| format!("fallback file write failed for {:?}", key))
+        }
     }
-    Ok(())
 }
 
 pub fn get(key: SecretKey) -> Result<Option<String>> {
-    // Try keyring first (secure path).
+    // Secure path first.
     if let Some(v) = keyring_get(key) {
+        // If a stale plaintext copy survives from pre-fix installs, drop it.
+        if file_has(key) {
+            if let Err(e) = file_delete(key) {
+                tracing::warn!("couldn't drop stale plaintext for {:?}: {e:#}", key);
+            }
+        }
         return Ok(Some(v));
     }
-    // Fallback to file.
-    Ok(file_get(key))
+    // Fallback only. Opportunistically migrate so future reads hit keyring.
+    if let Some(v) = file_get(key) {
+        if keyring_set(key, &v).is_ok() {
+            if let Err(e) = file_delete(key) {
+                tracing::warn!("migrated {:?} to keyring; couldn't drop file copy: {e:#}", key);
+            } else {
+                tracing::info!("migrated {:?} from plaintext fallback into keyring", key);
+            }
+        }
+        return Ok(Some(v));
+    }
+    Ok(None)
 }
 
 pub fn delete(key: SecretKey) -> Result<()> {
-    // Clean up file.
+    keyring_delete(key);
+    // Always sweep the file too, in case a value was ever stored there.
     file_delete(key)?;
-    // Best-effort keyring delete.
-    if let Ok(entry) = keyring_entry(key) {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => tracing::warn!("keyring delete failed for {:?}: {e:#}", key),
-        }
-    }
     Ok(())
 }
 
