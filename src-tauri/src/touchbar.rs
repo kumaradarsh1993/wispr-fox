@@ -15,12 +15,13 @@
 //! All UI mutations dispatch to the main thread (AppKit requirement).
 
 use std::cell::RefCell;
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::rc::{Allocated, Retained};
+use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSButton, NSColor, NSCustomTouchBarItem, NSTouchBar, NSTouchBarDelegate,
@@ -92,6 +93,9 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     struct WisprTouchBarDelegate;
 
+    // Explicitly declare NSObjectProtocol conformance (required by NSTouchBarDelegate).
+    unsafe impl NSObjectProtocol for WisprTouchBarDelegate {}
+
     // NSTouchBarDelegate protocol —
     // the only required method creates items on demand.
     unsafe impl NSTouchBarDelegate for WisprTouchBarDelegate {
@@ -143,13 +147,20 @@ define_class!(
         fn clip_skin(&self, _sender: &AnyObject) {
             switch_skin("stylized");
         }
+
+        // init — called from our Rust `create()` below. Needs to be inside
+        // define_class! so `super(this)` resolves the class hierarchy.
+        #[unsafe(method_id(init))]
+        fn init(this: Allocated<Self>) -> Retained<Self> {
+            unsafe { msg_send![super(this), init] }
+        }
     }
 );
 
 impl WisprTouchBarDelegate {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm);
-        unsafe { msg_send![super(this), init] }
+    /// Allocate and initialise a new delegate on the main thread.
+    fn create(mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { Self::init(Self::alloc(mtm)) }
     }
 }
 
@@ -166,53 +177,53 @@ fn make_item(
 
     match id_str.as_str() {
         // ── Idle: character skin buttons ──────────────────────────
-        ID_FOX => Some(make_button(identifier, "🦊", "foxSkin:", delegate, None)),
-        ID_DUCK => Some(make_button(identifier, "🦆", "duckSkin:", delegate, None)),
-        ID_CAT => Some(make_button(identifier, "🐱", "catSkin:", delegate, None)),
-        ID_CLIP => Some(make_button(identifier, "📎", "clipSkin:", delegate, None)),
+        ID_FOX => Some(make_button(identifier, "🦊", c"foxSkin:", delegate, None)),
+        ID_DUCK => Some(make_button(identifier, "🦆", c"duckSkin:", delegate, None)),
+        ID_CAT => Some(make_button(identifier, "🐱", c"catSkin:", delegate, None)),
+        ID_CLIP => Some(make_button(identifier, "📎", c"clipSkin:", delegate, None)),
 
         // ── Idle: mode buttons ───────────────────────────────────
         ID_LIGHT => Some(make_button(
             identifier,
             "💬 Light",
-            "lightPressed:",
+            c"lightPressed:",
             delegate,
             Some((0.2, 0.55, 0.95)), // blue
         )),
         ID_DRAFT => Some(make_button(
             identifier,
             "✏️ Draft",
-            "draftPressed:",
+            c"draftPressed:",
             delegate,
             Some((0.75, 0.35, 0.85)), // purple
         )),
 
         // ── Recording: timer ─────────────────────────────────────
         ID_TIMER => {
-            let btn = make_ns_button("🔴 0:00", "stopPressed:", delegate);
+            let btn = make_ns_button("🔴 0:00", c"stopPressed:", delegate);
             TIMER_BTN.with(|cell| *cell.borrow_mut() = Some(btn.clone()));
             wrap_item(identifier, &btn)
-                .map(|i| Retained::into_super(Retained::into_super(i)))
+                .map(|i| Retained::into_super(i))
         }
 
         // ── Recording: stop ──────────────────────────────────────
         ID_STOP => Some(make_button(
             identifier,
             "⏹ Stop",
-            "stopPressed:",
+            c"stopPressed:",
             delegate,
             Some((0.9, 0.25, 0.25)), // red
         )),
 
         // ── Processing: status label ─────────────────────────────
         ID_STATUS => {
-            let btn = make_ns_button("⏳ Processing…", "", delegate);
+            let btn = make_ns_button("⏳ Processing…", c"stopPressed:", delegate);
             unsafe {
                 let _: () = msg_send![&*btn, setEnabled: false];
             }
             STATUS_BTN.with(|cell| *cell.borrow_mut() = Some(btn.clone()));
             wrap_item(identifier, &btn)
-                .map(|i| Retained::into_super(Retained::into_super(i)))
+                .map(|i| Retained::into_super(i))
         }
 
         _ => {
@@ -227,7 +238,7 @@ fn make_item(
 fn make_button(
     identifier: &NSString,
     title: &str,
-    action: &str,
+    action: &CStr,
     target: &WisprTouchBarDelegate,
     bezel_rgb: Option<(f64, f64, f64)>,
 ) -> Retained<NSTouchBarItem> {
@@ -245,21 +256,18 @@ fn make_button(
         }
     }
     let item = wrap_item(identifier, &btn).expect("wrap_item should succeed");
-    Retained::into_super(Retained::into_super(item))
+    // NSCustomTouchBarItem → NSTouchBarItem (one level up)
+    Retained::into_super(item)
 }
 
 /// Create a bare NSButton with title/target/action.
 fn make_ns_button(
     title: &str,
-    action: &str,
+    action: &CStr,
     target: &WisprTouchBarDelegate,
 ) -> Retained<NSButton> {
     let title_ns = NSString::from_str(title);
-    let sel = if action.is_empty() {
-        Sel::register("noop") // dummy — button is disabled anyway
-    } else {
-        Sel::register(action)
-    };
+    let sel = Sel::register(action);
     unsafe {
         msg_send![
             NSButton::class(),
@@ -276,7 +284,7 @@ fn wrap_item(
     view: &NSButton,
 ) -> Option<Retained<NSCustomTouchBarItem>> {
     unsafe {
-        let alloc: Retained<NSCustomTouchBarItem> =
+        let alloc: Allocated<NSCustomTouchBarItem> =
             msg_send![NSCustomTouchBarItem::class(), alloc];
         let item: Retained<NSCustomTouchBarItem> =
             msg_send![alloc, initWithIdentifier: identifier];
@@ -433,7 +441,7 @@ pub fn install(app: &AppHandle, flow: &Flow) {
     });
 
     // ── Create delegate ──────────────────────────────────────────
-    let delegate = WisprTouchBarDelegate::new(mtm);
+    let delegate = WisprTouchBarDelegate::create(mtm);
 
     // ── Create NSTouchBar ────────────────────────────────────────
     let touch_bar = NSTouchBar::new(mtm);
