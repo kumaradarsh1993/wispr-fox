@@ -13,10 +13,11 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-Current stable: **v1.0.0** (commit `e89057c`, 2026-05-13). Nightly
-channel is ahead at **v1.0.0-nightly.7** (commit `48b5f67`,
-2026-05-27) — reliability + visibility fixes awaiting the user's
-go-ahead to promote to a stable `v1.1.0`. Single owner, no paid users.
+Current stable: **v1.1.0** (commit `4981f8a`, 2026-05-31). Nightly
+channel is ahead at **v1.1.0-nightly.2** (commit `4ef7a83`,
+2026-05-31) — adds Rubber Duck + Desk Cat characters, bulletproof
+floater recovery, and macOS Touch Bar integration.
+Single owner, no paid users.
 
 ## Architecture (90-second tour)
 
@@ -32,13 +33,15 @@ src-tauri/src/
   history/      SQLite. Three text columns: transcript, cleaned_text, drafted_text.
   flow.rs       Top-level state machine. Hotkey → record → STT → LLM → inject.
   hotkey.rs     8 registered combos: F8/F9/F10 + Win+ + Shift+F8 force-clean.
+  power.rs      Cross-platform resume detector (wall-clock gap) + JS ping state.
+  touchbar.rs   macOS Touch Bar UI (character picker + mode buttons + timer).
   settings.rs   AppSettings struct. Defaults here; user values in tauri-plugin-store.
 
 src/routes/
   +layout.svelte   Sidebar (brand, hotkey hints, floater picker, usage, hero fox)
   /history/        Rows with Raw/Cleaned/Drafted tabs, kebab menu, search/filter
   /settings/       Provider keys, modes, hotkeys, behaviour, startup, look & feel
-  /clippy/         Always-on-top floater. Skin variants: off/fox/stylized/beige/real-clippy
+  /clippy/         Always-on-top floater. Skin variants: off/fox/duck/cat/stylized/real-clippy
 ```
 
 ## Hotkey model (current, v1.0.0)
@@ -242,6 +245,6 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: v1.0.0 ship-day, by Claude Code session*
-*`09de8006-a294-4d39-b5b9-aac2b760764a`. Update when conventions or*
-*architecture change — not on every fix.*
+*Last touched: v1.1.0 ship-day + nightly.2 (duck, cat, Touch Bar),*
+*by Claude Code session. Update when conventions or architecture*
+*change — not on every fix.*
