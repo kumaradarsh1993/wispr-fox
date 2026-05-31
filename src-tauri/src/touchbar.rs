@@ -21,14 +21,14 @@ use std::time::Instant;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{define_class, msg_send, ClassType, MainThreadMarker};
+use objc2::{define_class, msg_send, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSButton, NSColor, NSCustomTouchBarItem, NSTouchBar, NSTouchBarDelegate,
     NSTouchBarItem,
 };
 use objc2_foundation::{NSArray, NSObject, NSString};
 
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Emitter, Listener};
 
 use crate::flow::Flow;
 use crate::hotkey::{Edge, HotkeyEvent};
