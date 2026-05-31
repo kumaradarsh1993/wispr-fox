@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "1.1.0-nightly.1"
+version = "1.1.0-nightly.2"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -80,6 +80,23 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"
 core-foundation = "0.10"
+# Touch Bar support — objc2 + objc2-foundation are already transitive deps
+# from Tauri; adding them as direct deps pins the version and enables the
+# features we need (NSTouchBar, NSButton, etc.).  Zero added weight on
+# non-macOS builds.
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = [
+  "NSTouchBar",
+  "NSTouchBarItem",
+  "NSCustomTouchBarItem",
+  "NSButton",
+  "NSControl",
+  "NSResponder",
+  "NSView",
+  "NSColor",
+  "NSApplication",
+] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"

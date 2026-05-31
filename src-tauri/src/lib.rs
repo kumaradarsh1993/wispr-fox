@@ -12,6 +12,8 @@ mod secrets;
 mod settings;
 mod stt;
 mod tray;
+#[cfg(target_os = "macos")]
+mod touchbar;
 mod usage;
 
 use std::sync::Arc;
@@ -123,6 +125,10 @@ pub fn run() {
             if let Err(e) = tray::install(app.handle()) {
                 tracing::warn!("tray install failed: {e:#}");
             }
+
+            // Touch Bar (macOS only — no-op on non-Touch-Bar hardware).
+            #[cfg(target_os = "macos")]
+            touchbar::install(app.handle(), &flow);
 
             app.manage(history);
             app.manage(flow);
