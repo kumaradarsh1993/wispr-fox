@@ -147,20 +147,15 @@ define_class!(
         fn clip_skin(&self, _sender: &AnyObject) {
             switch_skin("stylized");
         }
-
-        // init — called from our Rust `create()` below. Needs to be inside
-        // define_class! so `super(this)` resolves the class hierarchy.
-        #[unsafe(method_id(init))]
-        fn init(this: Allocated<Self>) -> Retained<Self> {
-            unsafe { msg_send![super(this), init] }
-        }
     }
 );
 
 impl WisprTouchBarDelegate {
     /// Allocate and initialise a new delegate on the main thread.
-    fn create(mtm: MainThreadMarker) -> Retained<Self> {
-        unsafe { Self::init(Self::alloc(mtm)) }
+    /// Uses ObjC `+new` (= alloc + init) — no custom init needed
+    /// since the delegate has no instance variables.
+    fn create(_mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { msg_send![Self::class(), new] }
     }
 }
 
