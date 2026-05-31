@@ -11,6 +11,8 @@
     { id: "fox",         label: "Fox",       desc: "Watercolor fox mascot — the Foxy identity, default since v1.0" },
     { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
     { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
+    { id: "duck",        label: "Duck",      desc: "Rubber duck debugging buddy — bobbing on water, squeaky and helpful" },
+    { id: "cat",         label: "Cat",       desc: "Sleepy desk cat — curls up idle, perks up to help, typing paws" },
   ];
 
   const THEME_OPTIONS = [

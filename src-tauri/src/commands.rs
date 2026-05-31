@@ -17,6 +17,14 @@ pub fn ping() -> &'static str {
     "pong"
 }
 
+/// Called every 10s by the floater's JS to signal the webview is alive.
+/// The Rust-side watchdog checks the staleness of this timestamp to decide
+/// whether a full force_repaint is needed.
+#[tauri::command]
+pub fn js_heartbeat_ping(ping_state: State<'_, crate::power::JsPingState>) {
+    ping_state.ping();
+}
+
 /// Nudge a transparent, always-on-top window so WebView2 rebuilds its
 /// composition surface. On Windows the floater's DirectComposition surface
 /// is torn down when DWM restarts (system sleep/resume, RDP reconnect, fast

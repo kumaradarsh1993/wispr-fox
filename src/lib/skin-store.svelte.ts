@@ -16,12 +16,12 @@
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type Skin = "off" | "fox" | "stylized" | "real-clippy";
+export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "duck" | "cat";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "duck", "cat"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"

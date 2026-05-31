@@ -7,6 +7,7 @@ mod history;
 mod hotkey;
 mod inject;
 mod llm;
+mod power;
 mod secrets;
 mod settings;
 mod stt;
@@ -126,6 +127,7 @@ pub fn run() {
             app.manage(history);
             app.manage(flow);
             app.manage(usage);
+            app.manage(power::JsPingState::new());
 
             // Intercept main-window close: hide instead of quit. The app keeps
             // running as a tray-resident service. Real quit goes through the
@@ -153,10 +155,37 @@ pub fn run() {
                 // Show by default; users can hide via the X button or tray menu.
                 let _ = clippy.show();
             }
+
+            // Layer 1: resume detector — detects system sleep/wake from the
+            // Rust side (independent of the webview's JS runtime).
+            power::spawn_resume_detector(app.handle().clone());
+
+            // Layer 2: periodic watchdog — re-asserts always-on-top every 30s
+            // and force-repaints if the JS heartbeat has gone stale.
+            let watchdog_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    if let Some(w) = watchdog_handle.get_webview_window("clippy") {
+                        if w.is_visible().unwrap_or(false) {
+                            let _ = w.set_always_on_top(true);
+                            if let Some(ps) = watchdog_handle.try_state::<power::JsPingState>() {
+                                if ps.ms_since_last_ping() > 45_000 {
+                                    tracing::info!("watchdog: JS heartbeat stale, forcing repaint");
+                                    commands::force_repaint(&w);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::js_heartbeat_ping,
             commands::recover_clippy_window,
             commands::accessibility_ok,
             commands::open_accessibility_settings,

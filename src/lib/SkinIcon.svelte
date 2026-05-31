@@ -59,22 +59,52 @@
       "
     ></div>
   </div>
-{:else if skin === "chippy"}
+{:else if skin === "duck"}
   <svg viewBox="0 0 70 70" width={size} height={size} aria-hidden="true">
     <defs>
-      <linearGradient id="chip-{skin}-{size}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#fbe3a0"/>
-        <stop offset="100%" stop-color="#b6792a"/>
+      <linearGradient id="duck-body-{size}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#FFE066"/>
+        <stop offset="100%" stop-color="#FFD700"/>
       </linearGradient>
     </defs>
-    <path d="M 12 35 C 8 18, 30 10, 35 20 C 40 10, 62 18, 58 35 C 62 52, 40 60, 35 50 C 30 60, 8 52, 12 35 Z"
-          fill="url(#chip-{skin}-{size})" stroke="#7a4d12" stroke-width="1.5"/>
-    <path d="M 14 38 Q 35 30, 56 38" fill="none" stroke="#a06010" stroke-width="1" opacity="0.5"/>
-    <ellipse cx="28" cy="38" rx="3" ry="3.5" fill="#fff" stroke="#4a2208" stroke-width="1"/>
-    <circle cx="28" cy="39" r="1.4" fill="#1d1d1f"/>
-    <ellipse cx="42" cy="38" rx="3" ry="3.5" fill="#fff" stroke="#4a2208" stroke-width="1"/>
-    <circle cx="42" cy="39" r="1.4" fill="#1d1d1f"/>
-    <path d="M 32 46 Q 35 49, 38 46" fill="none" stroke="#4a2208" stroke-width="1.4" stroke-linecap="round"/>
+    <!-- Water -->
+    <ellipse cx="35" cy="58" rx="22" ry="5" fill="#87CEEB" opacity="0.5"/>
+    <!-- Body -->
+    <ellipse cx="35" cy="44" rx="18" ry="16" fill="url(#duck-body-{size})" stroke="#D4A800" stroke-width="1.2"/>
+    <!-- Head -->
+    <circle cx="35" cy="26" r="11" fill="#FFE066" stroke="#D4A800" stroke-width="1"/>
+    <!-- Beak -->
+    <path d="M 40 28 L 50 26 L 40 30 Z" fill="#FF8C00" stroke="#CC7000" stroke-width="0.8"/>
+    <!-- Eyes -->
+    <ellipse cx="32" cy="24" rx="2.5" ry="3" fill="#fff" stroke="#1d1d1f" stroke-width="0.8"/>
+    <circle cx="32" cy="25" r="1.2" fill="#1d1d1f"/>
+    <circle cx="31.4" cy="24" r="0.5" fill="#fff" opacity="0.9"/>
+  </svg>
+{:else if skin === "cat"}
+  <svg viewBox="0 0 70 70" width={size} height={size} aria-hidden="true">
+    <!-- Body -->
+    <ellipse cx="35" cy="48" rx="18" ry="14" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
+    <!-- Head -->
+    <circle cx="35" cy="30" r="12" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="0.8"/>
+    <!-- Ears -->
+    <path d="M 24 24 L 22 12 L 30 20 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="0.8"/>
+    <path d="M 25 21 L 24 15 L 29 20 Z" fill="#FF9999" opacity="0.6"/>
+    <path d="M 46 24 L 48 12 L 40 20 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="0.8"/>
+    <path d="M 45 21 L 46 15 L 41 20 Z" fill="#FF9999" opacity="0.6"/>
+    <!-- Eyes -->
+    <ellipse cx="30" cy="29" rx="3" ry="3.5" fill="#7FFF00" stroke="#1a1a1a" stroke-width="0.8"/>
+    <ellipse cx="30" cy="29.5" rx="1" ry="2" fill="#1a1a1a"/>
+    <ellipse cx="40" cy="29" rx="3" ry="3.5" fill="#7FFF00" stroke="#1a1a1a" stroke-width="0.8"/>
+    <ellipse cx="40" cy="29.5" rx="1" ry="2" fill="#1a1a1a"/>
+    <!-- Nose -->
+    <path d="M 34 33 L 35 35 L 36 33 Z" fill="#FF6B6B"/>
+    <!-- Whiskers -->
+    <line x1="18" y1="32" x2="28" y2="33" stroke="#666" stroke-width="0.6"/>
+    <line x1="18" y1="36" x2="28" y2="35" stroke="#666" stroke-width="0.6"/>
+    <line x1="42" y1="33" x2="52" y2="32" stroke="#666" stroke-width="0.6"/>
+    <line x1="42" y1="35" x2="52" y2="36" stroke="#666" stroke-width="0.6"/>
+    <!-- Tail -->
+    <path d="M 52 48 C 58 40, 60 52, 55 56" fill="none" stroke="#2B2B2B" stroke-width="3" stroke-linecap="round"/>
   </svg>
 {/if}
 

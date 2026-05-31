@@ -469,6 +469,12 @@
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onFocus);
 
+    // Layer 3: periodic ping to the Rust watchdog so it knows the webview
+    // is alive.  If this stops arriving, Rust force-repaints the floater.
+    const jsPingInterval = setInterval(() => {
+      invoke("js_heartbeat_ping").catch(() => {});
+    }, 10_000);
+
     const saved = localStorage.getItem("wispr.clippy.pos");
     if (saved) {
       try {
@@ -510,6 +516,7 @@
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
       clearInterval(resumeWatch);
+      clearInterval(jsPingInterval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("mouseup", onMove);
@@ -630,11 +637,11 @@
     <div class="shadow" class:pulse={displayState === "listening"}></div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox"}
+  {#if skin === "stylized" || skin === "fox" || skin === "duck" || skin === "cat"}
 
     <!-- State-driven bubble — shown for skins that don't have their own
          balloon (real Clippy has its own). Hidden while a toast is up so
-         we don't stack two bubbles. Same bubble for stylized + fox so
+         we don't stack two bubbles. Same bubble for all SVG/PNG skins so
          the dialog vocabulary feels consistent across skins. -->
     {#if !toastMessage}
       <div class="bubble" class:show={displayState !== "idle"} data-state={displayState} data-skin={skin}>
@@ -878,6 +885,313 @@
     {:else if realClippyError}
       <div class="real-msg error">Clippy failed: {realClippyError}</div>
     {/if}
+
+  {:else if skin === "duck"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         RUBBER DUCK — programmer's debugging companion.
+         Yellow duck bobbing on water. States:
+           idle:      gentle bob, water ripples, occasional beak quack
+           listening: head tilts toward user, beak opens, bubbles rise
+           thinking:  tiny glasses appear, looks up, bubbles → "?"
+           writing:   wing holds pencil, notepad slides in
+           pasting:   big splash, duck bounces, water droplets
+         ═══════════════════════════════════════════════════════════════════ -->
+    <svg
+      class="character duck-skin"
+      viewBox="-10 -10 160 180"
+      xmlns="http://www.w3.org/2000/svg"
+      data-state={displayState}
+      data-mode={mode}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="duck-body-grad" x1="0" y1="0" x2="0.2" y2="1">
+          <stop offset="0%" stop-color="#FFE566"/>
+          <stop offset="70%" stop-color="#FFD700"/>
+          <stop offset="100%" stop-color="#DAB800"/>
+        </linearGradient>
+        <linearGradient id="duck-head-grad" x1="0.3" y1="0" x2="0.7" y2="1">
+          <stop offset="0%" stop-color="#FFF3B0"/>
+          <stop offset="100%" stop-color="#FFE066"/>
+        </linearGradient>
+        <radialGradient id="duck-water-grad" cx="0.5" cy="0.3" r="0.7">
+          <stop offset="0%" stop-color="#A8DAEF"/>
+          <stop offset="100%" stop-color="#5BA8D0"/>
+        </radialGradient>
+        <linearGradient id="duck-beak-grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FFA500"/>
+          <stop offset="100%" stop-color="#E07000"/>
+        </linearGradient>
+      </defs>
+
+      <!-- ─── Water layer ───────────────────────────────────────────────── -->
+      <g class="duck-water">
+        <ellipse cx="70" cy="152" rx="52" ry="10" fill="url(#duck-water-grad)" opacity="0.5"/>
+        <path class="duck-ripple r1" d="M 25 150 Q 45 145, 65 150 Q 85 155, 105 150" fill="none" stroke="#5BA8D0" stroke-width="1.2" opacity="0.6"/>
+        <path class="duck-ripple r2" d="M 30 155 Q 50 150, 70 155 Q 90 160, 110 155" fill="none" stroke="#5BA8D0" stroke-width="1" opacity="0.4"/>
+      </g>
+
+      <!-- ─── Splash droplets — pasting only ─────────────────────────── -->
+      {#if displayState === "pasting"}
+        <g class="duck-splash">
+          <circle class="drop d1" cx="30" cy="130" r="3" fill="#A8DAEF"/>
+          <circle class="drop d2" cx="50" cy="118" r="2.5" fill="#87CEEB"/>
+          <circle class="drop d3" cx="95" cy="122" r="3" fill="#A8DAEF"/>
+          <circle class="drop d4" cx="110" cy="132" r="2" fill="#87CEEB"/>
+          <circle class="drop d5" cx="70" cy="112" r="2.5" fill="#A8DAEF"/>
+        </g>
+      {/if}
+
+      <!-- ─── Bath bubbles — listening / thinking ─────────────────────── -->
+      {#if displayState === "listening" || displayState === "thinking"}
+        <g class="duck-bubbles">
+          <circle class="bub b1" cx="30" cy="130" r="3" fill="none" stroke="#87CEEB" stroke-width="0.8" opacity="0.7"/>
+          <circle class="bub b2" cx="22" cy="115" r="4" fill="none" stroke="#87CEEB" stroke-width="0.8" opacity="0.5"/>
+          <circle class="bub b3" cx="35" cy="100" r="3.5" fill="none" stroke="#87CEEB" stroke-width="0.8" opacity="0.4"/>
+          {#if displayState === "thinking"}
+            <text class="duck-q" x="20" y="88" font-size="14" fill="#5BA8D0" font-family="ui-sans-serif, sans-serif" opacity="0.6">?</text>
+          {/if}
+        </g>
+      {/if}
+
+      <!-- ─── Notepad — writing / pasting ─────────────────────────────── -->
+      {#if displayState === "writing" || displayState === "pasting"}
+        <g class="duck-paper">
+          <rect x="95" y="72" width="48" height="62" rx="3" fill="#fffaf0" stroke="#1d1d1f" stroke-width="1.2"/>
+          <line x1="100" y1="84" x2="138" y2="84" stroke="#cfd5e2" stroke-width="0.7"/>
+          <line x1="100" y1="92" x2="138" y2="92" stroke="#cfd5e2" stroke-width="0.7"/>
+          <line x1="100" y1="100" x2="138" y2="100" stroke="#cfd5e2" stroke-width="0.7"/>
+          <line x1="100" y1="108" x2="138" y2="108" stroke="#cfd5e2" stroke-width="0.7"/>
+          <line x1="100" y1="116" x2="138" y2="116" stroke="#cfd5e2" stroke-width="0.7"/>
+          <path class="scribble s1" d="M 100 84 L 136 84" stroke="#1d1d1f" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+          <path class="scribble s2" d="M 100 92 L 130 92" stroke="#1d1d1f" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+          <path class="scribble s3" d="M 100 100 L 134 100" stroke="#1d1d1f" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+          <path class="scribble s4" d="M 100 108 L 122 108" stroke="#1d1d1f" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+        </g>
+      {/if}
+
+      <!-- ─── Pencil in wing — writing ────────────────────────────────── -->
+      {#if displayState === "writing"}
+        <g class="duck-pencil-wing">
+          <line x1="88" y1="105" x2="96" y2="82" stroke="#DAA520" stroke-width="3" stroke-linecap="round"/>
+          <polygon points="96,82 94,78 98,78" fill="#1d1d1f"/>
+          <line x1="88" y1="105" x2="90" y2="107" stroke="#FF6B6B" stroke-width="2.5" stroke-linecap="round"/>
+        </g>
+      {/if}
+
+      <!-- ─── Glasses — thinking ──────────────────────────────────────── -->
+      {#if displayState === "thinking"}
+        <g class="duck-glasses">
+          <circle cx="58" cy="62" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
+          <circle cx="80" cy="62" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
+          <path d="M 67 62 L 71 61" stroke="#4a4a4e" stroke-width="1.5"/>
+          <line x1="49" y1="62" x2="42" y2="58" stroke="#4a4a4e" stroke-width="1.5"/>
+          <!-- Lens glare -->
+          <path d="M 53 57 Q 55 55, 57 57" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
+          <path d="M 75 57 Q 77 55, 79 57" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
+        </g>
+      {/if}
+
+      <!-- ─── Body ────────────────────────────────────────────────────── -->
+      <g class="duck-body-group">
+        <!-- White halo for dark backgrounds -->
+        <ellipse cx="70" cy="115" rx="40" ry="34" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.9"/>
+
+        <!-- Main body -->
+        <ellipse cx="70" cy="115" rx="38" ry="32" fill="url(#duck-body-grad)" stroke="#D4A800" stroke-width="1.5"/>
+
+        <!-- Belly highlight -->
+        <ellipse cx="68" cy="122" rx="22" ry="18" fill="#FFF3B0" opacity="0.45"/>
+
+        <!-- Wing (left side) -->
+        <path d="M 36 108 C 28 115, 30 130, 42 132 C 48 128, 44 110, 36 108 Z" fill="#ECBF00" stroke="#D4A800" stroke-width="1" opacity="0.85"/>
+
+        <!-- Tail feathers -->
+        <path d="M 104 105 C 114 95, 118 102, 112 108" fill="#ECBF00" stroke="#D4A800" stroke-width="1"/>
+        <path d="M 106 108 C 116 100, 120 108, 114 112" fill="#FFD700" stroke="#D4A800" stroke-width="0.8"/>
+
+        <!-- Neck -->
+        <path d="M 55 90 C 55 100, 58 105, 68 105" fill="url(#duck-head-grad)" stroke="none"/>
+        <path d="M 85 90 C 85 100, 82 105, 72 105" fill="url(#duck-head-grad)" stroke="none"/>
+
+        <!-- Head -->
+        <circle cx="70" cy="68" r="26" fill="url(#duck-head-grad)" stroke="#D4A800" stroke-width="1.2"/>
+
+        <!-- Head highlight -->
+        <ellipse cx="62" cy="56" rx="10" ry="8" fill="#FFF8D0" opacity="0.4"/>
+
+        <!-- Beak -->
+        <g class="duck-beak">
+          <path d="M 90 68 C 100 62, 108 66, 106 70 C 108 74, 100 78, 90 72 Z" fill="url(#duck-beak-grad)" stroke="#CC7000" stroke-width="1"/>
+          <path d="M 90 70 L 106 70" stroke="#CC7000" stroke-width="0.8" opacity="0.7"/>
+        </g>
+
+        <!-- Eyes -->
+        <g class="duck-eyes" class:hover={hovering}>
+          <ellipse cx="60" cy="62" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
+          <circle cx={60 + eyeShiftX * 0.8} cy={62 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
+          <circle cx={58.5 + eyeShiftX * 0.5} cy={60 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
+
+          <ellipse cx="80" cy="62" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
+          <circle cx={80 + eyeShiftX * 0.8} cy={62 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
+          <circle cx={78.5 + eyeShiftX * 0.5} cy={60 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
+        </g>
+
+        <!-- Cheek blush -->
+        <ellipse cx="52" cy="72" rx="5" ry="3" fill="#FFB6C1" opacity="0.35"/>
+        <ellipse cx="88" cy="72" rx="5" ry="3" fill="#FFB6C1" opacity="0.35"/>
+      </g>
+
+      <!-- ─── Phew drop ──────────────────────────────────────────────── -->
+      {#if phewActive}
+        <g class="phew-drop">
+          <path d="M 98 50 Q 96 44, 98 38 Q 100 44, 98 50 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
+          <text x="95" y="34" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
+        </g>
+      {/if}
+    </svg>
+
+  {:else if skin === "cat"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         DESK CAT — sleepy keyboard cat.
+         Dark charcoal cat with green eyes. States:
+           idle:      curled up, slow breathing, tail twitches
+           listening: ears perk, eyes wide, sits up alert
+           thinking:  paw to chin, eyes up, tail → question mark
+           writing:   rapid-tap paws (typing), tail swishes
+           pasting:   smug face, slow stretch, settles back
+         ═══════════════════════════════════════════════════════════════════ -->
+    <svg
+      class="character cat-skin"
+      viewBox="-10 -10 160 180"
+      xmlns="http://www.w3.org/2000/svg"
+      data-state={displayState}
+      data-mode={mode}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="cat-body-grad" x1="0.3" y1="0" x2="0.7" y2="1">
+          <stop offset="0%" stop-color="#3D3D3D"/>
+          <stop offset="100%" stop-color="#222222"/>
+        </linearGradient>
+        <radialGradient id="cat-eye-grad" cx="0.4" cy="0.4" r="0.6">
+          <stop offset="0%" stop-color="#AAFF44"/>
+          <stop offset="100%" stop-color="#66CC00"/>
+        </radialGradient>
+      </defs>
+
+      <!-- ─── Tail ────────────────────────────────────────────────────── -->
+      <g class="cat-tail">
+        {#if displayState === "thinking"}
+          <!-- Question-mark tail -->
+          <path d="M 108 130 C 125 120, 130 100, 118 90 C 108 82, 100 90, 110 95" fill="none" stroke="#2B2B2B" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="110" cy="100" r="2.5" fill="#2B2B2B"/>
+        {:else}
+          <path d="M 108 130 C 120 115, 125 100, 115 88 C 108 80, 98 88, 108 95" fill="none" stroke="#2B2B2B" stroke-width="5" stroke-linecap="round"/>
+        {/if}
+      </g>
+
+      <!-- ─── Body ────────────────────────────────────────────────────── -->
+      <g class="cat-body-group">
+        <!-- White halo for dark backgrounds -->
+        <ellipse cx="65" cy="128" rx="48" ry="28" fill="none" stroke="#ffffff" stroke-width="7" opacity="0.85"/>
+
+        <!-- Main body — rounded lozenge, compact when idle -->
+        <ellipse cx="65" cy="128" rx="46" ry="26" fill="url(#cat-body-grad)" stroke="#1a1a1a" stroke-width="1.2"/>
+
+        <!-- Belly shimmer (subtle lighter patch) -->
+        <ellipse cx="60" cy="132" rx="20" ry="12" fill="#444444" opacity="0.3"/>
+
+        <!-- Front paws -->
+        <g class="cat-paws">
+          {#if displayState === "writing"}
+            <!-- Typing paws — alternating left/right tap -->
+            <g class="paw-left-tap">
+              <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+              <path d="M 36 146 L 36 143 M 39 145 L 39 142 M 42 145 L 42 142" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+            </g>
+            <g class="paw-right-tap">
+              <ellipse cx="82" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+              <path d="M 79 145 L 79 142 M 82 145 L 82 142 M 85 146 L 85 143" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+            </g>
+          {:else if displayState === "thinking"}
+            <!-- Paw to chin -->
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+            <g class="paw-chin">
+              <ellipse cx="78" cy="108" rx="6" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+            </g>
+          {:else}
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+            <ellipse cx="82" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+          {/if}
+        </g>
+      </g>
+
+      <!-- ─── Head ────────────────────────────────────────────────────── -->
+      <g class="cat-head-group">
+        <!-- Neck -->
+        <rect x="50" y="95" width="30" height="20" rx="8" fill="#2B2B2B"/>
+
+        <!-- Head circle -->
+        <circle cx="65" cy="85" r="28" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
+
+        <!-- Head highlight -->
+        <ellipse cx="58" cy="76" rx="12" ry="8" fill="#363636" opacity="0.5"/>
+
+        <!-- Ears -->
+        <g class="cat-ears">
+          <!-- Left ear -->
+          <path d="M 40 72 L 32 42 L 50 64 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
+          <path d="M 42 68 L 36 50 L 48 64 Z" fill="#FF9999" opacity="0.5"/>
+          <!-- Right ear -->
+          <path d="M 90 72 L 98 42 L 80 64 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
+          <path d="M 88 68 L 94 50 L 82 64 Z" fill="#FF9999" opacity="0.5"/>
+        </g>
+
+        <!-- Eyes -->
+        <g class="cat-eyes" class:hover={hovering}>
+          <!-- Left eye -->
+          <ellipse cx="52" cy="82" rx="8" ry={blinkOpen ? 8.5 : 0.6} fill="url(#cat-eye-grad)" stroke="#1a1a1a" stroke-width="1.5"/>
+          <!-- Slit pupil — widens on hover -->
+          <ellipse cx={52 + eyeShiftX * 0.7} cy={82 + eyeShiftY * 0.5} rx={hovering ? 2.5 : 1.2} ry={blinkOpen ? 6.5 : 0} fill="#111111"/>
+          <!-- Catchlight -->
+          <circle cx={50 + eyeShiftX * 0.4} cy={79 + eyeShiftY * 0.3} r={blinkOpen ? 1.5 : 0} fill="#ffffff" opacity="0.85"/>
+
+          <!-- Right eye -->
+          <ellipse cx="78" cy="82" rx="8" ry={blinkOpen ? 8.5 : 0.6} fill="url(#cat-eye-grad)" stroke="#1a1a1a" stroke-width="1.5"/>
+          <ellipse cx={78 + eyeShiftX * 0.7} cy={82 + eyeShiftY * 0.5} rx={hovering ? 2.5 : 1.2} ry={blinkOpen ? 6.5 : 0} fill="#111111"/>
+          <circle cx={76 + eyeShiftX * 0.4} cy={79 + eyeShiftY * 0.3} r={blinkOpen ? 1.5 : 0} fill="#ffffff" opacity="0.85"/>
+        </g>
+
+        <!-- Nose -->
+        <path d="M 63 92 L 65 96 L 67 92 Z" fill="#FF6B6B" stroke="#cc4444" stroke-width="0.5"/>
+
+        <!-- Mouth -->
+        <path d="M 60 97 Q 65 100, 70 97" fill="none" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+        {#if displayState === "pasting"}
+          <!-- Smug grin -->
+          <path d="M 58 97 Q 65 103, 72 97" fill="none" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+        {/if}
+
+        <!-- Whiskers -->
+        <g class="cat-whiskers">
+          <line x1="25" y1="88" x2="47" y2="90" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="24" y1="94" x2="47" y2="93" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="26" y1="100" x2="47" y2="96" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="90" x2="105" y2="88" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="93" x2="106" y2="94" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="96" x2="104" y2="100" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+        </g>
+      </g>
+
+      <!-- ─── Phew drop ──────────────────────────────────────────────── -->
+      {#if phewActive}
+        <g class="phew-drop">
+          <path d="M 100 65 Q 98 59, 100 53 Q 102 59, 100 65 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
+          <text x="97" y="49" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
+        </g>
+      {/if}
+    </svg>
   {/if}
 </div>
 
@@ -1408,6 +1722,308 @@
     0%, 100% { transform: rotate(-12deg); }
     50% { transform: rotate(8deg); }
   }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     RUBBER DUCK — animations
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .duck-skin { pointer-events: none; width: 100%; height: 100%; }
+
+  .duck-body-group {
+    animation: duck-idle-bob 3.6s ease-in-out infinite;
+  }
+  .duck-skin[data-state="listening"] .duck-body-group {
+    animation: duck-listen-tilt 1.6s ease-in-out infinite;
+  }
+  .duck-skin[data-state="thinking"] .duck-body-group {
+    animation: duck-think-look 2s ease-in-out infinite;
+  }
+  .duck-skin[data-state="writing"] .duck-body-group {
+    animation: duck-write-jitter 0.5s ease-in-out infinite;
+  }
+  .duck-skin[data-state="pasting"] .duck-body-group {
+    animation: duck-splash-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes duck-idle-bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+  @keyframes duck-listen-tilt {
+    0%, 100% { transform: rotate(-3deg) translateY(-1px); }
+    50%      { transform: rotate(3deg) translateY(-4px); }
+  }
+  @keyframes duck-think-look {
+    0%, 100% { transform: rotate(0deg) translateY(-1px); }
+    50%      { transform: rotate(-4deg) translateY(-3px); }
+  }
+  @keyframes duck-write-jitter {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-1px); }
+    75%      { transform: translateX(1px); }
+  }
+  @keyframes duck-splash-bounce {
+    0%   { transform: translateY(0) scale(1); }
+    35%  { transform: translateY(-14px) scale(1.06, 0.94); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  /* Beak opens during listening */
+  .duck-skin[data-state="listening"] .duck-beak {
+    animation: duck-beak-open 0.8s ease-in-out infinite;
+  }
+  @keyframes duck-beak-open {
+    0%, 100% { transform: scaleY(1); }
+    50%      { transform: scaleY(1.3) translateY(-1px); }
+  }
+
+  /* Water ripples */
+  .duck-ripple {
+    animation: duck-ripple-sway 3s ease-in-out infinite;
+  }
+  .duck-ripple.r2 { animation-delay: 0.5s; }
+  @keyframes duck-ripple-sway {
+    0%, 100% { transform: translateX(0); opacity: 0.4; }
+    50%      { transform: translateX(4px); opacity: 0.7; }
+  }
+
+  /* Splash pasting: ripples pulse outward */
+  .duck-skin[data-state="pasting"] .duck-ripple {
+    animation: duck-ripple-splash 0.6s ease-out both;
+  }
+  @keyframes duck-ripple-splash {
+    0%   { transform: scaleX(1); opacity: 0.6; }
+    100% { transform: scaleX(1.4); opacity: 0; }
+  }
+
+  /* Splash droplets fly outward */
+  .duck-splash .drop {
+    animation: duck-drop-fly 0.7s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  .drop.d1 { animation-delay: 0s; }
+  .drop.d2 { animation-delay: 0.05s; }
+  .drop.d3 { animation-delay: 0.1s; }
+  .drop.d4 { animation-delay: 0.15s; }
+  .drop.d5 { animation-delay: 0.08s; }
+  @keyframes duck-drop-fly {
+    0%   { transform: translateY(0) scale(1); opacity: 1; }
+    100% { transform: translateY(-30px) scale(0.3); opacity: 0; }
+  }
+
+  /* Bath bubbles float up */
+  .duck-bubbles .bub {
+    animation: duck-bubble-rise 2.5s ease-in-out infinite;
+  }
+  .bub.b1 { animation-delay: 0s; }
+  .bub.b2 { animation-delay: 0.6s; }
+  .bub.b3 { animation-delay: 1.2s; }
+  @keyframes duck-bubble-rise {
+    0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+    30%  { opacity: 0.7; }
+    100% { transform: translateY(-35px) scale(1.1); opacity: 0; }
+  }
+
+  /* Question mark floats */
+  .duck-q {
+    animation: duck-q-bob 1.5s ease-in-out infinite;
+  }
+  @keyframes duck-q-bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
+
+  /* Glasses slide in during thinking */
+  .duck-glasses {
+    animation: duck-glasses-on 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes duck-glasses-on {
+    0%   { transform: translateY(-12px) scale(0.8); opacity: 0; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  /* Paper notepad (shared with stylized — reuses scribble keyframes) */
+  .duck-paper {
+    animation: duck-paper-slide 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .duck-skin[data-state="pasting"] .duck-paper {
+    animation: duck-paper-fly 0.6s cubic-bezier(0.5, 0, 0.75, 0) both;
+  }
+  @keyframes duck-paper-slide {
+    0%   { transform: translateX(30px) rotate(6deg); opacity: 0; }
+    100% { transform: translateX(0) rotate(0deg); opacity: 1; }
+  }
+  @keyframes duck-paper-fly {
+    0%   { transform: translateX(0) translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateX(60px) translateY(-20px) rotate(-20deg); opacity: 0; }
+  }
+
+  /* Pencil in wing wiggle */
+  .duck-pencil-wing {
+    animation: duck-pencil-scribble 0.35s ease-in-out infinite;
+    transform-origin: 88px 105px;
+  }
+  @keyframes duck-pencil-scribble {
+    0%, 100% { transform: rotate(-3deg); }
+    50%      { transform: rotate(5deg); }
+  }
+
+  /* Duck bubble — light blue water theme */
+  .bubble[data-skin="duck"] {
+    background: #E8F4FD;
+    color: #1a4a5e;
+    border-color: rgba(91, 168, 208, 0.25);
+    box-shadow: 0 4px 12px rgba(91, 168, 208, 0.2);
+  }
+  .bubble[data-skin="duck"]::after {
+    background: #E8F4FD;
+    border-right-color: rgba(91, 168, 208, 0.25);
+    border-bottom-color: rgba(91, 168, 208, 0.25);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     DESK CAT — animations
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .cat-skin { pointer-events: none; width: 100%; height: 100%; }
+
+  /* Idle: gentle breathing + sleepy eyes */
+  .cat-body-group {
+    animation: cat-idle-breathe 3.8s ease-in-out infinite;
+  }
+  .cat-head-group {
+    animation: cat-idle-breathe 3.8s ease-in-out infinite;
+  }
+
+  /* Listening: perked up, alert bob */
+  .cat-skin[data-state="listening"] .cat-body-group {
+    animation: cat-listen-alert 1.2s ease-in-out infinite;
+  }
+  .cat-skin[data-state="listening"] .cat-head-group {
+    animation: cat-listen-head 1.4s ease-in-out infinite;
+  }
+  .cat-skin[data-state="listening"] .cat-ears {
+    animation: cat-ears-perk 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* Thinking: contemplative tilt */
+  .cat-skin[data-state="thinking"] .cat-body-group {
+    animation: cat-idle-breathe 3s ease-in-out infinite;
+  }
+  .cat-skin[data-state="thinking"] .cat-head-group {
+    animation: cat-think-tilt 2s ease-in-out infinite;
+  }
+
+  /* Writing: typing animation */
+  .cat-skin[data-state="writing"] .cat-body-group {
+    animation: cat-write-focus 0.6s ease-in-out infinite;
+  }
+  .cat-skin[data-state="writing"] .cat-head-group {
+    animation: cat-write-focus 0.6s ease-in-out infinite;
+  }
+  .cat-skin[data-state="writing"] .paw-left-tap {
+    animation: cat-paw-tap 0.3s ease-in-out infinite;
+  }
+  .cat-skin[data-state="writing"] .paw-right-tap {
+    animation: cat-paw-tap 0.3s ease-in-out infinite 0.15s;
+  }
+
+  /* Pasting: smug stretch */
+  .cat-skin[data-state="pasting"] .cat-body-group {
+    animation: cat-stretch 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .cat-skin[data-state="pasting"] .cat-head-group {
+    animation: cat-smug-settle 0.6s ease-out both;
+  }
+
+  /* Tail animations */
+  .cat-tail {
+    animation: cat-tail-idle 4s ease-in-out infinite;
+  }
+  .cat-skin[data-state="listening"] .cat-tail {
+    animation: cat-tail-alert 1s ease-in-out infinite;
+  }
+  .cat-skin[data-state="writing"] .cat-tail {
+    animation: cat-tail-swish 0.8s ease-in-out infinite;
+  }
+
+  /* Whisker twitch during listening */
+  .cat-skin[data-state="listening"] .cat-whiskers {
+    animation: cat-whisker-twitch 0.6s ease-in-out infinite;
+  }
+
+  @keyframes cat-idle-breathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-1.5px) scale(1.01, 0.99); }
+  }
+  @keyframes cat-listen-alert {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+  @keyframes cat-listen-head {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    30%      { transform: translateY(-4px) rotate(-2deg); }
+    70%      { transform: translateY(-3px) rotate(2deg); }
+  }
+  @keyframes cat-ears-perk {
+    0%   { transform: scaleY(0.85) translateY(3px); }
+    60%  { transform: scaleY(1.08); }
+    100% { transform: scaleY(1) translateY(0); }
+  }
+  @keyframes cat-think-tilt {
+    0%, 100% { transform: rotate(0deg) translateY(-1px); }
+    50%      { transform: rotate(5deg) translateY(-3px); }
+  }
+  @keyframes cat-write-focus {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1px); }
+  }
+  @keyframes cat-paw-tap {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
+  @keyframes cat-stretch {
+    0%   { transform: scaleX(1) scaleY(1); }
+    40%  { transform: scaleX(1.04) scaleY(0.96) translateY(-2px); }
+    100% { transform: scaleX(1) scaleY(1); }
+  }
+  @keyframes cat-smug-settle {
+    0%   { transform: translateY(-4px); }
+    100% { transform: translateY(0); }
+  }
+  @keyframes cat-tail-idle {
+    0%, 100% { transform: rotate(0deg); }
+    25%      { transform: rotate(3deg); }
+    75%      { transform: rotate(-2deg); }
+  }
+  @keyframes cat-tail-alert {
+    0%, 100% { transform: rotate(0deg) translateY(0); }
+    50%      { transform: rotate(-5deg) translateY(-2px); }
+  }
+  @keyframes cat-tail-swish {
+    0%, 100% { transform: rotate(0deg); }
+    25%      { transform: rotate(8deg); }
+    75%      { transform: rotate(-8deg); }
+  }
+  @keyframes cat-whisker-twitch {
+    0%, 100% { transform: scaleX(1); }
+    50%      { transform: scaleX(1.06); }
+  }
+
+  /* Cat bubble — dark charcoal with green accent */
+  .bubble[data-skin="cat"] {
+    background: #2B2B2B;
+    color: #e0e0e0;
+    border-color: rgba(127, 255, 0, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  .bubble[data-skin="cat"]::after {
+    background: #2B2B2B;
+    border-right-color: rgba(127, 255, 0, 0.2);
+    border-bottom-color: rgba(127, 255, 0, 0.2);
+  }
+  /* Override EQ bar color for dark bubble */
+  .bubble[data-skin="cat"] .bubble-eq span { background: #7FFF00; }
+  .bubble[data-skin="cat"] .bubble-dots span { background: #999; }
 
   /* X dismiss button was removed — double-click Clippy to open the main
      window instead. Hide via tray → Toggle Clippy. */
