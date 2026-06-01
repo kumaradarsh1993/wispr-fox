@@ -724,7 +724,7 @@
     <div class="shadow" class:pulse={displayState === "listening"}></div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "cat"}
+  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab"}
 
     <!-- State-driven bubble — shown for skins that don't have their own
          balloon (real Clippy has its own). Hidden while a toast is up so
@@ -1103,6 +1103,159 @@
           <line x1="83" y1="90" x2="105" y2="88" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
           <line x1="83" y1="93" x2="106" y2="94" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
           <line x1="83" y1="96" x2="104" y2="100" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+        </g>
+      </g>
+
+      <!-- ─── Phew drop ──────────────────────────────────────────────── -->
+      {#if phewActive}
+        <g class="phew-drop">
+          <path d="M 100 65 Q 98 59, 100 53 Q 102 59, 100 65 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
+          <text x="97" y="49" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
+        </g>
+      {/if}
+    </svg>
+
+  {:else if skin === "cat-lab"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         DESK CAT — experimental ("lab") variant.
+         Same silhouette, pose, and animations as "cat"; visual refinement
+         only — replace the thick white halo with thin (~1px) edge highlights
+         tracing the outer silhouette, lighter accent tones on belly/paws/
+         inner ears so features read on dark wallpapers, defined neck with
+         a soft shoulder shadow, lighter mouth stroke, two-tone tail (white
+         edge + dark fill) so it doesn't disappear into the background.
+         Class chain `cat-skin cat-lab-skin` so all .cat-skin keyframes apply.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <svg
+      class="character cat-skin cat-lab-skin"
+      viewBox="-10 -10 160 180"
+      xmlns="http://www.w3.org/2000/svg"
+      data-state={displayState}
+      data-mode={mode}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="catl-body-grad" x1="0.3" y1="0" x2="0.7" y2="1">
+          <stop offset="0%" stop-color="#3D3D3D"/>
+          <stop offset="100%" stop-color="#222222"/>
+        </linearGradient>
+        <linearGradient id="catl-belly-grad" x1="0.5" y1="0" x2="0.5" y2="1">
+          <stop offset="0%" stop-color="#5a5a5a" stop-opacity="0.55"/>
+          <stop offset="100%" stop-color="#444" stop-opacity="0.25"/>
+        </linearGradient>
+        <radialGradient id="catl-eye-grad" cx="0.4" cy="0.4" r="0.6">
+          <stop offset="0%" stop-color="#AAFF44"/>
+          <stop offset="100%" stop-color="#66CC00"/>
+        </radialGradient>
+      </defs>
+
+      <!-- ─── Tail — two-tone so it never melts into the wallpaper ─── -->
+      <g class="cat-tail">
+        {#if displayState === "thinking"}
+          <!-- Question-mark tail: white edge underlay + dark stroke on top -->
+          <path d="M 108 130 C 125 120, 130 100, 118 90 C 108 82, 100 90, 110 95" fill="none" stroke="#ffffff" stroke-width="6.6" stroke-linecap="round" opacity="0.45"/>
+          <path d="M 108 130 C 125 120, 130 100, 118 90 C 108 82, 100 90, 110 95" fill="none" stroke="#2B2B2B" stroke-width="4.4" stroke-linecap="round"/>
+          <circle cx="110" cy="100" r="2.8" fill="#ffffff" opacity="0.45"/>
+          <circle cx="110" cy="100" r="2.2" fill="#2B2B2B"/>
+        {:else}
+          <path d="M 108 130 C 120 115, 125 100, 115 88 C 108 80, 98 88, 108 95" fill="none" stroke="#ffffff" stroke-width="6.6" stroke-linecap="round" opacity="0.45"/>
+          <path d="M 108 130 C 120 115, 125 100, 115 88 C 108 80, 98 88, 108 95" fill="none" stroke="#2B2B2B" stroke-width="4.4" stroke-linecap="round"/>
+        {/if}
+      </g>
+
+      <!-- ─── Body ────────────────────────────────────────────────────── -->
+      <g class="cat-body-group">
+        <!-- Main body: gradient fill + thin white edge highlight tracing
+             only the silhouette (no thick halo). -->
+        <ellipse cx="65" cy="128" rx="46" ry="26" fill="url(#catl-body-grad)" stroke="#ffffff" stroke-width="1.1" stroke-opacity="0.55"/>
+
+        <!-- Belly shimmer — a softer, lighter patch that clearly reads as
+             "underside" instead of disappearing into the body. -->
+        <ellipse cx="60" cy="134" rx="26" ry="11" fill="url(#catl-belly-grad)"/>
+        <!-- Faint highlight curve along the upper belly seam -->
+        <path d="M 36 130 Q 60 142 86 130" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-opacity="0.25"/>
+
+        <!-- Shoulder shading — gives the front arms separation from the body -->
+        <ellipse cx="42" cy="134" rx="9" ry="11" fill="#1a1a1a" opacity="0.35"/>
+        <ellipse cx="88" cy="134" rx="9" ry="11" fill="#1a1a1a" opacity="0.35"/>
+
+        <!-- Front paws — lighter fill (#525252) + thin white edge -->
+        <g class="cat-paws">
+          {#if displayState === "writing"}
+            <g class="paw-left-tap">
+              <ellipse cx="42" cy="148" rx="8" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+              <path d="M 36 146 L 36 143 M 39 145 L 39 142 M 42 145 L 42 142" stroke="#0d0d0d" stroke-width="0.9" stroke-linecap="round"/>
+            </g>
+            <g class="paw-right-tap">
+              <ellipse cx="82" cy="148" rx="8" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+              <path d="M 79 145 L 79 142 M 82 145 L 82 142 M 85 146 L 85 143" stroke="#0d0d0d" stroke-width="0.9" stroke-linecap="round"/>
+            </g>
+          {:else if displayState === "thinking"}
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+            <g class="paw-chin">
+              <ellipse cx="78" cy="108" rx="6" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+            </g>
+          {:else}
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+            <ellipse cx="82" cy="148" rx="8" ry="5" fill="#525252" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.6"/>
+          {/if}
+        </g>
+      </g>
+
+      <!-- ─── Head + neck ─────────────────────────────────────────────── -->
+      <g class="cat-head-group">
+        <!-- Neck — rounded with subtle gradient, anchored into the body,
+             with a thin highlight along the front edge so it doesn't read
+             as a hard block. -->
+        <path d="M 49 96 Q 49 113 56 116 L 74 116 Q 81 113 81 96 Z" fill="#2B2B2B" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.45"/>
+        <!-- Inner neck shadow — depth where the neck meets the chest -->
+        <path d="M 51 110 Q 65 116 79 110" fill="none" stroke="#0a0a0a" stroke-width="1.2" stroke-opacity="0.55"/>
+
+        <!-- Head circle with thin edge highlight -->
+        <circle cx="65" cy="85" r="28" fill="url(#catl-body-grad)" stroke="#ffffff" stroke-width="1.1" stroke-opacity="0.55"/>
+
+        <!-- Head highlight (top-left light source) -->
+        <ellipse cx="56" cy="74" rx="13" ry="9" fill="#3a3a3a" opacity="0.55"/>
+
+        <!-- Ears -->
+        <g class="cat-ears">
+          <path d="M 40 72 L 32 42 L 50 64 Z" fill="#2B2B2B" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.55"/>
+          <path d="M 42 68 L 36 50 L 48 64 Z" fill="#FF9999" opacity="0.7"/>
+          <path d="M 90 72 L 98 42 L 80 64 Z" fill="#2B2B2B" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.55"/>
+          <path d="M 88 68 L 94 50 L 82 64 Z" fill="#FF9999" opacity="0.7"/>
+        </g>
+
+        <!-- Eyes -->
+        <g class="cat-eyes" class:hover={hovering}>
+          <ellipse cx="52" cy="82" rx="8" ry={blinkOpen ? 8.5 : 0.6} fill="url(#catl-eye-grad)" stroke="#0d0d0d" stroke-width="1.3"/>
+          <ellipse cx={52 + eyeShiftX * 0.7} cy={82 + eyeShiftY * 0.5} rx={hovering ? 2.5 : 1.2} ry={blinkOpen ? 6.5 : 0} fill="#0a0a0a"/>
+          <circle cx={50 + eyeShiftX * 0.4} cy={79 + eyeShiftY * 0.3} r={blinkOpen ? 1.5 : 0} fill="#ffffff" opacity="0.9"/>
+
+          <ellipse cx="78" cy="82" rx="8" ry={blinkOpen ? 8.5 : 0.6} fill="url(#catl-eye-grad)" stroke="#0d0d0d" stroke-width="1.3"/>
+          <ellipse cx={78 + eyeShiftX * 0.7} cy={82 + eyeShiftY * 0.5} rx={hovering ? 2.5 : 1.2} ry={blinkOpen ? 6.5 : 0} fill="#0a0a0a"/>
+          <circle cx={76 + eyeShiftX * 0.4} cy={79 + eyeShiftY * 0.3} r={blinkOpen ? 1.5 : 0} fill="#ffffff" opacity="0.9"/>
+        </g>
+
+        <!-- Nose with thin highlight -->
+        <path d="M 63 92 L 65 96 L 67 92 Z" fill="#FF6B6B" stroke="#ffffff" stroke-width="0.5" stroke-opacity="0.55"/>
+
+        <!-- Mouth — light grey so it actually reads against the dark muzzle -->
+        {#if displayState === "pasting"}
+          <path d="M 58 97 Q 65 103, 72 97" fill="none" stroke="#dcdcdc" stroke-width="1.1" stroke-linecap="round"/>
+        {:else}
+          <!-- Y-junction under the nose, then the smile curve, both in light grey -->
+          <path d="M 65 96 L 65 99" fill="none" stroke="#cfcfcf" stroke-width="0.9" stroke-linecap="round"/>
+          <path d="M 59 99 Q 65 103, 71 99" fill="none" stroke="#cfcfcf" stroke-width="0.9" stroke-linecap="round"/>
+        {/if}
+
+        <!-- Whiskers — lighter so they sit clearly against the dark head -->
+        <g class="cat-whiskers">
+          <line x1="25" y1="88" x2="47" y2="90" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="24" y1="94" x2="47" y2="93" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="26" y1="100" x2="47" y2="96" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="90" x2="105" y2="88" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="93" x2="106" y2="94" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="83" y1="96" x2="104" y2="100" stroke="#bdbdbd" stroke-width="0.7" stroke-linecap="round"/>
         </g>
       </g>
 
@@ -1783,21 +1936,26 @@
     50%      { transform: scaleX(1.06); }
   }
 
-  /* Cat bubble — dark charcoal with green accent */
-  .bubble[data-skin="cat"] {
+  /* Cat bubble — dark charcoal with green accent.
+     cat-lab shares the same bubble theme (visual change is on the body only). */
+  .bubble[data-skin="cat"],
+  .bubble[data-skin="cat-lab"] {
     background: #2B2B2B;
     color: #e0e0e0;
     border-color: rgba(127, 255, 0, 0.2);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
-  .bubble[data-skin="cat"]::after {
+  .bubble[data-skin="cat"]::after,
+  .bubble[data-skin="cat-lab"]::after {
     background: #2B2B2B;
     border-right-color: rgba(127, 255, 0, 0.2);
     border-bottom-color: rgba(127, 255, 0, 0.2);
   }
   /* Override EQ bar color for dark bubble */
-  .bubble[data-skin="cat"] .bubble-eq span { background: #7FFF00; }
-  .bubble[data-skin="cat"] .bubble-dots span { background: #999; }
+  .bubble[data-skin="cat"] .bubble-eq span,
+  .bubble[data-skin="cat-lab"] .bubble-eq span { background: #7FFF00; }
+  .bubble[data-skin="cat"] .bubble-dots span,
+  .bubble[data-skin="cat-lab"] .bubble-dots span { background: #999; }
 
   /* X dismiss button was removed — double-click Clippy to open the main
      window instead. Hide via tray → Toggle Clippy. */

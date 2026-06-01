@@ -41,6 +41,7 @@
     { id: "stylized",    label: "Paperclip", emoji: "📎" },
     { id: "real-clippy", label: "Clippy",    emoji: "📎" },
     { id: "cat",         label: "Desk Cat",  emoji: "🐱" },
+    { id: "cat-lab",     label: "Cat (lab)", emoji: "🧪" },
     { id: "off",         label: "Hide",      emoji: "○"  },
   ];
 

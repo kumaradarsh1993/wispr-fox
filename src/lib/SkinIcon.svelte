@@ -85,6 +85,44 @@
     <!-- Tail -->
     <path d="M 52 48 C 58 40, 60 52, 55 56" fill="none" stroke="#2B2B2B" stroke-width="3" stroke-linecap="round"/>
   </svg>
+{:else if skin === "cat-lab"}
+  <!-- Experimental cat — same silhouette as Desk Cat, with thin white edge
+       highlights and lighter accent tones so features read on dark surfaces. -->
+  <svg viewBox="0 0 70 70" width={size} height={size} aria-hidden="true">
+    <defs>
+      <linearGradient id="ski-cl-body" x1="0.3" y1="0" x2="0.7" y2="1">
+        <stop offset="0%" stop-color="#3D3D3D"/>
+        <stop offset="100%" stop-color="#222"/>
+      </linearGradient>
+    </defs>
+    <!-- Tail with edge highlight -->
+    <path d="M 52 48 C 58 40, 60 52, 55 56" fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" opacity="0.5"/>
+    <path d="M 52 48 C 58 40, 60 52, 55 56" fill="none" stroke="#2B2B2B" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- Body -->
+    <ellipse cx="35" cy="48" rx="18" ry="14" fill="url(#ski-cl-body)" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.55"/>
+    <!-- Belly highlight -->
+    <ellipse cx="32" cy="51" rx="10" ry="6" fill="#5a5a5a" opacity="0.6"/>
+    <!-- Head -->
+    <circle cx="35" cy="30" r="12" fill="url(#ski-cl-body)" stroke="#ffffff" stroke-width="0.9" stroke-opacity="0.55"/>
+    <!-- Ears -->
+    <path d="M 24 24 L 22 12 L 30 20 Z" fill="#2B2B2B" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.55"/>
+    <path d="M 25 21 L 24 15 L 29 20 Z" fill="#FF9999" opacity="0.7"/>
+    <path d="M 46 24 L 48 12 L 40 20 Z" fill="#2B2B2B" stroke="#ffffff" stroke-width="0.7" stroke-opacity="0.55"/>
+    <path d="M 45 21 L 46 15 L 41 20 Z" fill="#FF9999" opacity="0.7"/>
+    <!-- Eyes -->
+    <ellipse cx="30" cy="29" rx="3" ry="3.5" fill="#7FFF00" stroke="#1a1a1a" stroke-width="0.8"/>
+    <ellipse cx="30" cy="29.5" rx="1" ry="2" fill="#1a1a1a"/>
+    <ellipse cx="40" cy="29" rx="3" ry="3.5" fill="#7FFF00" stroke="#1a1a1a" stroke-width="0.8"/>
+    <ellipse cx="40" cy="29.5" rx="1" ry="2" fill="#1a1a1a"/>
+    <!-- Nose + mouth (lighter so visible) -->
+    <path d="M 34 33 L 35 35 L 36 33 Z" fill="#FF6B6B"/>
+    <path d="M 32 36 Q 35 38 38 36" fill="none" stroke="#d0d0d0" stroke-width="0.7" stroke-linecap="round"/>
+    <!-- Whiskers -->
+    <line x1="18" y1="32" x2="28" y2="33" stroke="#aaa" stroke-width="0.6"/>
+    <line x1="18" y1="36" x2="28" y2="35" stroke="#aaa" stroke-width="0.6"/>
+    <line x1="42" y1="33" x2="52" y2="32" stroke="#aaa" stroke-width="0.6"/>
+    <line x1="42" y1="35" x2="52" y2="36" stroke="#aaa" stroke-width="0.6"/>
+  </svg>
 {/if}
 
 <style>
