@@ -444,7 +444,6 @@ pub fn install(app: &AppHandle, flow: &Flow) {
     // Set initial idle items
     let ids = NSArray::from_retained_slice(&[
         NSString::from_str(ID_FOX),
-        NSString::from_str(ID_DUCK),
         NSString::from_str(ID_CAT),
         NSString::from_str(ID_CLIP),
         NSString::from_str(ID_LIGHT),
