@@ -982,64 +982,73 @@
       <!-- ─── Glasses — thinking ──────────────────────────────────────── -->
       {#if displayState === "thinking"}
         <g class="duck-glasses">
-          <circle cx="58" cy="62" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
-          <circle cx="80" cy="62" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
-          <path d="M 67 62 L 71 61" stroke="#4a4a4e" stroke-width="1.5"/>
-          <line x1="49" y1="62" x2="42" y2="58" stroke="#4a4a4e" stroke-width="1.5"/>
+          <circle cx="58" cy="56" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
+          <circle cx="82" cy="56" r="9" fill="none" stroke="#4a4a4e" stroke-width="1.8"/>
+          <path d="M 67 56 L 73 56" stroke="#4a4a4e" stroke-width="1.5"/>
           <!-- Lens glare -->
-          <path d="M 53 57 Q 55 55, 57 57" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
-          <path d="M 75 57 Q 77 55, 79 57" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
+          <path d="M 53 51 Q 55 49, 57 51" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
+          <path d="M 77 51 Q 79 49, 81 51" fill="none" stroke="#fff" stroke-width="0.8" opacity="0.6"/>
         </g>
       {/if}
 
-      <!-- ─── Body ────────────────────────────────────────────────────── -->
+      <!-- ─── Body (front-facing, symmetric) ──────────────────────────── -->
       <g class="duck-body-group">
         <!-- White halo for dark backgrounds -->
-        <ellipse cx="70" cy="115" rx="40" ry="34" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.9"/>
+        <ellipse cx="70" cy="118" rx="42" ry="36" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.9"/>
 
-        <!-- Main body -->
-        <ellipse cx="70" cy="115" rx="38" ry="32" fill="url(#duck-body-grad)" stroke="#D4A800" stroke-width="1.5"/>
+        <!-- Main body — pear shape (narrower at top, fuller at base) -->
+        <path
+          d="M 70 88
+             C 102 88, 112 112, 108 138
+             C 104 158, 36 158, 32 138
+             C 28 112, 38 88, 70 88 Z"
+          fill="url(#duck-body-grad)" stroke="#D4A800" stroke-width="1.5"
+        />
 
-        <!-- Belly highlight -->
-        <ellipse cx="68" cy="122" rx="22" ry="18" fill="#FFF3B0" opacity="0.45"/>
+        <!-- Belly highlight (centered, symmetric) -->
+        <ellipse cx="70" cy="132" rx="26" ry="14" fill="#FFF3B0" opacity="0.5"/>
 
-        <!-- Wing (left side) -->
-        <path d="M 36 108 C 28 115, 30 130, 42 132 C 48 128, 44 110, 36 108 Z" fill="#ECBF00" stroke="#D4A800" stroke-width="1" opacity="0.85"/>
+        <!-- Wings — symmetric, one each side -->
+        <path d="M 38 108 C 28 118, 30 138, 44 138 C 52 134, 48 110, 38 108 Z"
+              fill="#ECBF00" stroke="#D4A800" stroke-width="1" opacity="0.9"/>
+        <path d="M 102 108 C 112 118, 110 138, 96 138 C 88 134, 92 110, 102 108 Z"
+              fill="#ECBF00" stroke="#D4A800" stroke-width="1" opacity="0.9"/>
 
-        <!-- Tail feathers -->
-        <path d="M 104 105 C 114 95, 118 102, 112 108" fill="#ECBF00" stroke="#D4A800" stroke-width="1"/>
-        <path d="M 106 108 C 116 100, 120 108, 114 112" fill="#FFD700" stroke="#D4A800" stroke-width="0.8"/>
+        <!-- Head — centered, oval (wider than tall = duck-like) -->
+        <ellipse cx="70" cy="58" rx="30" ry="28" fill="url(#duck-head-grad)" stroke="#D4A800" stroke-width="1.2"/>
 
-        <!-- Neck -->
-        <path d="M 55 90 C 55 100, 58 105, 68 105" fill="url(#duck-head-grad)" stroke="none"/>
-        <path d="M 85 90 C 85 100, 82 105, 72 105" fill="url(#duck-head-grad)" stroke="none"/>
+        <!-- Head highlight (subtle, centered top) -->
+        <ellipse cx="62" cy="46" rx="11" ry="8" fill="#FFF8D0" opacity="0.4"/>
 
-        <!-- Head -->
-        <circle cx="70" cy="68" r="26" fill="url(#duck-head-grad)" stroke="#D4A800" stroke-width="1.2"/>
-
-        <!-- Head highlight -->
-        <ellipse cx="62" cy="56" rx="10" ry="8" fill="#FFF8D0" opacity="0.4"/>
-
-        <!-- Beak -->
+        <!-- Beak — CENTERED below eyes, front-facing flat oval -->
         <g class="duck-beak">
-          <path d="M 90 68 C 100 62, 108 66, 106 70 C 108 74, 100 78, 90 72 Z" fill="url(#duck-beak-grad)" stroke="#CC7000" stroke-width="1"/>
-          <path d="M 90 70 L 106 70" stroke="#CC7000" stroke-width="0.8" opacity="0.7"/>
+          <!-- Upper bill -->
+          <path d="M 54 72 Q 70 64, 86 72 Q 70 78, 54 72 Z"
+                fill="url(#duck-beak-grad)" stroke="#CC7000" stroke-width="1"/>
+          <!-- Lower bill -->
+          <path d="M 56 74 Q 70 78, 84 74 Q 70 82, 56 74 Z"
+                fill="#E07000" stroke="#CC7000" stroke-width="0.9" opacity="0.95"/>
+          <!-- Bill seam -->
+          <line x1="56" y1="73" x2="84" y2="73" stroke="#CC7000" stroke-width="0.6" opacity="0.7"/>
+          <!-- Nostrils -->
+          <circle cx="65" cy="69" r="0.9" fill="#8B4513"/>
+          <circle cx="75" cy="69" r="0.9" fill="#8B4513"/>
         </g>
 
-        <!-- Eyes -->
+        <!-- Eyes — flanking the beak, perfectly symmetric -->
         <g class="duck-eyes" class:hover={hovering}>
-          <ellipse cx="60" cy="62" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
-          <circle cx={60 + eyeShiftX * 0.8} cy={62 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
-          <circle cx={58.5 + eyeShiftX * 0.5} cy={60 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
+          <ellipse cx="58" cy="56" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
+          <circle cx={58 + eyeShiftX * 0.8} cy={56 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
+          <circle cx={56.5 + eyeShiftX * 0.5} cy={54 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
 
-          <ellipse cx="80" cy="62" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
-          <circle cx={80 + eyeShiftX * 0.8} cy={62 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
-          <circle cx={78.5 + eyeShiftX * 0.5} cy={60 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
+          <ellipse cx="82" cy="56" rx="6" ry={blinkOpen ? 7 : 0.5} fill="#ffffff" stroke="#1d1d1f" stroke-width="1.5"/>
+          <circle cx={82 + eyeShiftX * 0.8} cy={56 + eyeShiftY * 0.8} r={blinkOpen ? 3.5 : 0} fill="#1d1d1f"/>
+          <circle cx={80.5 + eyeShiftX * 0.5} cy={54 + eyeShiftY * 0.5} r={blinkOpen ? 1 : 0} fill="#ffffff" opacity="0.9"/>
         </g>
 
-        <!-- Cheek blush -->
-        <ellipse cx="52" cy="72" rx="5" ry="3" fill="#FFB6C1" opacity="0.35"/>
-        <ellipse cx="88" cy="72" rx="5" ry="3" fill="#FFB6C1" opacity="0.35"/>
+        <!-- Cheek blush (symmetric, both sides) -->
+        <ellipse cx="44" cy="64" rx="5" ry="3" fill="#FFB6C1" opacity="0.4"/>
+        <ellipse cx="96" cy="64" rx="5" ry="3" fill="#FFB6C1" opacity="0.4"/>
       </g>
 
       <!-- ─── Phew drop ──────────────────────────────────────────────── -->
@@ -1053,9 +1062,9 @@
 
   {:else if skin === "cat"}
     <!-- ═══════════════════════════════════════════════════════════════════
-         DESK CAT — sleepy keyboard cat.
-         Dark charcoal cat with green eyes. States:
-           idle:      curled up, slow breathing, tail twitches
+         ORANGE TABBY CAT — classic ginger with white belly + stripes.
+         States:
+           idle:      sleek pose, slow breathing, tail twitches
            listening: ears perk, eyes wide, sits up alert
            thinking:  paw to chin, eyes up, tail → question mark
            writing:   rapid-tap paws (typing), tail swishes
@@ -1071,8 +1080,12 @@
     >
       <defs>
         <linearGradient id="cat-body-grad" x1="0.3" y1="0" x2="0.7" y2="1">
-          <stop offset="0%" stop-color="#3D3D3D"/>
-          <stop offset="100%" stop-color="#222222"/>
+          <stop offset="0%" stop-color="#FF9F4A"/>
+          <stop offset="100%" stop-color="#D9651A"/>
+        </linearGradient>
+        <linearGradient id="cat-head-grad" x1="0.3" y1="0" x2="0.7" y2="1">
+          <stop offset="0%" stop-color="#FFB066"/>
+          <stop offset="100%" stop-color="#E07020"/>
         </linearGradient>
         <radialGradient id="cat-eye-grad" cx="0.4" cy="0.4" r="0.6">
           <stop offset="0%" stop-color="#AAFF44"/>
@@ -1084,45 +1097,60 @@
       <g class="cat-tail">
         {#if displayState === "thinking"}
           <!-- Question-mark tail -->
-          <path d="M 108 130 C 125 120, 130 100, 118 90 C 108 82, 100 90, 110 95" fill="none" stroke="#2B2B2B" stroke-width="5" stroke-linecap="round"/>
-          <circle cx="110" cy="100" r="2.5" fill="#2B2B2B"/>
+          <path d="M 108 130 C 125 120, 130 100, 118 90 C 108 82, 100 90, 110 95" fill="none" stroke="#D9651A" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="110" cy="100" r="2.5" fill="#D9651A"/>
+          <!-- Tail stripes -->
+          <path d="M 115 122 L 122 119" stroke="#A04510" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
+          <path d="M 122 110 L 128 108" stroke="#A04510" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
         {:else}
-          <path d="M 108 130 C 120 115, 125 100, 115 88 C 108 80, 98 88, 108 95" fill="none" stroke="#2B2B2B" stroke-width="5" stroke-linecap="round"/>
+          <path d="M 108 130 C 120 115, 125 100, 115 88 C 108 80, 98 88, 108 95" fill="none" stroke="#D9651A" stroke-width="5" stroke-linecap="round"/>
+          <!-- Tail stripes -->
+          <path d="M 114 122 L 122 120" stroke="#A04510" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
+          <path d="M 120 108 L 126 106" stroke="#A04510" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
         {/if}
       </g>
 
       <!-- ─── Body ────────────────────────────────────────────────────── -->
       <g class="cat-body-group">
-        <!-- White halo for dark backgrounds -->
-        <ellipse cx="65" cy="128" rx="48" ry="28" fill="none" stroke="#ffffff" stroke-width="7" opacity="0.85"/>
+        <!-- Soft halo for dark backgrounds (lighter orange wash) -->
+        <ellipse cx="65" cy="130" rx="46" ry="26" fill="none" stroke="#FFF0D8" stroke-width="6" opacity="0.55"/>
 
-        <!-- Main body — rounded lozenge, compact when idle -->
-        <ellipse cx="65" cy="128" rx="46" ry="26" fill="url(#cat-body-grad)" stroke="#1a1a1a" stroke-width="1.2"/>
+        <!-- Main body — orange tabby, slightly longer/leaner than before -->
+        <ellipse cx="65" cy="130" rx="44" ry="24" fill="url(#cat-body-grad)" stroke="#A04510" stroke-width="1.2"/>
 
-        <!-- Belly shimmer (subtle lighter patch) -->
-        <ellipse cx="60" cy="132" rx="20" ry="12" fill="#444444" opacity="0.3"/>
+        <!-- White belly patch (classic orange-tabby chest + tummy) -->
+        <ellipse cx="58" cy="138" rx="22" ry="13" fill="#FFFAF0" opacity="0.95"/>
+        <path d="M 50 122 Q 58 118, 66 122 Q 72 130, 66 142 Q 58 146, 50 142 Q 44 132, 50 122 Z" fill="#FFFAF0" opacity="0.85"/>
 
-        <!-- Front paws -->
+        <!-- Tabby stripes (darker orange, classic mackerel pattern) -->
+        <g class="cat-stripes" opacity="0.7">
+          <path d="M 78 116 Q 85 122, 88 130" stroke="#A04510" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M 92 118 Q 99 124, 102 134" stroke="#A04510" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M 100 128 Q 105 134, 106 142" stroke="#A04510" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+          <path d="M 28 120 Q 22 128, 24 138" stroke="#A04510" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.5"/>
+        </g>
+
+        <!-- Front paws (white, like classic orange-and-white tabby socks) -->
         <g class="cat-paws">
           {#if displayState === "writing"}
             <!-- Typing paws — alternating left/right tap -->
             <g class="paw-left-tap">
-              <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
-              <path d="M 36 146 L 36 143 M 39 145 L 39 142 M 42 145 L 42 142" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+              <ellipse cx="42" cy="148" rx="8" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
+              <path d="M 36 146 L 36 143 M 39 145 L 39 142 M 42 145 L 42 142" stroke="#A04510" stroke-width="0.8" stroke-linecap="round"/>
             </g>
             <g class="paw-right-tap">
-              <ellipse cx="82" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
-              <path d="M 79 145 L 79 142 M 82 145 L 82 142 M 85 146 L 85 143" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+              <ellipse cx="82" cy="148" rx="8" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
+              <path d="M 79 145 L 79 142 M 82 145 L 82 142 M 85 146 L 85 143" stroke="#A04510" stroke-width="0.8" stroke-linecap="round"/>
             </g>
           {:else if displayState === "thinking"}
             <!-- Paw to chin -->
-            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
             <g class="paw-chin">
-              <ellipse cx="78" cy="108" rx="6" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+              <ellipse cx="78" cy="108" rx="6" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
             </g>
           {:else}
-            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
-            <ellipse cx="82" cy="148" rx="8" ry="5" fill="#333333" stroke="#1a1a1a" stroke-width="0.8"/>
+            <ellipse cx="42" cy="148" rx="8" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
+            <ellipse cx="82" cy="148" rx="8" ry="5" fill="#FFFAF0" stroke="#A04510" stroke-width="0.8"/>
           {/if}
         </g>
       </g>
@@ -1130,22 +1158,36 @@
       <!-- ─── Head ────────────────────────────────────────────────────── -->
       <g class="cat-head-group">
         <!-- Neck -->
-        <rect x="50" y="95" width="30" height="20" rx="8" fill="#2B2B2B"/>
+        <rect x="50" y="95" width="30" height="20" rx="8" fill="#E07020"/>
 
-        <!-- Head circle -->
-        <circle cx="65" cy="85" r="28" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
+        <!-- Head circle (orange tabby) -->
+        <circle cx="65" cy="85" r="28" fill="url(#cat-head-grad)" stroke="#A04510" stroke-width="1"/>
 
         <!-- Head highlight -->
-        <ellipse cx="58" cy="76" rx="12" ry="8" fill="#363636" opacity="0.5"/>
+        <ellipse cx="58" cy="76" rx="12" ry="8" fill="#FFD9A0" opacity="0.4"/>
+
+        <!-- Tabby forehead stripes (the classic ginger "M") -->
+        <g class="cat-forehead-stripes" opacity="0.75">
+          <path d="M 56 68 L 60 76" stroke="#A04510" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M 65 66 L 65 74" stroke="#A04510" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M 74 68 L 70 76" stroke="#A04510" stroke-width="1.8" stroke-linecap="round"/>
+        </g>
+
+        <!-- Side cheek stripes -->
+        <path d="M 40 84 L 47 86" stroke="#A04510" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+        <path d="M 83 86 L 90 84" stroke="#A04510" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+
+        <!-- White muzzle / chin patch -->
+        <ellipse cx="65" cy="98" rx="13" ry="8" fill="#FFFAF0" opacity="0.95"/>
 
         <!-- Ears -->
         <g class="cat-ears">
           <!-- Left ear -->
-          <path d="M 40 72 L 32 42 L 50 64 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
-          <path d="M 42 68 L 36 50 L 48 64 Z" fill="#FF9999" opacity="0.5"/>
+          <path d="M 40 72 L 32 42 L 50 64 Z" fill="url(#cat-head-grad)" stroke="#A04510" stroke-width="1"/>
+          <path d="M 42 68 L 36 50 L 48 64 Z" fill="#FF9999" opacity="0.6"/>
           <!-- Right ear -->
-          <path d="M 90 72 L 98 42 L 80 64 Z" fill="#2B2B2B" stroke="#1a1a1a" stroke-width="1"/>
-          <path d="M 88 68 L 94 50 L 82 64 Z" fill="#FF9999" opacity="0.5"/>
+          <path d="M 90 72 L 98 42 L 80 64 Z" fill="url(#cat-head-grad)" stroke="#A04510" stroke-width="1"/>
+          <path d="M 88 68 L 94 50 L 82 64 Z" fill="#FF9999" opacity="0.6"/>
         </g>
 
         <!-- Eyes -->
@@ -1163,24 +1205,24 @@
           <circle cx={76 + eyeShiftX * 0.4} cy={79 + eyeShiftY * 0.3} r={blinkOpen ? 1.5 : 0} fill="#ffffff" opacity="0.85"/>
         </g>
 
-        <!-- Nose -->
-        <path d="M 63 92 L 65 96 L 67 92 Z" fill="#FF6B6B" stroke="#cc4444" stroke-width="0.5"/>
+        <!-- Nose (pink, on white muzzle) -->
+        <path d="M 62 92 L 65 96 L 68 92 Z" fill="#FF6B6B" stroke="#cc4444" stroke-width="0.5"/>
 
-        <!-- Mouth -->
-        <path d="M 60 97 Q 65 100, 70 97" fill="none" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+        <!-- Mouth (subtle on the white muzzle) -->
+        <path d="M 60 98 Q 65 101, 70 98" fill="none" stroke="#A04510" stroke-width="0.9" stroke-linecap="round"/>
         {#if displayState === "pasting"}
           <!-- Smug grin -->
-          <path d="M 58 97 Q 65 103, 72 97" fill="none" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+          <path d="M 58 98 Q 65 104, 72 98" fill="none" stroke="#A04510" stroke-width="1.3" stroke-linecap="round"/>
         {/if}
 
-        <!-- Whiskers -->
+        <!-- Whiskers (light cream, contrast against orange) -->
         <g class="cat-whiskers">
-          <line x1="25" y1="88" x2="47" y2="90" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
-          <line x1="24" y1="94" x2="47" y2="93" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
-          <line x1="26" y1="100" x2="47" y2="96" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
-          <line x1="83" y1="90" x2="105" y2="88" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
-          <line x1="83" y1="93" x2="106" y2="94" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
-          <line x1="83" y1="96" x2="104" y2="100" stroke="#666" stroke-width="0.7" stroke-linecap="round"/>
+          <line x1="25" y1="88" x2="47" y2="90" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
+          <line x1="24" y1="94" x2="47" y2="93" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
+          <line x1="26" y1="100" x2="47" y2="96" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
+          <line x1="83" y1="90" x2="105" y2="88" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
+          <line x1="83" y1="93" x2="106" y2="94" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
+          <line x1="83" y1="96" x2="104" y2="100" stroke="#FFF8E0" stroke-width="0.8" stroke-linecap="round" opacity="0.9"/>
         </g>
       </g>
 
@@ -2009,21 +2051,24 @@
     50%      { transform: scaleX(1.06); }
   }
 
-  /* Cat bubble — dark charcoal with green accent */
+  /* Orange-cat bubble — warm dark brown with orange accent.
+     The cat is intentionally usable on dark backgrounds, so the bubble
+     stays dark for contrast — but the accents pick up the orange fur
+     and the green eyes for cohesion. */
   .bubble[data-skin="cat"] {
-    background: #2B2B2B;
-    color: #e0e0e0;
-    border-color: rgba(127, 255, 0, 0.2);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    background: #2A1A10;
+    color: #FFE8D0;
+    border-color: rgba(255, 159, 74, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   }
   .bubble[data-skin="cat"]::after {
-    background: #2B2B2B;
-    border-right-color: rgba(127, 255, 0, 0.2);
-    border-bottom-color: rgba(127, 255, 0, 0.2);
+    background: #2A1A10;
+    border-right-color: rgba(255, 159, 74, 0.3);
+    border-bottom-color: rgba(255, 159, 74, 0.3);
   }
-  /* Override EQ bar color for dark bubble */
-  .bubble[data-skin="cat"] .bubble-eq span { background: #7FFF00; }
-  .bubble[data-skin="cat"] .bubble-dots span { background: #999; }
+  /* Override EQ bar / dots for orange bubble — orange fur, green eyes vibe */
+  .bubble[data-skin="cat"] .bubble-eq span { background: #FF9F4A; }
+  .bubble[data-skin="cat"] .bubble-dots span { background: #C08060; }
 
   /* X dismiss button was removed — double-click Clippy to open the main
      window instead. Hide via tray → Toggle Clippy. */

@@ -56,7 +56,7 @@
     { id: "stylized",    label: "Paperclip" },
     { id: "real-clippy", label: "Clippy" },
     { id: "duck",        label: "Duck" },
-    { id: "cat",         label: "Cat" },
+    { id: "cat",         label: "Orange Cat" },
   ];
 
   async function pickSkin(s: Skin) {

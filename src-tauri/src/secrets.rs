@@ -142,28 +142,46 @@ fn file_has(key: SecretKey) -> bool {
 pub fn set(key: SecretKey, value: &str) -> Result<()> {
     // Try the secure path first. Only if that genuinely fails do we accept
     // the plaintext-on-disk cost.
-    match keyring_set(key, value) {
-        Ok(()) => {
-            // Belt and braces: drop any stale plaintext copy from a previous
-            // version that always wrote the file.
-            if file_has(key) {
-                if let Err(e) = file_delete(key) {
-                    tracing::warn!(
-                        "couldn't clean stale plaintext entry for {:?}: {e:#}",
-                        key
-                    );
-                }
-            }
-            Ok(())
-        }
+    //
+    // CRITICAL: we VERIFY the keyring write actually persisted by reading it
+    // back. Some platforms accept `set_password()` and return Ok even when
+    // the credential doesn't survive — Windows Credential Manager corruption,
+    // sandboxed macOS apps without the keychain-access entitlement, headless
+    // Linux without a running Secret Service. Without verify-readback, the
+    // file fallback gets deleted and the next `get()` returns None, so the
+    // UI reports "no key saved" even though the user just clicked Save.
+    // Reported by a user on v1.1.0-nightly.2 — file fallback was the only
+    // thing keeping things working pre-security-pass.
+    let keyring_ok = match keyring_set(key, value) {
+        Ok(()) => keyring_get(key).as_deref() == Some(value),
         Err(e) => {
             tracing::warn!(
                 "keyring write failed for {:?} ({e:#}); falling back to file storage",
                 key
             );
-            file_set(key, value)
-                .with_context(|| format!("fallback file write failed for {:?}", key))
+            false
         }
+    };
+
+    if keyring_ok {
+        // Belt and braces: drop any stale plaintext copy from a previous
+        // version that always wrote the file.
+        if file_has(key) {
+            if let Err(e) = file_delete(key) {
+                tracing::warn!("couldn't clean stale plaintext entry for {:?}: {e:#}", key);
+            }
+        }
+        Ok(())
+    } else {
+        // Either keyring write errored, OR it returned Ok but the readback
+        // didn't return our value — credential didn't persist. Save to file
+        // so the user's key isn't silently dropped.
+        tracing::warn!(
+            "keyring write didn't persist for {:?} — falling back to file storage",
+            key
+        );
+        file_set(key, value)
+            .with_context(|| format!("fallback file write failed for {:?}", key))
     }
 }
 
