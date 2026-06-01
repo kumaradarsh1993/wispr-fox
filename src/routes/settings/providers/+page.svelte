@@ -4,11 +4,20 @@
   // in Settings; deliberately combines provider+model since you can't
   // meaningfully pick a model without picking a provider first.
   import { onMount } from "svelte";
-  import { api, type SecretCheck } from "$lib/api";
+  import { api, type SecretCheck, type SecretsDiagnostic } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
 
   let secretCheck = $state<SecretCheck>({ stt: false, llm: false, gemini: false });
+  let diag = $state<SecretsDiagnostic | null>(null);
+
+  async function refreshDiagnostic() {
+    try {
+      diag = await api.secretsDiagnostic();
+    } catch (e) {
+      console.warn("secrets diagnostic failed", e);
+    }
+  }
   let groqStt = $state("");
   let groqLlm = $state("");
   let geminiKey = $state("");
@@ -61,6 +70,7 @@
       await api.saveSecret("groq_stt", groqStt.trim());
       groqStt = "";
       secretCheck = await api.checkSecrets();
+      await refreshDiagnostic();
       flash("STT key saved");
     } finally {
       saving = false;
@@ -74,6 +84,7 @@
       await api.saveSecret("groq_llm", groqLlm.trim());
       groqLlm = "";
       secretCheck = await api.checkSecrets();
+      await refreshDiagnostic();
       flash("LLM key saved");
     } finally {
       saving = false;
@@ -87,6 +98,7 @@
       await api.saveSecret("gemini_llm", geminiKey.trim());
       geminiKey = "";
       secretCheck = await api.checkSecrets();
+      await refreshDiagnostic();
       flash("Gemini key saved");
     } finally {
       saving = false;
@@ -142,7 +154,19 @@
 
   onMount(async () => {
     secretCheck = await api.checkSecrets();
+    await refreshDiagnostic();
   });
+
+  function locationLabel(loc: "keyring" | "file" | "none"): string {
+    return loc === "keyring"
+      ? "OS keyring (secure)"
+      : loc === "file"
+      ? "File fallback (keyring unavailable)"
+      : "Not saved";
+  }
+  function locationClass(loc: "keyring" | "file" | "none"): string {
+    return loc === "keyring" ? "ok" : loc === "file" ? "warn" : "neutral";
+  }
 </script>
 
 <section>
@@ -357,6 +381,51 @@
     <strong>Settings → Modes</strong>. Hotkey bindings live in
     <strong>Settings → Dictation</strong>.
   </p>
+
+  <!-- ── Storage diagnostic ───────────────────────────────────────────── -->
+  {#if diag}
+    <div class="diag-card">
+      <div class="diag-head">
+        <h3>Key storage status</h3>
+        <button class="btn-link" onclick={refreshDiagnostic}>Refresh</button>
+      </div>
+      <p class="lede">
+        Where each saved key is currently stored. Keyring is preferred (encrypted by
+        the OS — Windows Credential Manager, macOS Keychain). If the keyring isn't
+        reliable on your machine, wispr-fox automatically falls back to a file at
+        the path below — your keys still work, just stored in plaintext under your
+        user profile.
+      </p>
+      <ul class="diag-list">
+        <li>
+          <span class="diag-label">Groq STT</span>
+          <span class="diag-loc {locationClass(diag.stt)}">{locationLabel(diag.stt)}</span>
+        </li>
+        <li>
+          <span class="diag-label">Groq LLM</span>
+          <span class="diag-loc {locationClass(diag.llm)}">{locationLabel(diag.llm)}</span>
+        </li>
+        <li>
+          <span class="diag-label">Gemini</span>
+          <span class="diag-loc {locationClass(diag.gemini)}">{locationLabel(diag.gemini)}</span>
+        </li>
+      </ul>
+      {#if !diag.keyring_works && (diag.stt !== "none" || diag.llm !== "none" || diag.gemini !== "none")}
+        <p class="diag-warn">
+          ⚠️ The OS keyring isn't accepting writes on this machine — your keys are
+          stored in the file fallback. They still work; it's just slightly less
+          secure than the keyring. Common causes: a corrupted Windows Credential
+          Manager entry (try deleting any old <code>wispr-fox</code> entries from
+          <code>Control Panel → Credential Manager</code> and saving again), or a
+          macOS app without keychain entitlement.
+        </p>
+      {/if}
+      <p class="diag-path">
+        File fallback location: <code>{diag.fallback_path}</code>
+        {diag.fallback_exists ? "(exists)" : "(empty)"}
+      </p>
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -370,5 +439,104 @@
     line-height: 1.5;
     margin: 24px 0 0;
     max-width: 720px;
+  }
+
+  .diag-card {
+    margin: 28px 0 0;
+    padding: 16px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 720px;
+  }
+  .diag-card h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .diag-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--accent, #ec7c34);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
+  .btn-link:hover {
+    text-decoration: underline;
+  }
+  .diag-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 8px;
+    display: grid;
+    gap: 4px;
+  }
+  .diag-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 13px;
+  }
+  .diag-list li:last-child {
+    border-bottom: none;
+  }
+  .diag-label {
+    font-weight: 500;
+    color: var(--text);
+  }
+  .diag-loc {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-weight: 500;
+  }
+  .diag-loc.ok {
+    background: rgba(76, 175, 80, 0.15);
+    color: #2e7d32;
+  }
+  .diag-loc.warn {
+    background: rgba(255, 152, 0, 0.18);
+    color: #b06800;
+  }
+  .diag-loc.neutral {
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+  }
+  .diag-warn {
+    margin: 10px 0 6px;
+    padding: 10px 12px;
+    background: rgba(255, 152, 0, 0.1);
+    border-left: 3px solid #ff9800;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .diag-warn code {
+    background: rgba(0, 0, 0, 0.07);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .diag-path {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    word-break: break-all;
+  }
+  .diag-path code {
+    background: var(--bg-subtle);
+    padding: 1px 4px;
+    border-radius: 3px;
   }
 </style>

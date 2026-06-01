@@ -186,28 +186,23 @@ pub fn set(key: SecretKey, value: &str) -> Result<()> {
 }
 
 pub fn get(key: SecretKey) -> Result<Option<String>> {
-    // Secure path first.
+    // Pure read — keyring first, then file fallback. NO side effects.
+    //
+    // The previous implementation did "opportunistic migration" — if the
+    // value was found in the file, it would try to write it to the keyring
+    // and delete the file. That deletion trusted `keyring_set`'s Ok return,
+    // which (per the bug fixed in `set` above) doesn't actually prove the
+    // credential persisted. On machines where the keyring silently fails,
+    // the file got deleted after the first read and the next read returned
+    // None — exactly matching the reported "save works, demo transcribes
+    // fine, real transcription says key not found" pattern in nightly.2/.3.
+    //
+    // Now: reads are pure. Migration only happens on explicit `set()` calls,
+    // which use verify-readback to decide whether the file is still needed.
     if let Some(v) = keyring_get(key) {
-        // If a stale plaintext copy survives from pre-fix installs, drop it.
-        if file_has(key) {
-            if let Err(e) = file_delete(key) {
-                tracing::warn!("couldn't drop stale plaintext for {:?}: {e:#}", key);
-            }
-        }
         return Ok(Some(v));
     }
-    // Fallback only. Opportunistically migrate so future reads hit keyring.
-    if let Some(v) = file_get(key) {
-        if keyring_set(key, &v).is_ok() {
-            if let Err(e) = file_delete(key) {
-                tracing::warn!("migrated {:?} to keyring; couldn't drop file copy: {e:#}", key);
-            } else {
-                tracing::info!("migrated {:?} from plaintext fallback into keyring", key);
-            }
-        }
-        return Ok(Some(v));
-    }
-    Ok(None)
+    Ok(file_get(key))
 }
 
 pub fn delete(key: SecretKey) -> Result<()> {
@@ -219,4 +214,63 @@ pub fn delete(key: SecretKey) -> Result<()> {
 
 pub fn has(key: SecretKey) -> bool {
     matches!(get(key), Ok(Some(_)))
+}
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+
+/// Where a given secret is currently stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretLocation {
+    /// Stored in the OS keyring (secure path).
+    Keyring,
+    /// Stored in the file fallback (keyring write didn't persist).
+    File,
+    /// Not stored anywhere.
+    None,
+}
+
+/// Per-secret diagnostic info — where the value lives, used by the
+/// Settings page "secret storage status" panel to help users diagnose
+/// Windows Credential Manager / macOS Keychain reliability issues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretsDiagnostic {
+    pub stt: SecretLocation,
+    pub llm: SecretLocation,
+    pub gemini: SecretLocation,
+    /// Whether the keyring backend appears to work on this machine at all.
+    /// True if at least one secret could be read from the keyring.
+    pub keyring_works: bool,
+    /// Absolute path to the file fallback (whether or not it currently exists).
+    pub fallback_path: String,
+    /// True if the file fallback actually exists on disk right now.
+    pub fallback_exists: bool,
+}
+
+fn location_of(key: SecretKey) -> SecretLocation {
+    if keyring_get(key).is_some() {
+        SecretLocation::Keyring
+    } else if file_get(key).is_some() {
+        SecretLocation::File
+    } else {
+        SecretLocation::None
+    }
+}
+
+pub fn diagnostic() -> SecretsDiagnostic {
+    let stt = location_of(SecretKey::GroqStt);
+    let llm = location_of(SecretKey::GroqLlm);
+    let gemini = location_of(SecretKey::GeminiLlm);
+    let keyring_works = matches!(stt, SecretLocation::Keyring)
+        || matches!(llm, SecretLocation::Keyring)
+        || matches!(gemini, SecretLocation::Keyring);
+    let path = fallback_path();
+    SecretsDiagnostic {
+        stt,
+        llm,
+        gemini,
+        keyring_works,
+        fallback_exists: path.exists(),
+        fallback_path: path.display().to_string(),
+    }
 }

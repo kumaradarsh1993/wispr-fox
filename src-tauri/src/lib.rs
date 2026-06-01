@@ -196,6 +196,7 @@ pub fn run() {
             commands::accessibility_ok,
             commands::open_accessibility_settings,
             commands::check_secrets,
+            commands::secrets_diagnostic,
             commands::save_secret,
             commands::delete_secret,
             commands::get_settings,

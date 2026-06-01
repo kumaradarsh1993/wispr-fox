@@ -113,6 +113,14 @@ pub fn check_secrets() -> SecretCheck {
     }
 }
 
+/// Where each saved secret currently lives (keyring / file / none) plus
+/// whether the keyring backend works on this machine. Used by the Settings
+/// page's "Storage status" panel and during support diagnostics.
+#[tauri::command]
+pub fn secrets_diagnostic() -> secrets::SecretsDiagnostic {
+    secrets::diagnostic()
+}
+
 fn parse_secret_key(name: &str) -> Result<SecretKey, String> {
     match name {
         "groq_stt" => Ok(SecretKey::GroqStt),

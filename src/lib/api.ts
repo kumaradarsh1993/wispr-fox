@@ -84,6 +84,17 @@ export interface SecretCheck {
   gemini?: boolean;
 }
 
+export type SecretLocation = "keyring" | "file" | "none";
+
+export interface SecretsDiagnostic {
+  stt: SecretLocation;
+  llm: SecretLocation;
+  gemini: SecretLocation;
+  keyring_works: boolean;
+  fallback_path: string;
+  fallback_exists: boolean;
+}
+
 export interface InputDeviceInfo {
   name: string;
   is_default: boolean;
@@ -118,6 +129,7 @@ export interface DefaultPrompts {
 export const api = {
   ping: () => invoke<string>("ping"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
+  secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
   saveSecret: (key: SecretKeyName, value: string) =>
     invoke<void>("save_secret", { key, value }),
   deleteSecret: (key: SecretKeyName) => invoke<void>("delete_secret", { key }),
