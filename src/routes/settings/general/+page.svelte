@@ -112,8 +112,44 @@
     }
   }
 
+  // ── Update check ───────────────────────────────────────────────────────
+  // No auto-updater (separate Tauri plugin, separate trust decision). This
+  // is a button-driven check that hits the GitHub releases API from the
+  // Rust side (webview CSP blocks the request) and reports back whether a
+  // newer build is available. The "Open release page" link routes to the
+  // release on GitHub where the user picks the right installer.
+  import type { UpdateInfo } from "$lib/api";
+  let updateInfo = $state<UpdateInfo | null>(null);
+  let updateChecking = $state(false);
+  let updateError = $state<string | null>(null);
+
+  async function checkUpdates() {
+    updateChecking = true;
+    updateError = null;
+    try {
+      updateInfo = await api.checkForUpdates();
+    } catch (e) {
+      updateError = String(e);
+    } finally {
+      updateChecking = false;
+    }
+  }
+
+  async function openReleasePage(url: string) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+    } catch (e) {
+      console.warn("openUrl failed", e);
+    }
+  }
+
   onMount(() => {
     refreshSounds();
+    // Auto-check on mount but silently — no toast, no spinner. The button
+    // gives an explicit re-check path. If this fails (offline, GitHub down),
+    // we show nothing rather than nagging.
+    checkUpdates().catch(() => {});
   });
 </script>
 
@@ -201,9 +237,48 @@
     <div class="folder-hint-actions">
       <button class="btn-secondary small" onclick={refreshSounds}>Refresh</button>
       <button class="btn-secondary small" onclick={async () => {
-        const { openPath } = await import("@tauri-apps/plugin-opener");
-        await openPath(soundsDir);
+        try {
+          await api.revealFolder("sounds");
+        } catch (e) {
+          flash(`Couldn't open: ${e}`);
+        }
       }}>Open folder</button>
+    </div>
+  </div>
+
+  <h3>Updates</h3>
+  <p class="lede">Manual check for now — no automatic background updater. Click to see if a newer build (stable or nightly) is available on GitHub.</p>
+
+  <div class="update-card">
+    <div class="update-status">
+      {#if updateChecking}
+        <span class="update-line">Checking GitHub…</span>
+      {:else if updateError}
+        <span class="update-line update-err">⚠ {updateError}</span>
+      {:else if updateInfo}
+        {#if updateInfo.newer}
+          <span class="update-line update-new">
+            ✨ {updateInfo.prerelease ? "Nightly" : "Update"} available — <strong>{updateInfo.latest}</strong>
+            <span class="update-current">(you're on v{updateInfo.current})</span>
+          </span>
+        {:else}
+          <span class="update-line update-current-only">
+            You're on the latest — v{updateInfo.current}
+          </span>
+        {/if}
+      {:else}
+        <span class="update-line">—</span>
+      {/if}
+    </div>
+    <div class="update-actions">
+      <button class="btn-secondary small" onclick={checkUpdates} disabled={updateChecking}>
+        {updateChecking ? "Checking…" : "Check for updates"}
+      </button>
+      {#if updateInfo}
+        <button class="btn-secondary small" onclick={() => openReleasePage(updateInfo!.html_url)}>
+          Open release page
+        </button>
+      {/if}
     </div>
   </div>
 </section>

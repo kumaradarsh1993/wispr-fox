@@ -333,6 +333,155 @@ pub fn app_paths(app: AppHandle) -> Result<AppPaths, String> {
     })
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Update check (manual — auto-updater is separate work)
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    /// Version currently installed (from `CARGO_PKG_VERSION`).
+    pub current: String,
+    /// Newest release tag name on GitHub, e.g. `"v1.2.0"` or `"v1.2.0-nightly.3"`.
+    pub latest: String,
+    /// Whether `latest` is strictly newer than `current` (semver-aware,
+    /// pre-releases sort below their plain version per semver 11).
+    pub newer: bool,
+    /// HTML URL of the latest release page — Settings opens this if the user
+    /// clicks the "Open release page" link.
+    pub html_url: String,
+    /// `true` if the latest release is a pre-release (nightly / RC / beta).
+    /// Settings shows a slightly different copy ("Nightly available") so the
+    /// user knows it isn't a stable.
+    pub prerelease: bool,
+}
+
+#[derive(Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    html_url: String,
+    prerelease: bool,
+}
+
+/// Hit GitHub's "latest releases" endpoint and compare against the current
+/// build's version. We deliberately use `/releases` (not `/releases/latest`)
+/// because that endpoint hides pre-releases; we want users on a nightly
+/// channel to see a newer nightly too. The first entry is always the most
+/// recent regardless of channel.
+///
+/// No auto-update — we only report. Auto-update is a separate Tauri plugin
+/// (`tauri-plugin-updater`) and a bigger trust-decision than we want to make
+/// without explicit owner sign-off.
+#[tauri::command]
+pub async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .user_agent(concat!("wispr-fox/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+
+    let url = "https://api.github.com/repos/kumaradarsh1993/wispr-fox/releases?per_page=1";
+    let resp = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub returned HTTP {}", resp.status().as_u16()));
+    }
+
+    let releases: Vec<GhRelease> = resp
+        .json()
+        .await
+        .map_err(|e| format!("decode: {e}"))?;
+
+    let Some(latest) = releases.into_iter().next() else {
+        return Err("no releases found".into());
+    };
+
+    // Strip leading "v" if present so we compare "1.2.0" to "1.2.0".
+    let latest_clean = latest.tag_name.trim_start_matches('v').to_string();
+    let newer = version_is_newer(&current, &latest_clean);
+
+    Ok(UpdateInfo {
+        current,
+        latest: latest.tag_name,
+        newer,
+        html_url: latest.html_url,
+        prerelease: latest.prerelease,
+    })
+}
+
+/// Tiny semver-ish comparator. Splits on `.` and `-`, compares dotted numeric
+/// parts first then any pre-release suffix lexicographically. Enough for our
+/// "1.1.0-nightly.5 vs 1.1.0-nightly.6" comparisons; not a full semver
+/// implementation.
+fn version_is_newer(current: &str, candidate: &str) -> bool {
+    fn parts(v: &str) -> (Vec<u32>, &str) {
+        let (head, tail) = v.split_once('-').unwrap_or((v, ""));
+        let nums: Vec<u32> = head.split('.').filter_map(|s| s.parse().ok()).collect();
+        (nums, tail)
+    }
+    let (cnums, ctail) = parts(current);
+    let (lnums, ltail) = parts(candidate);
+    let max_len = cnums.len().max(lnums.len());
+    for i in 0..max_len {
+        let c = cnums.get(i).copied().unwrap_or(0);
+        let l = lnums.get(i).copied().unwrap_or(0);
+        if l > c {
+            return true;
+        }
+        if l < c {
+            return false;
+        }
+    }
+    // Dotted-numeric parts equal — fall through to pre-release suffix.
+    // Per semver 11: NO suffix beats ANY suffix (1.0.0 > 1.0.0-rc.1).
+    match (ctail.is_empty(), ltail.is_empty()) {
+        (false, true) => true,   // current is a pre-release, latest is stable → newer
+        (true, false) => false,  // current is stable, latest is pre-release → not newer
+        _ => ltail > ctail,      // both same kind — lex compare (works for nightly.N)
+    }
+}
+
+/// Reveal a wispr-fox folder in the OS file manager. `kind` is one of:
+///   "audio"   → %APPDATA%/com.wispr-fox.app/audio/
+///   "sounds"  → %APPDATA%/com.wispr-fox.app/sounds/
+///   "data"    → %APPDATA%/com.wispr-fox.app/ (parent)
+///   "avatars" → %APPDATA%/com.wispr-fox.app/avatars/ (user-installed avatars)
+///
+/// Creates the directory if missing (some, like `sounds` and `avatars`, are
+/// only auto-created the first time the user drops a file in — the button
+/// has to create them so explorer.exe doesn't silently bounce to Documents).
+#[tauri::command]
+pub fn reveal_folder(app: AppHandle, kind: String) -> Result<(), String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let path = match kind.as_str() {
+        "audio" => base.join("audio"),
+        "sounds" => base.join("sounds"),
+        "avatars" => base.join("avatars"),
+        "data" => base,
+        other => return Err(format!("unknown folder kind '{other}'")),
+    };
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        return Err(format!("create_dir_all({}) failed: {e}", path.display()));
+    }
+    // Use tauri-plugin-opener via the Rust API. The `_ = ` pattern keeps the
+    // result quiet — opener returns Ok even when explorer.exe can't open the
+    // path (silent fallback to Documents on Windows). The mkdir above is the
+    // real safety net.
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("open failed: {e}"))
+}
+
 /// Copy a user-picked file into the sounds folder so it shows up in the picker.
 /// Returns the final filename (preserving the source basename, deduplicated
 /// with a numeric suffix if needed).

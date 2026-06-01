@@ -832,3 +832,46 @@
   color: var(--text-secondary);
   line-height: 1.4;
 }
+
+/* Update-check card on Settings → General (added in v1.1.0-nightly.7). */
+.update-card {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 720px;
+  flex-wrap: wrap;
+}
+.update-status {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+.update-line {
+  font-size: 13px;
+  color: var(--text);
+}
+.update-line.update-new {
+  color: var(--accent, #ec7c34);
+  font-weight: 500;
+}
+.update-line.update-err {
+  color: #c0392b;
+}
+.update-current {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 6px;
+}
+.update-current-only {
+  color: var(--text-secondary);
+}
+.update-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

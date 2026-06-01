@@ -95,6 +95,14 @@ export interface SecretsDiagnostic {
   fallback_exists: boolean;
 }
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  newer: boolean;
+  html_url: string;
+  prerelease: boolean;
+}
+
 export interface InputDeviceInfo {
   name: string;
   is_default: boolean;
@@ -132,6 +140,9 @@ export const api = {
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
   floaterTrigger: (mode: "light" | "advanced" | "drafting") =>
     invoke<void>("floater_trigger", { mode }),
+  revealFolder: (kind: "audio" | "sounds" | "avatars" | "data") =>
+    invoke<void>("reveal_folder", { kind }),
+  checkForUpdates: () => invoke<UpdateInfo>("check_for_updates"),
   saveSecret: (key: SecretKeyName, value: string) =>
     invoke<void>("save_secret", { key, value }),
   deleteSecret: (key: SecretKeyName) => invoke<void>("delete_secret", { key }),

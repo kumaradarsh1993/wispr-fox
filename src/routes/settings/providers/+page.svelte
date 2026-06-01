@@ -43,11 +43,23 @@
     { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B",    quality: "Smarter • 1,000/day free" },
     { id: "llama-4-maverick",        label: "Llama 4 Maverick", quality: "Smartest • 500/day free" },
   ];
+  // Gemini model list — checked as of 1 June 2026.
+  //
+  // What changed since the last refresh:
+  //   • 2.0 Flash and 2.0 Flash-Lite are deprecated on 1 June 2026 → removed.
+  //   • 3.5 Flash launched at I/O on 20 May 2026, model id gemini-3.5-flash
+  //     → added at top of the list (recommended default).
+  //   • 2.5 Flash-Lite added — highest free quota (1,000 req/day, 15 RPM).
+  //   • "gemini-3-pro" entry was speculative; replaced with 2.5 Pro which
+  //     is the actual current Pro model (paid-only since Apr 2026).
+  //   • 3.5 Pro is announced for GA in June 2026 but no API model id is
+  //     published yet — will add when Google ships it.
   const GEMINI_LLM_MODELS: ModelOpt[] = [
-    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast • 1,500/day free • Best free quality" },
-    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", quality: "Fast • free tier" },
-    { id: "gemini-2.5-pro",   label: "Gemini 2.5 Pro",   quality: "Smartest • PAID ONLY since Apr 2026" },
-    { id: "gemini-3-pro",     label: "Gemini 3 Pro",     quality: "Smartest • PAID ONLY" },
+    { id: "gemini-3.5-flash",      label: "Gemini 3.5 Flash",      quality: "Newest • Default since I/O 2026" },
+    { id: "gemini-2.5-flash",      label: "Gemini 2.5 Flash",      quality: "Fast • 250/day free" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Fastest • 1,000/day free (highest quota)" },
+    { id: "gemini-3-flash",        label: "Gemini 3 Flash",        quality: "Stable • Free tier" },
+    { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro",        quality: "Smartest • PAID ONLY since Apr 2026" },
   ];
 
   function modelsForProvider(p: string): ModelOpt[] {
@@ -60,6 +72,25 @@
     if (!options.find((m) => m.id === settings.s.llm_model)) {
       await settings.set("llm_model", options[0].id as any);
     }
+    // Persistence is automatic (settings.set writes through to disk + Rust),
+    // but the user asked for explicit confirmation that the selection saved.
+    // Reported as "should be a save button" — better resolved with a toast
+    // than a literal save button, since auto-save is the right behaviour and
+    // the toast confirms the write succeeded.
+    flash(`Provider set to ${provider === "gemini" ? "Gemini" : "Groq"}`);
+  }
+
+  async function changeLlmModel(modelId: string) {
+    await settings.set("llm_model", modelId as any);
+    const label = modelsForProvider(settings.s.llm_provider)
+      .find((m) => m.id === modelId)?.label ?? modelId;
+    flash(`Model: ${label}`);
+  }
+
+  async function changeSttModel(modelId: string) {
+    await settings.set("stt_model", modelId as any);
+    const label = STT_MODELS.find((m) => m.id === modelId)?.label ?? modelId;
+    flash(`STT: ${label}`);
   }
 
   // ── API key save / delete / test ───────────────────────────────────────
@@ -313,7 +344,7 @@
         <label>Model</label>
         <select
           value={settings.s.stt_model}
-          onchange={(e) => settings.set("stt_model", (e.currentTarget as HTMLSelectElement).value as any)}
+          onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}
         >
           {#each STT_MODELS as m (m.id)}
             <option value={m.id}>{m.label} — {m.quality}</option>
@@ -366,7 +397,7 @@
         <label>Model</label>
         <select
           value={settings.s.llm_model}
-          onchange={(e) => settings.set("llm_model", (e.currentTarget as HTMLSelectElement).value as any)}
+          onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}
         >
           {#each modelsForProvider(settings.s.llm_provider) as m (m.id)}
             <option value={m.id}>{m.label} — {m.quality}</option>

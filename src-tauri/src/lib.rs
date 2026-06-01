@@ -210,6 +210,8 @@ pub fn run() {
             commands::audio_data_url_for,
             commands::list_input_devices,
             commands::app_paths,
+            commands::reveal_folder,
+            commands::check_for_updates,
             commands::daily_usage,
             commands::current_models,
             commands::clear_all_history,

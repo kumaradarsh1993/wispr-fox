@@ -4,10 +4,12 @@
 //! `contents` array of `parts`, and a separate `systemInstruction` field
 //! rather than mixing system + user in one `messages` array.
 //!
-//! Default model: `gemini-2.5-flash` — the most generous free tier model
-//! (15 RPM, 1,500 RPD as of May 2026). Pro models (gemini-2.5-pro,
-//! gemini-3-pro, gemini-3.1-pro) were removed from the free tier in
-//! April 2026 — they require billing enabled.
+//! Default model: `gemini-3.5-flash` — released at Google I/O 20 May 2026,
+//! now Google's recommended default. Free tier (250 RPD / 10 RPM as of
+//! 1 June 2026). The Pro models (gemini-2.5-pro, 3.5-pro) require billing
+//! enabled since April 2026. 2.0 Flash / Flash-Lite were deprecated 1 June
+//! 2026 — fall through to `gemini-3.5-flash` if the user's saved model is
+//! one of the retired ids.
 
 use std::time::Duration;
 
@@ -19,7 +21,18 @@ use super::{LlmError, LlmProvider};
 const ENDPOINT_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-pub const DEFAULT_MODEL: &str = "gemini-2.5-flash";
+pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
+
+/// Model ids that Google deprecated since this codebase last shipped.
+/// When the user's saved settings hold one of these, fall through to
+/// `DEFAULT_MODEL` so transcription doesn't fail with a 404 on a tombstoned
+/// endpoint.
+pub const DEPRECATED_MODELS: &[&str] = &[
+    "gemini-2.0-flash",        // deprecated 1 Jun 2026
+    "gemini-2.0-flash-lite",   // deprecated 1 Jun 2026
+    "gemini-3-pro",            // speculative id that never shipped
+    "gemini-3.1-pro",          // same
+];
 
 pub struct GeminiLlm {
     client: reqwest::Client,

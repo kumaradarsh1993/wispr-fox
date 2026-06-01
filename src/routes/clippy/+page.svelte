@@ -503,15 +503,71 @@
       invoke("js_heartbeat_ping").catch(() => {});
     }, 10_000);
 
-    const saved = localStorage.getItem("wispr.clippy.pos");
-    if (saved) {
+    // Restore the saved floater position — but VALIDATE it against the
+    // current monitor layout first. WebView2's localStorage survives
+    // uninstall/reinstall (lives in %LOCALAPPDATA%\com.wispr-fox.app\EBWebView\),
+    // so a position from a previous setup (e.g. coords on a 4K external
+    // monitor that's no longer plugged in) would otherwise drop the window
+    // somewhere off-screen and the user thinks the floater is broken.
+    // Reported on an XPS 13 — fixed by clamping to a real monitor.
+    (async () => {
+      const saved = localStorage.getItem("wispr.clippy.pos");
+      if (!saved) return;
+      let parsed: { x: number; y: number };
       try {
-        const { x, y } = JSON.parse(saved);
-        getCurrentWindow().setPosition(new LogicalPosition(x, y));
+        parsed = JSON.parse(saved);
       } catch {
-        /* ignore */
+        localStorage.removeItem("wispr.clippy.pos");
+        return;
       }
-    }
+      const win = getCurrentWindow();
+      try {
+        const { availableMonitors } = await import("@tauri-apps/api/window");
+        const monitors = await availableMonitors();
+        // Window is 190x210 (logical). Position is stored as physical pixels
+        // from outerPosition(); compare in physical space against monitor
+        // physical bounds. Treat the position as "valid" if at least 60×60
+        // of the window lies within any monitor's bounds.
+        const winW = 190;
+        const winH = 210;
+        const margin = 60;
+        const inside = monitors.some((m) => {
+          const left = m.position.x;
+          const top = m.position.y;
+          const right = left + m.size.width;
+          const bottom = top + m.size.height;
+          // Account for DPI scaling — Tauri's outerPosition is physical pixels,
+          // monitor.position/size are physical pixels too, so they're
+          // commensurable. But the saved pos was stored verbatim from
+          // outerPosition(); confirm overlap with at least `margin` pixels.
+          return (
+            parsed.x + winW - margin > left &&
+            parsed.x + margin < right &&
+            parsed.y + winH - margin > top &&
+            parsed.y + margin < bottom
+          );
+        });
+        if (inside) {
+          await win.setPosition(new LogicalPosition(parsed.x, parsed.y));
+        } else {
+          console.warn(
+            "[clippy] saved position",
+            parsed,
+            "is offscreen; dropping it and using default",
+          );
+          localStorage.removeItem("wispr.clippy.pos");
+          // Place near bottom-right of primary monitor as a sensible default.
+          const primary = monitors[0];
+          if (primary) {
+            const defaultX = primary.position.x + primary.size.width - winW * 2 - 32;
+            const defaultY = primary.position.y + primary.size.height - winH * 2 - 80;
+            await win.setPosition(new LogicalPosition(defaultX, defaultY));
+          }
+        }
+      } catch (e) {
+        console.warn("[clippy] position restore failed", e);
+      }
+    })();
 
     let posSaveTimer: ReturnType<typeof setTimeout> | undefined;
     const persist = async () => {

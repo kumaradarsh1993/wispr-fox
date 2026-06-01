@@ -75,6 +75,29 @@
     await setClippyWindowVisible(false);
   }
 
+  // Recover from a "where did the floater go?" situation. Forgets the saved
+  // position so the next launch (or this one) lands in the default bottom-
+  // right slot. Especially useful when an old position from a different
+  // monitor setup is keeping the window offscreen — though the position-
+  // validate-on-startup logic should normally catch that automatically.
+  async function resetPosition() {
+    onClose();
+    try {
+      localStorage.removeItem("wispr.clippy.pos");
+      const { getCurrentWindow, availableMonitors, LogicalPosition } =
+        await import("@tauri-apps/api/window");
+      const monitors = await availableMonitors();
+      const primary = monitors[0];
+      if (primary) {
+        const x = primary.position.x + primary.size.width - 190 * 2 - 32;
+        const y = primary.position.y + primary.size.height - 210 * 2 - 80;
+        await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+      }
+    } catch (e) {
+      console.warn("resetPosition failed", e);
+    }
+  }
+
   async function openSettings() {
     onClose();
     try {
@@ -134,6 +157,10 @@
 
     <div class="ctx-sep"></div>
 
+    <button class="ctx-item" onclick={resetPosition}>
+      <span class="ctx-glyph">⤿</span>
+      <span class="ctx-label">Reset position</span>
+    </button>
     <button class="ctx-item" onclick={hideFloater}>
       <span class="ctx-glyph">⛔</span>
       <span class="ctx-label">Hide</span>

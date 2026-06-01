@@ -343,6 +343,25 @@ impl History {
         Ok(())
     }
 
+    /// Look up the recording id that owns a given audio file path. Used by
+    /// the storage-cap GC sweep — when it picks an oldest audio file to
+    /// delete on disk, it also needs the row id so it can drop the history
+    /// row, otherwise History fills with rows pointing at missing files.
+    pub fn find_by_audio_path(&self, audio_path: &Path) -> Result<Option<String>> {
+        let conn = self.inner.lock();
+        let mut stmt =
+            conn.prepare("SELECT id FROM recordings WHERE audio_path = ?1 LIMIT 1")?;
+        let mut rows = stmt
+            .query_map(params![audio_path.to_string_lossy()], |r| {
+                r.get::<_, String>(0)
+            })?;
+        match rows.next() {
+            Some(Ok(id)) => Ok(Some(id)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
     /// On app launch, mark any rows still in non-terminal states as error.
     /// They represent recordings that were mid-pipeline when the app was
     /// killed / crashed / force-quit. Without this they'd sit at

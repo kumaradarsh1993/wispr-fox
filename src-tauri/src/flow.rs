@@ -143,10 +143,21 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
             let key = secrets::get(SecretKey::GeminiLlm)?
                 .ok_or_else(|| anyhow!("no Gemini API key — open Settings → Provider & Keys"))?;
             // If user has gemini selected but no model set, fall back to default.
-            let m = if model.starts_with("gemini") {
-                model
-            } else {
+            // Also auto-migrate model ids that Google has retired so saved
+            // settings from older builds don't suddenly 404 against the API.
+            let m = if !model.starts_with("gemini") {
                 crate::llm::gemini::DEFAULT_MODEL.to_string()
+            } else if crate::llm::gemini::DEPRECATED_MODELS
+                .iter()
+                .any(|d| *d == model.as_str())
+            {
+                tracing::info!(
+                    "gemini model {model:?} is deprecated; using {} instead",
+                    crate::llm::gemini::DEFAULT_MODEL
+                );
+                crate::llm::gemini::DEFAULT_MODEL.to_string()
+            } else {
+                model
             };
             Ok(Box::new(GeminiLlm::new(key, m)))
         }

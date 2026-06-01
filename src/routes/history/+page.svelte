@@ -78,8 +78,7 @@
 
   async function openRecordingsFolder() {
     try {
-      const paths = await api.appPaths();
-      await openPath(paths.audio_dir);
+      await api.revealFolder("audio");
     } catch (e) {
       alert(`Could not open folder: ${e}`);
     }
