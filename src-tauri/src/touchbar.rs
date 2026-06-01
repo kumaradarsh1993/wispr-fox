@@ -79,7 +79,6 @@ const ID_STOP: &str = "com.wispr-fox.tb.stop";
 const ID_TIMER: &str = "com.wispr-fox.tb.timer";
 const ID_STATUS: &str = "com.wispr-fox.tb.status";
 const ID_FOX: &str = "com.wispr-fox.tb.skin.fox";
-const ID_DUCK: &str = "com.wispr-fox.tb.skin.duck";
 const ID_CAT: &str = "com.wispr-fox.tb.skin.cat";
 const ID_CLIP: &str = "com.wispr-fox.tb.skin.clip";
 
@@ -133,12 +132,7 @@ define_class!(
             switch_skin("fox");
         }
 
-        #[unsafe(method(duckSkin:))]
-        fn duck_skin(&self, _sender: &AnyObject) {
-            switch_skin("duck");
-        }
-
-        #[unsafe(method(catSkin:))]
+#[unsafe(method(catSkin:))]
         fn cat_skin(&self, _sender: &AnyObject) {
             switch_skin("cat");
         }
@@ -173,7 +167,6 @@ fn make_item(
     match id_str.as_str() {
         // ── Idle: character skin buttons ──────────────────────────
         ID_FOX => Some(make_button(identifier, "🦊", c"foxSkin:", delegate, None)),
-        ID_DUCK => Some(make_button(identifier, "🦆", c"duckSkin:", delegate, None)),
         ID_CAT => Some(make_button(identifier, "🐱", c"catSkin:", delegate, None)),
         ID_CLIP => Some(make_button(identifier, "📎", c"clipSkin:", delegate, None)),
 
@@ -344,7 +337,6 @@ fn set_idle_items() {
         let Some(tb) = tb.as_ref() else { return };
         let ids = NSArray::from_retained_slice(&[
             NSString::from_str(ID_FOX),
-            NSString::from_str(ID_DUCK),
             NSString::from_str(ID_CAT),
             NSString::from_str(ID_CLIP),
             NSString::from_str(ID_LIGHT),

@@ -8,20 +8,21 @@
 //                   sitting/recording/curious/success/error)
 //   "stylized"    — hand-built SVG paperclip (dark outline, transparent body)
 //   "real-clippy" — Microsoft Clippy via clippyts
+//   "cat"         — SVG charcoal desk cat (green eyes, slit pupils)
 //
 // Removed in v1.0.0-nightly.5: "beige" — the cream-variant paperclip.
-// User feedback was that it read as boring next to the more characterful
-// fox + stylized + real-clippy options. Existing saved value migrates to
-// "stylized" (closest cousin) on load.
+// Removed in v1.1.0-nightly.5: "duck" — the rubber-duck design didn't
+// land visually and was retired before stabilising. Saved value migrates
+// to "fox" on load.
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "duck" | "cat";
+export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "duck", "cat"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
@@ -29,6 +30,8 @@ function readInitial(): Skin {
     : null) as string | null;
   // Migrate retired "beige" → "stylized" (same paperclip shape, different theme).
   if (raw === "beige") return "stylized";
+  // Migrate retired "duck" → "fox" (closest "cute mascot" cousin).
+  if (raw === "duck") return "fox";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
   // Default: the watercolor fox — wispr-fox's own mascot, matches the
   // design playbook. Previously defaulted to real Clippy; new users now
@@ -46,8 +49,9 @@ class SkinStore {
     this.subscribed = true;
     await listen<string>(EVENT, (e) => {
       let v = e.payload as Skin;
-      // Migrate stale "beige" emission from older windows still running.
+      // Migrate stale "beige" / "duck" emissions from older windows still running.
       if ((v as string) === "beige") v = "stylized";
+      if ((v as string) === "duck") v = "fox";
       if (VALID_SKINS.includes(v)) {
         this.current = v;
         try {

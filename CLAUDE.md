@@ -13,11 +13,18 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-Current stable: **v1.1.0** (commit `4981f8a`, 2026-05-31). Nightly
-channel is ahead at **v1.1.0-nightly.2** (commit `4ef7a83`,
-2026-05-31) — adds Rubber Duck + Desk Cat characters, bulletproof
-floater recovery, and macOS Touch Bar integration.
-Single owner, no paid users.
+Current de-facto stable: **v1.0.0-nightly.8** (commit `3b5291a`,
+2026-05-27). User confirmed this is the last release unaffected by
+the v1.1.0 secrets regression. v1.1.0 / v1.1.0-nightly.1–nightly.4 are
+on GitHub but the user has explicitly said NOT to promote anything past
+v1.0.0-nightly.8 to "Latest" until they confirm the v1.1.0-nightly.5
+key-storage fix works end-to-end.
+
+Nightly channel is at **v1.1.0-nightly.5** (commit `<latest>`, 2026-06-01) —
+delivers: pure secrets::get (no side effects); duck skin retired; cat
+restored to charcoal; custom right-click menu on the floater; Avatar
+SDK doc in `docs/AVATAR_SDK.md` (contract for outsourcing avatar
+authoring to another AI / human). Single owner, no paid users.
 
 ## Architecture (90-second tour)
 
@@ -41,7 +48,8 @@ src/routes/
   +layout.svelte   Sidebar (brand, hotkey hints, floater picker, usage, hero fox)
   /history/        Rows with Raw/Cleaned/Drafted tabs, kebab menu, search/filter
   /settings/       Provider keys, modes, hotkeys, behaviour, startup, look & feel
-  /clippy/         Always-on-top floater. Skin variants: off/fox/duck/cat/stylized/real-clippy
+  /clippy/         Always-on-top floater. Skin variants: off/fox/stylized/real-clippy/cat
+                   Custom right-click menu (FloaterContextMenu) replaces webview default.
 ```
 
 ## Hotkey model (current, v1.0.0)
@@ -134,6 +142,10 @@ explicit user permission:
 5. **Release notes are user-friendly, not commit-style.** Group by
    what users will *notice* — not by file changed. Examples in
    `docs/RELEASE_NOTES_v*.md`.
+6. **Avatar SDK is frozen at manifest v1** (`docs/AVATAR_SDK.md`). Any
+   change to the avatar contract bumps `manifestVersion` to 2 with a
+   migration guide. Until the loader/manager UI ships, built-in
+   skins remain hardcoded in `src/routes/clippy/+page.svelte`.
 
 ## Known constraints / gotchas
 

@@ -130,6 +130,8 @@ export const api = {
   ping: () => invoke<string>("ping"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
+  floaterTrigger: (mode: "light" | "advanced" | "drafting") =>
+    invoke<void>("floater_trigger", { mode }),
   saveSecret: (key: SecretKeyName, value: string) =>
     invoke<void>("save_secret", { key, value }),
   deleteSecret: (key: SecretKeyName) => invoke<void>("delete_secret", { key }),

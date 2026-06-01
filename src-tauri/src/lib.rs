@@ -194,6 +194,7 @@ pub fn run() {
             commands::js_heartbeat_ping,
             commands::recover_clippy_window,
             commands::accessibility_ok,
+            commands::floater_trigger,
             commands::open_accessibility_settings,
             commands::check_secrets,
             commands::secrets_diagnostic,

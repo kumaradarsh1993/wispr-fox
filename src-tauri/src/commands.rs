@@ -66,6 +66,35 @@ pub fn recover_clippy_window(app: AppHandle) {
     force_repaint(&w);
 }
 
+/// Trigger a recording from the floater's right-click context menu (or any
+/// non-hotkey caller). Behaves like a sticky-invoke hotkey press: a second
+/// call toggles recording off. `mode` is "light", "advanced", or "drafting".
+#[tauri::command]
+pub fn floater_trigger(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    mode: String,
+) -> Result<(), String> {
+    use crate::hotkey::{Edge, HotkeyEvent};
+    use crate::settings::Mode;
+    let m = match mode.as_str() {
+        "light" => Mode::Light,
+        "advanced" => Mode::Advanced,
+        "drafting" => Mode::Drafting,
+        other => return Err(format!("unknown mode '{other}'")),
+    };
+    flow.handle_hotkey(
+        &app,
+        HotkeyEvent {
+            mode: m,
+            edge: Edge::Down,
+            sticky_invoke: true,
+            force_clean: false,
+        },
+    );
+    Ok(())
+}
+
 /// Whether text auto-paste will work. On macOS this reflects the
 /// Accessibility permission (required for CGEvent injection + the Cmd+V
 /// fallback). On Windows/Linux there's no such gate, so it's always `true`.
