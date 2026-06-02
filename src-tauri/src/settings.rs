@@ -214,7 +214,16 @@ fn default_keep_in_clipboard() -> bool {
 }
 
 fn default_open_silently() -> bool {
-    true
+    // Windows: hide main window on launch — users find the tray icon easily,
+    // and there's no Dock to give them a re-entry point. Silent start is the
+    // expected "background utility" pattern.
+    //
+    // macOS: the menu-bar item (our equivalent of tray) is easy to miss, and
+    // Dock clicks don't auto-reopen a hidden window without explicit Reopen
+    // handling. Default to showing the main window on launch so users have an
+    // obvious entry point. RunEvent::Reopen in lib.rs covers subsequent Dock
+    // clicks even when the user later flips this off.
+    !cfg!(target_os = "macos")
 }
 
 fn default_force_clean_hotkey() -> String {

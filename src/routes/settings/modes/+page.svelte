@@ -8,6 +8,7 @@
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
+  import { prettyHotkey } from "$lib/hotkey-display";
 
   let defaultPrompts = $state<{ light: string; advanced: string; drafting: string } | null>(null);
   let promptOpen = $state<Record<"light" | "advanced" | "drafting", boolean>>({
@@ -44,18 +45,18 @@
 <section>
   <h2>Modes</h2>
   <p class="lede">
-    Each F-key runs the same LLM model with a different system prompt.
+    Each hotkey runs the same LLM model with a different system prompt.
     Toggle whether each mode uses LLM cleanup, and click "Show prompt"
     to view or customise what each mode tells the model to do.
   </p>
 
   {#each [
-    { id: "light",    fkey: "F8",  title: "Transcribe",          settingKey: "auto_clean_in_light",
-      desc: "Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every F8 press also gets spell / punctuation / paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use Shift+F8." },
-    { id: "drafting", fkey: "F9",  title: "Draft",               settingKey: "auto_clean_in_drafting",
+    { id: "light",    fkey: prettyHotkey(settings.s.light_hotkey),  title: "Transcribe",          settingKey: "auto_clean_in_light",
+      desc: `Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every ${prettyHotkey(settings.s.light_hotkey)} press also gets spell / punctuation / paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use ${prettyHotkey(settings.s.force_clean_hotkey)}.` },
+    { id: "drafting", fkey: prettyHotkey(settings.s.drafting_hotkey),  title: "Draft",               settingKey: "auto_clean_in_drafting",
       desc: "Give a brief (\"draft an email to Saurabh about X, Y, Z\") and get back a complete polished output. Best for emails, Slack, docs." },
     { id: "advanced", fkey: "—",   title: "Advanced (legacy)",   settingKey: "auto_clean_in_advanced",
-      desc: "Standalone Advanced cleanup mode. No hotkey by default — bind one in Dictation if you want a dedicated key separate from the F8 toggle." },
+      desc: `Standalone Advanced cleanup mode. No hotkey by default — bind one in Dictation if you want a dedicated key separate from the ${prettyHotkey(settings.s.light_hotkey)} toggle.` },
   ] as m (m.id)}
     <div class="mode-block">
       <div class="mode-head">

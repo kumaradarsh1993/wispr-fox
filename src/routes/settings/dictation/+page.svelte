@@ -6,6 +6,7 @@
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
   import HotkeyCapture from "$lib/HotkeyCapture.svelte";
+  import { prettyHotkey, isMac } from "$lib/hotkey-display";
 
   async function saveHotkeys() {
     await settings.replace({ ...settings.s });
@@ -16,12 +17,23 @@
 <section>
   <h2>Dictation</h2>
   <p class="lede">
-    Per-mode hotkeys (F8 Transcribe, F9 Draft, Advanced cleanup) live
+    Per-mode hotkeys ({prettyHotkey(settings.s.light_hotkey)} Transcribe,
+    {prettyHotkey(settings.s.drafting_hotkey)} Draft, Advanced cleanup) live
     inside <strong>Providers & Models → Modes</strong> alongside their cleanup
     toggle and system prompt — that's the recommended place to edit them.
     This page is kept for cross-cutting bindings (the force-clean override)
     and post-dictation behaviour.
   </p>
+  {#if isMac()}
+    <p class="lede tight" style="margin-top: -4px;">
+      <strong>macOS defaults to ⌃⌥ chords</strong> (Ctrl + Option + letter). The
+      Mac function row sends media/volume events by default, so a global F8 / F9
+      shortcut would either fire only when you hold fn, or fight Apple Music for
+      play-pause. ⌃⌥ chords fire regardless of the "use F1/F2 as standard function
+      keys" system setting and rarely collide with app shortcuts. You can rebind
+      anything below.
+    </p>
+  {/if}
   <p class="lede tight">
     Every mode has TWO hotkeys: a <strong>main</strong> (push-to-talk by default —
     hold to record) and a <strong>sticky-invoke</strong> (press once to start,
@@ -32,7 +44,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe <span class="hk-tag">F8 default · most used</span></div>
+        <div class="hk-label">Transcribe <span class="hk-tag">{isMac() ? "⌃⌥D" : "F8"} default · most used</span></div>
         <div class="hk-desc">Voice → text. LLM cleanup toggle is in Providers & Models.</div>
       </div>
     </div>
@@ -59,7 +71,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">Shift+F8 default</span></div>
+        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">{isMac() ? "⌃⌥C" : "Shift+F8"} default</span></div>
         <div class="hk-desc">Same as Transcribe, but forces LLM cleanup ON for this one press — useful when you normally want raw and occasionally want cleaned. Doesn't change the persistent toggle.</div>
       </div>
     </div>
@@ -78,7 +90,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Draft <span class="hk-tag">F9 default</span></div>
+        <div class="hk-label">Draft <span class="hk-tag">{isMac() ? "⌃⌥F" : "F9"} default</span></div>
         <div class="hk-desc">Drafts polished output from your brief. Best for emails, Slack, docs.</div>
       </div>
     </div>
@@ -105,7 +117,7 @@
   <details class="hotkey-block-collapsed">
     <summary>
       <span class="hk-label">Advanced cleanup (legacy)</span>
-      <span class="hk-desc-inline">— optional dedicated hotkey for the cleanup-only pipeline. Most people don't need this; the F8 LLM toggle covers it.</span>
+      <span class="hk-desc-inline">— optional dedicated hotkey for the cleanup-only pipeline. Most people don't need this; the Transcribe LLM toggle covers it.</span>
     </summary>
     <div class="hk-pair">
       <div class="hk-pair-col">
@@ -128,7 +140,15 @@
   </details>
 
   <button class="btn-primary" onclick={saveHotkeys}>Save hotkeys</button>
-  <p class="hint">⚠ Hotkey changes take effect after restarting wispr-fox. F10 is retired by default — it activates the menu bar in Outlook, which steals focus from your text field.</p>
+  <p class="hint">
+    ⚠ Hotkey changes take effect after restarting wispr-fox.
+    {#if isMac()}
+      Mac defaults use ⌃⌥ chords because the function row is media/volume by default; F-keys only fire when you hold fn.
+    {:else}
+      F10 is retired by default — it activates the menu bar in Outlook, which steals focus from your text field.
+    {/if}
+    <strong>Press Esc</strong> any time during a recording to stop cleanly without sending anything.
+  </p>
 
   <h3>Behaviour</h3>
   <p class="lede">
@@ -166,8 +186,8 @@
         checked={settings.s.adapt_to_app}
         onchange={(e) => settings.set("adapt_to_app", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Adapt tone to active app</strong> — when you press F9, look at which app you're dictating into and hint the LLM at the right register (formal for Outlook, casual for WhatsApp, polished for LinkedIn, etc).</span>
+      <span><strong>Adapt tone to active app</strong> — when you press {prettyHotkey(settings.s.drafting_hotkey)}, look at which app you're dictating into and hint the LLM at the right register (formal for Outlook, casual for WhatsApp, polished for LinkedIn, etc).</span>
     </label>
-    <p class="hint">Only the bucket name (e.g. "email", "chat") is sent to the LLM — never your window title or process name. Affects F9 drafting only; F8 always preserves your voice exactly. Off = let the LLM infer register from the brief alone.</p>
+    <p class="hint">Only the bucket name (e.g. "email", "chat") is sent to the LLM — never your window title or process name. Affects drafting only; Transcribe always preserves your voice exactly. Off = let the LLM infer register from the brief alone.</p>
   </div>
 </section>

@@ -406,10 +406,20 @@ impl Flow {
             captured_focus,
             force_clean,
         });
+        drop(state);
+
+        // Arm Escape as a global stop key for the duration of this recording.
+        // Dynamically registered/unregistered so we only steal Escape from
+        // focused apps while a dictation is genuinely in flight.
+        arm_escape_stop(app, self);
         Ok(())
     }
 
     async fn finish_recording_async(&self, app: &AppHandle) -> Result<()> {
+        // Disarm Escape FIRST so subsequent Escape presses go back to the
+        // focused app (e.g. close a dialog) instead of being swallowed.
+        disarm_escape_stop(app);
+
         let in_flight = {
             let mut state = self.state.lock();
             state.active.take()
@@ -796,3 +806,69 @@ impl Flow {
         Ok(())
     }
 }
+
+// ─── Escape-stop dynamic hotkey ─────────────────────────────────────────────
+//
+// While a recording is in flight, we want a single keystroke to bail out
+// cleanly — for sticky-mode sessions the user has no obvious way to "release"
+// the trigger key, and across both platforms Escape is the universal
+// "abandon" gesture. We register Escape via the global-shortcut plugin ONLY
+// during recording so we don't steal it from focused apps the rest of the
+// time (closing dialogs, exiting autocomplete, leaving fullscreen, etc.).
+
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use std::str::FromStr;
+
+fn arm_escape_stop(app: &AppHandle, flow: &Flow) {
+    let Ok(esc) = Shortcut::from_str("Escape") else {
+        return;
+    };
+    // If somehow already registered (race / leftover from a previous
+    // start_recording that errored out before unregister), skip — we'd just
+    // get a "shortcut already registered" error and the existing handler is
+    // still valid.
+    if app.global_shortcut().is_registered(esc.clone()) {
+        return;
+    }
+    let flow_clone = flow.clone();
+    let app_clone = app.clone();
+    let esc_match = esc.clone();
+    let result = app.global_shortcut().on_shortcut(esc, move |_a, fired, event| {
+        if fired != &esc_match {
+            return;
+        }
+        // Only react on key-down. Escape's key-up is not interesting.
+        if event.state() != ShortcutState::Pressed {
+            return;
+        }
+        // Only stop if recording is actually active. If it's not (e.g. user
+        // hit Escape after recording already ended but before our unregister
+        // ran), do nothing — emitting a stop would be harmless but we'd
+        // rather no-op cleanly.
+        if flow_clone.state.lock().active.is_none() {
+            return;
+        }
+        let app2 = app_clone.clone();
+        let flow2 = flow_clone.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = flow2.finish_recording_async(&app2).await {
+                tracing::warn!("escape-stop: finish_recording failed: {e:#}");
+            }
+        });
+    });
+    if let Err(e) = result {
+        tracing::debug!("escape-stop register failed (non-fatal): {e:#}");
+    }
+}
+
+fn disarm_escape_stop(app: &AppHandle) {
+    let Ok(esc) = Shortcut::from_str("Escape") else {
+        return;
+    };
+    if app.global_shortcut().is_registered(esc.clone()) {
+        if let Err(e) = app.global_shortcut().unregister(esc) {
+            tracing::debug!("escape-stop unregister failed (non-fatal): {e:#}");
+        }
+    }
+}
+

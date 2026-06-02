@@ -34,9 +34,17 @@ pub fn install(app: &AppHandle) -> Result<()> {
         ],
     )?;
 
+    // Tooltip mentions the platform-correct hotkey so the user can find the
+    // dictate trigger right from hovering the tray icon. (macOS uses ⌃⌥ chords
+    // because the function row is media/volume by default; see settings.rs.)
+    let tooltip = if cfg!(target_os = "macos") {
+        "wispr-fox — hold ⌃⌥D to dictate"
+    } else {
+        "wispr-fox — hold F8 to dictate"
+    };
     let _tray = TrayIconBuilder::with_id("wispr-tray")
         .icon(app.default_window_icon().cloned().expect("default icon"))
-        .tooltip("wispr-fox — hold F8 to dictate")
+        .tooltip(tooltip)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

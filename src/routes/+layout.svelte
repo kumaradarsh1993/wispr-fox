@@ -9,6 +9,7 @@
   import { settings } from "$lib/settings-store.svelte";
   import { api } from "$lib/api";
   import SkinIcon from "$lib/SkinIcon.svelte";
+  import { prettyHotkey } from "$lib/hotkey-display";
 
   let { children } = $props();
 
@@ -168,12 +169,10 @@
   ];
 
   // Hotkey reminder rendered at the top of the sidebar — always visible.
-  function shortcutDisplay(combo: string): string {
-    return combo
-      .replace(/CommandOrControl/g, "Ctrl")
-      .replace(/Super/g, "Win")
-      .replace(/\+/g, "+");
-  }
+  // Delegates to prettyHotkey() so the symbols match the user's platform:
+  // "Ctrl+Alt+D" → "⌃⌥D" on Mac, "Ctrl+Alt+D" on Windows; "Super+F8" →
+  // "⌘F8" on Mac, "Win+F8" on Windows.
+  const shortcutDisplay = prettyHotkey;
 
   function isActive(href: string): boolean {
     const path = page.url?.pathname ?? "/";
@@ -238,6 +237,10 @@
             <div class="hk-row">
               <span class="hk-mode">Draft</span>
               <kbd>{shortcutDisplay(settings.s.drafting_hotkey)}</kbd>
+            </div>
+            <div class="hk-row hk-row-tip">
+              <span class="hk-mode">Stop</span>
+              <kbd>Esc</kbd>
             </div>
           </div>
         {/if}

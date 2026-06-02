@@ -287,7 +287,7 @@
     <div class="help-box">
       <strong>Free tier as of May 2026:</strong>
       <ul>
-        <li>Gemini 2.5 Flash: <code>15 RPM, 1,500 req/day</code> — recommended for F10 drafting</li>
+        <li>Gemini 2.5 Flash: <code>15 RPM, 1,500 req/day</code> — recommended for drafting mode</li>
         <li>Pro models <em>removed from free tier April 2026</em> — billing required.</li>
         <li>No card needed to start. Quality competitive with GPT-4o-mini.</li>
       </ul>

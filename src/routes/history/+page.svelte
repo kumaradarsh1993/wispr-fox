@@ -4,6 +4,8 @@
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
   import { openPath } from "@tauri-apps/plugin-opener";
+  import { settings } from "$lib/settings-store.svelte";
+  import { prettyHotkey } from "$lib/hotkey-display";
 
   let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
   let search = $state("");
@@ -149,7 +151,7 @@
     <div class="empty">
       <img class="empty-fox" src="/fox/fox-empty-state.png" alt="" />
       <p class="empty-title">No transcripts yet</p>
-      <p class="empty-body">Hold <kbd>F8</kbd> anywhere on your computer to dictate. Your recording will land here.</p>
+      <p class="empty-body">Hold <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd> anywhere on your computer to dictate. Your recording will land here.</p>
     </div>
   {:else if filtered.length === 0}
     <div class="empty">

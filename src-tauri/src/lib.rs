@@ -20,6 +20,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tauri::{Manager, WindowEvent};
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 
 use crate::audio::AudioController;
 use crate::flow::Flow;
@@ -224,9 +226,42 @@ pub fn run() {
             commands::test_saved_gemini_key,
             commands::configure_cues,
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(e) = result {
-        tracing::error!("error while running wispr-fox: {e}");
-    }
+    let app = match result {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!("error while building wispr-fox: {e}");
+            return;
+        }
+    };
+
+    // RunEvent loop. The handler runs for every Tauri/AppKit event we care
+    // about. We use this primarily for macOS Dock-icon clicks: with no Reopen
+    // handler, clicking the Dock icon on a running app whose main window is
+    // hidden does nothing — leaving the user stuck (reported on M4 Pro Mac,
+    // v1.1.0-nightly.8). Reopen fires for every Dock click; we show the main
+    // window AND nudge the clippy floater back if it's set to be visible.
+    app.run(|_app_handle, _event| {
+        #[cfg(target_os = "macos")]
+        {
+            if let RunEvent::Reopen { has_visible_windows, .. } = &_event {
+                if !*has_visible_windows {
+                    if let Some(w) = _app_handle.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
+                    // The floater may also have been hidden; re-show it via
+                    // the recovery path that force-repaints, so a stale
+                    // transparent surface doesn't render as a ghost window.
+                    if let Some(c) = _app_handle.get_webview_window("clippy") {
+                        if !c.is_visible().unwrap_or(false) {
+                            crate::commands::force_repaint(&c);
+                        }
+                    }
+                }
+            }
+        }
+    });
 }

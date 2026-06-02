@@ -18,6 +18,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
+  import { prettyHotkey } from "$lib/hotkey-display";
 
   type Screen = "welcome" | "setup" | "demo";
   let screen = $state<Screen>("welcome");
@@ -210,7 +211,7 @@
 
       <div class="mode-row">
         <div class="mode-card">
-          <kbd>F8</kbd>
+          <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
           <h3>Raw</h3>
           <p class="example">
             <span class="said">You say:</span> "the meeting is at 4 pm tomorrow"<br />
@@ -218,7 +219,7 @@
           </p>
         </div>
         <div class="mode-card">
-          <kbd>Shift+F8</kbd>
+          <kbd>{prettyHotkey(settings.s.force_clean_hotkey)}</kbd>
           <h3>Cleaned</h3>
           <p class="example">
             <span class="said">You say:</span> "uhh so the meeting tomorrow at 4 i think"<br />
@@ -226,7 +227,7 @@
           </p>
         </div>
         <div class="mode-card">
-          <kbd>F9</kbd>
+          <kbd>{prettyHotkey(settings.s.drafting_hotkey)}</kbd>
           <h3>Drafted</h3>
           <p class="example">
             <span class="said">You say:</span> "email saurabh that i'll be late tomorrow"<br />
@@ -359,7 +360,8 @@
     <section class="screen demo">
       <h1>Try it now</h1>
       <p class="tagline">
-        The box below is already focused. Press <kbd>F8</kbd>, say anything
+        The box below is already focused. Press
+        <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say anything
         for ~5 seconds, then release.
       </p>
 
@@ -370,7 +372,7 @@
           class="demo-box"
           class:recording={recState === "recording"}
           class:thinking={recState === "transcribing" || recState === "cleaning" || recState === "injecting"}
-          placeholder="Press F8 anywhere — your words appear here."
+          placeholder="Press {prettyHotkey(settings.s.light_hotkey)} anywhere — your words appear here."
           rows="6"
           autofocus
         ></textarea>
@@ -382,7 +384,7 @@
               {#if recElapsed < 5}
                 <span class="ring-hint">keep going to ~5s</span>
               {:else}
-                <span class="ring-hint">good — release F8 when done</span>
+                <span class="ring-hint">good — release {prettyHotkey(settings.s.light_hotkey)} when done</span>
               {/if}
             </div>
           {:else if recState === "transcribing"}
@@ -400,7 +402,7 @@
             </div>
           {:else}
             <div class="ring idle">
-              <span class="ring-label">Ready — press <kbd>F8</kbd> to start</span>
+              <span class="ring-label">Ready — press <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd> to start</span>
             </div>
           {/if}
         </div>
@@ -408,11 +410,17 @@
 
       <div class="tips">
         <div class="tip-row">
-          <strong>F9 instead</strong> — try it again with F9 to see Drafted
-          mode. "Email John I'll be late" → a real email.
+          <strong>{prettyHotkey(settings.s.drafting_hotkey)} instead</strong>
+          — try it again with {prettyHotkey(settings.s.drafting_hotkey)} to
+          see Drafted mode. "Email John I'll be late" → a real email.
         </div>
         <div class="tip-row">
-          <strong>Box not focused?</strong> Click it once, then press F8.
+          <strong>Need to bail mid-recording?</strong>
+          Press <kbd>Esc</kbd> — stops cleanly without sending anything.
+        </div>
+        <div class="tip-row">
+          <strong>Box not focused?</strong> Click it once, then press
+          {prettyHotkey(settings.s.light_hotkey)}.
         </div>
         <div class="tip-row">
           <strong>Change hotkeys</strong> any time in

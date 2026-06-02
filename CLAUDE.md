@@ -66,13 +66,39 @@ activation key. WM_SYSKEYUP leaks past RegisterHotKey and steals
 focus to Outlook's ribbon. Settings store auto-migrates old F10
 configs to F9 on first launch.
 
-**macOS uses different defaults** (since nightly.8): the Mac function
-row sends media/volume events, not F8/F9 keycodes, so a global F8/F9
-shortcut never fires. macOS defaults to ⌃⌥ chords — `Ctrl+Alt+D`
+**macOS uses different defaults** (since nightly.8, actually-wired-end-to-end
+in nightly.9): the Mac function row sends media/volume events by default
+(F7 = ⏮, F8 = ⏯, F9 = ⏭, F10 = mute, F11/F12 = volume), so a global F8/F9
+shortcut would either fight Apple Music for play-pause or only fire when the
+user holds fn. There is **no clean single-function-key option on Mac** — F5
+is system Dictation, F4 is Spotlight/Launchpad, F1–F3 are brightness /
+Mission Control / Spaces. So macOS defaults to ⌃⌥ chords — `Ctrl+Alt+D`
 (dictate/Light), `Ctrl+Alt+F` (draft), `Ctrl+Alt+C` (force-clean),
-`+Shift` for sticky variants. Set per-platform in `AppSettings::default`
-via `cfg!(target_os="macos")`; existing Mac installs are remapped off
-F8/F9 by a one-time, marker-gated migration in `settings-store.svelte.ts`.
+`+Shift` for sticky variants. ⌃⌥ chords fire regardless of the "use F1/F2 as
+standard function keys" system setting and rarely collide with app shortcuts
+(matches Raycast/Bartender/etc. convention). Set per-platform in
+`AppSettings::default` via `cfg!(target_os="macos")`; existing Mac installs
+are remapped off F8/F9 by a one-time, marker-gated migration in
+`settings-store.svelte.ts`. The UI converts canonical combo strings to
+platform-pretty form via `src/lib/hotkey-display.ts`: `prettyHotkey()` reads
+the user's bound combo from settings and emits `⌃⌥D` on Mac vs `Ctrl+Alt+D`
+on Windows. Sidebar, onboarding, dictation settings, modes, history empty
+state, and the floater all route through it — no hardcoded `F8` strings in
+user-facing copy.
+
+**Escape stops a recording in flight** (since nightly.9, both platforms).
+Registered dynamically via the global-shortcut plugin when
+`start_recording_async` completes; unregistered the moment
+`finish_recording_async` enters. The narrow window avoids stealing Escape
+from focused apps the rest of the time.
+
+**macOS launch fix** (nightly.9): switched to `.build()` + `.run(handler)`
+to handle `RunEvent::Reopen` — Dock-icon clicks now re-show a hidden main
+window (without this, clicking the Dock on a running wispr-fox where the
+main window was previously hidden did nothing — reported on M4 Pro).
+`open_silently` defaults to `false` on macOS so first launch surfaces the
+main window automatically (Mac users don't have the menu-bar muscle memory
+to find tray-only apps the way Windows users find the system tray).
 
 ## STT + LLM providers
 

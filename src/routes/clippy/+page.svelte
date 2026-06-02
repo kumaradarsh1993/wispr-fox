@@ -667,7 +667,7 @@
     if (secs < 30)  return `still listening…${tail}`;
     if (secs < 45)  return `wow, you have a lot to say${tail}`;
     if (secs < 60)  return `how long is this going to go?${tail}`;
-    if (secs < 90)  return `did another you grab F8?${tail}`;
+    if (secs < 90)  return `still here whenever you're ready${tail}`;
     if (secs < 120) return `okay, I'll keep waiting${tail}`;
     return `marathon mode${tail}`;
   }
