@@ -192,10 +192,18 @@ explicit user permission:
   own focus management that overrides Win32 `SetFocus` from outside.
   We don't fight it — clipboard fallback (default on) is the answer.
 - **macOS platform notes** (audited nightly.8):
-  - **Transparent floater needs `macOSPrivateApi: true`** in
-    tauri.conf.json + the `macos-private-api` tauri Cargo feature.
-    Without it the floater renders as an opaque white block. (Rules
-    out Mac App Store — fine, we ship unsigned outside it.)
+  - **Floater is OPAQUE on macOS as of nightly.11** — `transparent + macOSPrivateApi`
+    rendered as a zero-alpha ghost surface on macOS Sequoia / M4 Pro (the avatar
+    SVG painted, but the WindowServer never composited the window). Tactical
+    retreat: `tauri.macos.conf.json` overrides set `macOSPrivateApi: false` +
+    clippy `transparent: false` + `shadow: true`. CSS in `/clippy` adds a
+    Mac-detected `data-platform="macos"` attribute and paints the warm cream
+    `--bg-card` background + 14px border-radius so the floater visually matches
+    the rest of the app. Windows keeps the gorgeous transparent floater
+    untouched — only Mac is affected by the override. Re-enable transparency
+    once we land a proven Sequoia ghost-window workaround (candidates: explicit
+    `setOpaque:NO` via objc2, `NSBackingStoreBuffered` reconfig, defer-window-
+    creation pattern).
   - **Auto-paste requires Accessibility permission** (CGEvent inject +
     the Cmd+V fallback both need it). `accessibility_ok` command checks
     `AXIsProcessTrusted`; a dismissible layout banner deep-links to the

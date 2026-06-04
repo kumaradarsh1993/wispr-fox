@@ -373,6 +373,15 @@
   onMount(() => {
     skinStore.subscribe();
 
+    // Tag the document so the CSS Mac-fallback rule (opaque cream background)
+    // kicks in only on macOS. Drives the rule in this component's <style>.
+    if (typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.userAgent)) {
+      try {
+        document.documentElement.setAttribute("data-platform", "macos");
+        document.body.setAttribute("data-platform", "macos");
+      } catch {/* ignore */}
+    }
+
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
     let unlistenMsg: (() => void) | undefined;
@@ -1307,6 +1316,25 @@
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
+  }
+
+  /* macOS fallback: tauri.macos.conf.json forces the floater window to be
+     OPAQUE (`transparent: false`) because the transparent + macOSPrivateApi
+     combo was rendering as a zero-alpha ghost surface on macOS Sequoia / M4
+     — the avatar SVG was painting, you just couldn't see anything behind
+     it. Without the transparent flag the WindowServer composites the surface
+     reliably, but the html/body `background: transparent` declaration above
+     leaves an unstyled near-white box. Detect Mac via userAgent and paint
+     the warm cream surface from the app palette so the floater visually
+     matches the rest of the app instead of looking like an alert. This is
+     a temporary tactical retreat — we'll restore native transparency once
+     we land a proven workaround for the macOS-Sequoia ghost-window issue. */
+  @media not all and (prefers-reduced-transparency: reduce) {
+    :global(html[data-platform="macos"]),
+    :global(body[data-platform="macos"]) {
+      background: var(--bg-card, #faf6ec) !important;
+      border-radius: 14px;
+    }
   }
 
   /* clippyts injects a div.clippy + div.clippy-balloon into document.body.

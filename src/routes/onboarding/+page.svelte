@@ -121,6 +121,16 @@
     goto("/history");
   }
 
+  // "Skip — I'll set this up later" — available from every screen via a small
+  // header link. Goes to History (same destination as Finish) but doesn't
+  // require keys to be saved. Reported as a major friction point on a Mac
+  // where Groq was blocked at the corporate egress and the user couldn't
+  // verify a key but also couldn't get past the setup screen. Onboarding
+  // can be replayed any time via the sidebar's "↻ Replay onboarding" link.
+  function skipOnboarding() {
+    goto("/history");
+  }
+
   function replayDemo() {
     demoText = "";
     demoCompleted = false;
@@ -197,6 +207,10 @@
       <span class="dot {dotClass('setup')}" title="Setup"></span>
       <span class="dot {dotClass('demo')}" title="Try it"></span>
     </div>
+    <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
+    <button class="ob-skip" onclick={skipOnboarding} title="Skip and explore the app — you can replay onboarding from the sidebar later">
+      Skip →
+    </button>
   </header>
 
   <!-- ═════ SCREEN 1: Welcome ═════════════════════════════════════════ -->
@@ -442,14 +456,20 @@
   }
 
   .ob {
-    min-height: 100vh;
+    /* Was min-height: 100vh — meant the layout could grow taller than the
+       viewport and the CTA (Finish / Skip) would slide off-screen with no
+       way to reach it. Now: pin to the viewport height, keep the header
+       sticky, and let the SCREEN section own its own scroll. The screen
+       padding-bottom gives the CTA breathing room above the window edge. */
+    height: 100vh;
     background: var(--bg-surface);
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
-    padding: 24px 32px 48px;
+    padding: 24px 32px 0;
     max-width: 920px;
     margin: 0 auto;
+    overflow: hidden;
   }
 
   .ob-head {
@@ -457,6 +477,24 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+
+  .ob-skip {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .ob-skip:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+    background: var(--bg-subtle);
   }
 
   .brand {
@@ -497,7 +535,25 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
-    padding-top: 16px;
+    padding: 16px 0 48px;
+    /* Critical: own the overflow so on a short window the user can scroll
+       to the CTA buttons. Previously content pushed Finish off-screen
+       with no scroll bar (reported on a 1366×768 Mac at the Setup screen
+       where the Groq key field + the long "how is this free" details
+       block both wanted vertical space). */
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .screen::-webkit-scrollbar { width: 8px; }
+  .screen::-webkit-scrollbar-track { background: transparent; }
+  .screen::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+  .screen::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
   }
 
   h1 {
