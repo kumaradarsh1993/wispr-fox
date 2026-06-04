@@ -224,6 +224,12 @@ explicit user permission:
 
 ## Backlog (rough priority order)
 
+> **NOT pursuing**: corporate-proxy / alternate-STT routing
+> (`groq_base_url`, Replicate, DeepInfra, Cloudflare Worker, etc.).
+> Investigated 2026-06-04 after Zscaler blocked `api.groq.com` on the
+> user's company Mac. User went the IT-exception route instead; we stay
+> single-track on Groq. Don't reopen without explicit user permission.
+
 1. **Sarvam Saaras v3 as second STT provider** — add behind a
    provider-toggle, default Groq for English, Sarvam for Hindi.
    Concrete recipe in `RELEASE_NOTES_v1.0.0.md`.
