@@ -85,15 +85,30 @@
     onClose();
     try {
       localStorage.removeItem("wispr.clippy.pos");
-      const { getCurrentWindow, availableMonitors, LogicalPosition } =
+      const { getCurrentWindow, availableMonitors, primaryMonitor, PhysicalPosition } =
         await import("@tauri-apps/api/window");
       const monitors = await availableMonitors();
-      const primary = monitors[0];
-      if (primary) {
-        const x = primary.position.x + primary.size.width - 190 * 2 - 32;
-        const y = primary.position.y + primary.size.height - 210 * 2 - 80;
-        await getCurrentWindow().setPosition(new LogicalPosition(x, y));
-      }
+      // primaryMonitor() is the authoritative answer on multi-display setups;
+      // monitors[0] can be a secondary monitor depending on enumeration order.
+      let m = monitors[0];
+      try {
+        const p = await primaryMonitor();
+        if (p) m = p;
+      } catch {/* fall back to monitors[0] */}
+      if (!m) return;
+      // CRITICAL: mixing PhysicalPosition (from monitor.position/size) with
+      // LogicalPosition (in setPosition) produces a 2× error on Retina Macs
+      // and shoves the floater off-screen — this was the M4 Pro invisible-
+      // floater bug. Use physical px on both sides. Window is 190x210 LOGICAL,
+      // so convert to physical via the monitor's scale factor.
+      const sf = m.scaleFactor ?? 1;
+      const winWPhys = Math.round(190 * sf);
+      const winHPhys = Math.round(210 * sf);
+      const marginXPhys = Math.round(24 * sf);
+      const marginYPhys = Math.round(60 * sf);
+      const x = m.position.x + m.size.width - winWPhys - marginXPhys;
+      const y = m.position.y + m.size.height - winHPhys - marginYPhys;
+      await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
     } catch (e) {
       console.warn("resetPosition failed", e);
     }

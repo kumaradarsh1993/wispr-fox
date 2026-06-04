@@ -1,6 +1,6 @@
 {
   "name": "wispr-fox",
-  "version": "1.1.0-nightly.11",
+  "version": "1.1.0-nightly.12",
   "description": "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup",
   "type": "module",
   "scripts": {

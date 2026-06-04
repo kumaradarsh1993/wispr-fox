@@ -160,6 +160,37 @@ pub fn run() {
                         let _ = clippy_for_handler.hide();
                     }
                 });
+
+                // Belt-and-suspenders position fix — place the floater in a
+                // guaranteed-visible bottom-right slot BEFORE we call show()
+                // or the JS in /clippy gets a chance to (mis)position it.
+                // Reason: nightly.10 surfaced that the JS placement code in
+                // clippy/+page.svelte mixed PHYSICAL (from availableMonitors)
+                // and LOGICAL (in setPosition(LogicalPosition)) pixels, which
+                // on a 2× Retina Mac placed the window ~1700 px past the right
+                // edge of the screen. The webview still loaded (heartbeat
+                // fires!) and the avatar still painted — the user just
+                // couldn't see it because it was off-screen. JS is fixed too
+                // (nightly.12), but doing this from Rust first means there's
+                // a sane fallback even if the JS placement fails for any
+                // reason (Tauri API change, monitor enumeration race, etc).
+                if let Ok(Some(monitor)) = clippy.primary_monitor() {
+                    let size = monitor.size();
+                    let pos = monitor.position();
+                    let sf = monitor.scale_factor();
+                    let win_w_phys = (190.0 * sf) as i32;
+                    let win_h_phys = (210.0 * sf) as i32;
+                    let margin_x = (24.0 * sf) as i32;
+                    let margin_y = (60.0 * sf) as i32;
+                    let x = pos.x + size.width as i32 - win_w_phys - margin_x;
+                    let y = pos.y + size.height as i32 - win_h_phys - margin_y;
+                    tracing::info!(
+                        x, y, sf, mw = size.width, mh = size.height,
+                        "positioning clippy floater (Rust-side, physical px)"
+                    );
+                    let _ = clippy.set_position(tauri::PhysicalPosition::new(x, y));
+                }
+
                 // Show by default; users can hide via the X button or tray menu.
                 let _ = clippy.show();
                 // macOS: transparent + alwaysOnTop + macOSPrivateApi windows

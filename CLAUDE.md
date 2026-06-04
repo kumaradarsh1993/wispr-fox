@@ -204,6 +204,19 @@ explicit user permission:
     once we land a proven Sequoia ghost-window workaround (candidates: explicit
     `setOpaque:NO` via objc2, `NSBackingStoreBuffered` reconfig, defer-window-
     creation pattern).
+  - **Floater positioning is in PHYSICAL pixels everywhere** (since nightly.12).
+    `availableMonitors()` / `primaryMonitor()` / `outerPosition()` all return
+    PHYSICAL px. Earlier code passed those values into `setPosition(new
+    LogicalPosition(...))`, which Tauri internally multiplied AGAIN by the
+    scale factor. On a 2× Retina Mac that placed the window ~1700 px past
+    the right edge of the screen — the avatar painted, the JS heartbeat fired,
+    the user just couldn't see anything because it was off-monitor. Fixed in
+    both Rust setup (positions BEFORE show() using `PhysicalPosition::new`)
+    and in `src/routes/clippy/+page.svelte` + `FloaterContextMenu.svelte`
+    (everything now uses `PhysicalPosition` consistently). DO NOT switch any
+    of these back to `LogicalPosition` without re-deriving the scale-factor
+    conversion — Tauri 2's coordinate API silently miscomputes the conversion
+    when the source and sink disagree.
   - **Auto-paste requires Accessibility permission** (CGEvent inject +
     the Cmd+V fallback both need it). `accessibility_ok` command checks
     `AXIsProcessTrusted`; a dismissible layout banner deep-links to the

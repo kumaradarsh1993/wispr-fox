@@ -3,7 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { LogicalPosition } from "@tauri-apps/api/window";
+  import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
@@ -512,20 +512,32 @@
       invoke("js_heartbeat_ping").catch(() => {});
     }, 10_000);
 
-    // Place the floater on first launch / restore saved position. The tauri.conf
-    // initial position (x=100, y=100) is fine on Windows but on macOS can land
-    // the window under the menu bar / notch on a 14" / 16" MacBook, where the
-    // user thinks "the avatar didn't show up" — actually it did, just hidden
-    // by the notch. Always run this block (even with no saved position) so the
-    // first-launch experience is a guaranteed-visible bottom-right placement.
-    // WebView2/WKWebView's localStorage also survives uninstall/reinstall, so
-    // an old saved position from a no-longer-attached monitor is validated
-    // against current monitors (XPS 13 offscreen-floater bug).
+    // Place the floater on first launch / restore saved position.
+    //
+    // CRITICAL BUG FIX (nightly.12, reported on M4 Pro): the previous
+    // implementation mixed PHYSICAL and LOGICAL pixel coordinates.
+    // `availableMonitors()`/`primaryMonitor()` return positions/sizes in
+    // PHYSICAL px (i.e. multiplied by scaleFactor). `outerPosition()` also
+    // returns PHYSICAL. But `setPosition(new LogicalPosition(...))` expects
+    // LOGICAL px — Tauri internally converts back to physical by multiplying
+    // by scaleFactor. On a 2× Retina display that's a 2× error: placing the
+    // window 2× further than intended, well past the right edge of the screen.
+    // The floater rendered correctly, the JS heartbeat fired (proving the
+    // WKWebView was alive) — the user just couldn't see it because it was
+    // *literally off the edge of the monitor*. Toggling/avatar-switching
+    // didn't help because every code path kept the same broken position.
+    //
+    // Fix: use PhysicalPosition consistently (matches what outerPosition()
+    // returns AND what availableMonitors() reports). All saved/restored values
+    // stay in physical px; no scale-factor conversions needed.
+    //
+    // We also persist via the new persist() that always saves physical.
     (async () => {
       const win = getCurrentWindow();
-      const winW = 190;
-      const winH = 210;
-      const margin = 60;
+      // The webview's CSS world is in logical px; the floater design is 190x210
+      // logical. We need them in physical to compare against monitor bounds.
+      const logicalWinW = 190;
+      const logicalWinH = 210;
 
       const placeDefault = async () => {
         try {
@@ -533,10 +545,6 @@
             "@tauri-apps/api/window"
           );
           const monitors = await availableMonitors();
-          // Prefer the primary monitor if the API surfaces it; some Tauri
-          // builds return monitors[0] as the primary, but on Mac with an
-          // external display attached the order can flip — primaryMonitor()
-          // is the authoritative answer.
           let m = monitors[0];
           try {
             const p = await primaryMonitor();
@@ -545,9 +553,19 @@
             /* fall back to monitors[0] */
           }
           if (!m) return;
-          const defaultX = m.position.x + m.size.width - winW * 2 - 32;
-          const defaultY = m.position.y + m.size.height - winH * 2 - 80;
-          await win.setPosition(new LogicalPosition(defaultX, defaultY));
+          const sf = m.scaleFactor ?? 1;
+          const winWPhys = Math.round(logicalWinW * sf);
+          const winHPhys = Math.round(logicalWinH * sf);
+          // Leave a sensible margin from the right + bottom edges, in physical px.
+          const marginXPhys = Math.round(24 * sf);
+          const marginYPhys = Math.round(60 * sf);
+          const x = m.position.x + m.size.width - winWPhys - marginXPhys;
+          const y = m.position.y + m.size.height - winHPhys - marginYPhys;
+          console.info(
+            "[clippy] placeDefault →",
+            { x, y, sf, monitor: { pos: m.position, size: m.size } },
+          );
+          await win.setPosition(new PhysicalPosition(x, y));
         } catch (e) {
           console.warn("[clippy] default-position placement failed", e);
         }
@@ -567,22 +585,37 @@
         return;
       }
       try {
-        const { availableMonitors } = await import("@tauri-apps/api/window");
+        const { availableMonitors, primaryMonitor } = await import(
+          "@tauri-apps/api/window"
+        );
         const monitors = await availableMonitors();
+        // Find any monitor whose bounds (PHYSICAL) overlap with the saved
+        // position (PHYSICAL) by at least a margin so a small bit of window
+        // poking onto a monitor still counts.
+        let probe = monitors[0];
+        try {
+          const p = await primaryMonitor();
+          if (p) probe = p;
+        } catch {/* keep monitors[0] */}
+        const sf = (probe?.scaleFactor) ?? 1;
+        const winWPhys = Math.round(logicalWinW * sf);
+        const winHPhys = Math.round(logicalWinH * sf);
+        const marginPhys = Math.round(60 * sf);
         const inside = monitors.some((mn) => {
           const left = mn.position.x;
           const top = mn.position.y;
           const right = left + mn.size.width;
           const bottom = top + mn.size.height;
           return (
-            parsed.x + winW - margin > left &&
-            parsed.x + margin < right &&
-            parsed.y + winH - margin > top &&
-            parsed.y + margin < bottom
+            parsed.x + winWPhys - marginPhys > left &&
+            parsed.x + marginPhys < right &&
+            parsed.y + winHPhys - marginPhys > top &&
+            parsed.y + marginPhys < bottom
           );
         });
         if (inside) {
-          await win.setPosition(new LogicalPosition(parsed.x, parsed.y));
+          console.info("[clippy] restore saved (physical px) →", parsed);
+          await win.setPosition(new PhysicalPosition(parsed.x, parsed.y));
         } else {
           console.warn(
             "[clippy] saved position",
@@ -602,6 +635,9 @@
     const persist = async () => {
       try {
         const pos = await getCurrentWindow().outerPosition();
+        // outerPosition() is PHYSICAL px; persist as physical and restore as
+        // physical so the two sides agree. Mixing logical/physical here was
+        // the M4 Pro invisible-floater bug.
         localStorage.setItem(
           "wispr.clippy.pos",
           JSON.stringify({ x: pos.x, y: pos.y }),
