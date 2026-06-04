@@ -86,63 +86,20 @@
   let hoverShiftX = $state(0);
   let hoverShiftY = $state(0);
 
-  // ── Clickthrough scaffolding (used by onMount's mousemove hit-test) ──
-  // The window starts catching; we toggle to ignore=true when the cursor
-  // moves off the avatar shape so clicks pass through to whatever app is
-  // behind. The hit-test walks up from elementFromPoint looking for one of
-  // these classes; with SVG `pointer-events: visiblePainted` the SVG only
-  // appears as the hit element when the cursor is over an actually-painted
-  // pixel — pixel-perfect for SVG avatars, bounding-rect-perfect for the
-  // PNG fox / sprite Clippy / our bubble.
-  let isIgnoring = $state(false);
-  const CATCH_CLASSES = [
-    "character", // SVG avatar root (stylized / cat / cat-lab)
-    "fox-stage", // fox-skin PNG cluster
-    "clippy", // real-clippy sprite div (clippyjs adds this class)
-    "clippy-balloon", // real-clippy speech balloon
-    "bubble", // our speech bubble
-  ];
-  function hitTestAvatar(clientX: number, clientY: number): boolean {
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return false;
-    let cur: Element | null = el;
-    while (cur && cur !== document.body) {
-      const cl = cur.classList;
-      if (cl) {
-        for (const klass of CATCH_CLASSES) {
-          if (cl.contains(klass)) return true;
-        }
-      }
-      cur = cur.parentElement;
-    }
-    return false;
-  }
-  function setIgnore(next: boolean) {
-    if (next === isIgnoring) return;
-    isIgnoring = next;
-    invoke("set_clickthrough", { ignore: next }).catch((e) =>
-      console.warn("[clippy] set_clickthrough failed", e),
-    );
-  }
-  function isModalCatching(): boolean {
-    // User picked "bubble catches clicks while visible" — so any non-idle
-    // displayState (which is when the bubble shows) and any open right-click
-    // menu both unconditionally force catching.
-    if (displayState !== "idle") return true;
-    if (ctxMenuOpen) return true;
-    return false;
-  }
-  // When the bubble appears/disappears OR the right-click menu opens/closes,
-  // re-evaluate catching state immediately. The user shouldn't have to jiggle
-  // the mouse to "unlock" interaction with a freshly-appeared bubble.
-  $effect(() => {
-    // Touch reactive state so the effect re-runs on change.
-    void displayState;
-    void ctxMenuOpen;
-    if (isModalCatching()) {
-      setIgnore(false);
-    }
-  });
+  // Nightly.13's clickthrough/polling experiment was reverted in nightly.14.
+  // The 30 Hz cursor poller + per-mousemove `set_ignore_cursor_events` toggle
+  // was thrashing the window state ~60×/sec, causing visible flicker on
+  // Windows (eye-tracking resetting, fast "refresh" feel) and leaving the
+  // window in ignore-mode often enough on Mac that drag-to-move and right-
+  // click both felt broken. The cursor_poller.rs module + set_clickthrough
+  // command stay in the codebase (no harm, possible future use) but nothing
+  // calls them anymore. The CSS `pointer-events: visiblePainted` on SVG
+  // also stays — it's a free win for hit-testing inside our own window
+  // without any thrashing cost.
+  //
+  // Path A from the nightly.13 plan replaces it: per-skin window sizes that
+  // grow when the bubble appears and shrink back when it hides, with a
+  // center-anchored resize so the avatar visually stays put.
 
   // Transient message override — when Rust emits `wispr:clippy_message`
   // (e.g. "Copied to clipboard" after a cross-process silent delivery),
@@ -211,6 +168,87 @@
 
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
+
+  // ── Per-skin window sizing + bubble-driven growth ────────────────────
+  //
+  // The old fixed 190×210 window was both (a) too big when idle — chunky
+  // rectangle blocking your clicks for no reason — and (b) too small when
+  // the bubble appeared, so the bubble had to live inside the avatar's
+  // breathing room and felt cramped. We solve both at once: hold a small
+  // skin-shaped window when idle, grow it to fit the bubble when one's
+  // showing, contract back when the bubble fades. Sizes are LOGICAL px;
+  // the resize math converts to PHYSICAL because Tauri's window-position
+  // and window-size APIs all speak in physical pixels (see the Retina
+  // bug deep-dive in CLAUDE.md — DO NOT mix logical/physical or you're
+  // back to off-screen floaters).
+  //
+  // Anchor strategy: center the resize so the avatar stays visually in
+  // place. Without this, the OS anchors at the top-left and the avatar
+  // appears to jerk down-right whenever the bubble appears.
+  type Size = { w: number; h: number };
+  type SkinSizes = { idle: Size; bubble: Size };
+  // Pads include the bubble's horizontal reach (typ. ~150px to the right)
+  // and a little vertical room for ascenders/descenders + the EQ bars.
+  const WINDOW_SIZES: Record<string, SkinSizes> = {
+    fox:           { idle: { w: 150, h: 175 }, bubble: { w: 290, h: 220 } },
+    stylized:      { idle: { w: 110, h: 195 }, bubble: { w: 270, h: 240 } },
+    "real-clippy": { idle: { w: 130, h: 145 }, bubble: { w: 280, h: 200 } },
+    cat:           { idle: { w: 160, h: 200 }, bubble: { w: 300, h: 240 } },
+    "cat-lab":     { idle: { w: 160, h: 200 }, bubble: { w: 300, h: 240 } },
+    // "off" never has a visible floater so the size doesn't matter, but
+    // keep an entry so the lookup is total.
+    off:           { idle: { w: 150, h: 175 }, bubble: { w: 290, h: 220 } },
+  };
+  /** Bubble is "visible" whenever displayState != "idle" (the template's
+   *  class:show binds to exactly that — see the bubble element above). */
+  let bubbleVisible = $derived(displayState !== "idle");
+
+  /**
+   * Resize the floater window, keeping its visual CENTER fixed so the avatar
+   * doesn't appear to jump. All coordinates are PHYSICAL pixels (Tauri's
+   * outerPosition / outerSize / setSize / setPosition all operate in
+   * physical px regardless of the logical units in the size constants).
+   */
+  async function resizeFloaterCentered(target: Size) {
+    try {
+      const { getCurrentWindow, PhysicalPosition, PhysicalSize } = await import(
+        "@tauri-apps/api/window"
+      );
+      const w = getCurrentWindow();
+      const sf = await w.scaleFactor();
+      const targetPhys = {
+        w: Math.round(target.w * sf),
+        h: Math.round(target.h * sf),
+      };
+      const curSize = await w.outerSize();
+      // No-op if we're already at the target — guards against tight effect
+      // re-runs (skin + displayState changing in the same tick).
+      if (curSize.width === targetPhys.w && curSize.height === targetPhys.h) {
+        return;
+      }
+      const curPos = await w.outerPosition();
+      const dx = targetPhys.w - curSize.width;
+      const dy = targetPhys.h - curSize.height;
+      const newX = curPos.x - Math.round(dx / 2);
+      const newY = curPos.y - Math.round(dy / 2);
+      // Order matters here: resize first (grows around the current top-left)
+      // then move so the centre ends up in the right place. Doing it in the
+      // other order produces a brief flash where the window is in the wrong
+      // place at the wrong size.
+      await w.setSize(new PhysicalSize(targetPhys.w, targetPhys.h));
+      await w.setPosition(new PhysicalPosition(newX, newY));
+    } catch (e) {
+      console.warn("[clippy] resizeFloaterCentered failed", e);
+    }
+  }
+
+  // Watch the skin + bubble-visible inputs and apply the right size. Debounced
+  // implicitly by the resize no-op guard above.
+  $effect(() => {
+    const sizes = WINDOW_SIZES[skin] ?? WINDOW_SIZES.fox;
+    const target = bubbleVisible ? sizes.bubble : sizes.idle;
+    void resizeFloaterCentered(target);
+  });
 
   // Ask the backend to force-repaint the floater (size nudge) — used to heal
   // a blank-after-resume WebView2 surface. Safe to over-call: the backend
@@ -701,40 +739,7 @@
     };
     window.addEventListener("mouseup", onMove);
 
-    // ── Clickthrough hit-shape tracker ──────────────────────────────────
-    // Goal: only the avatar's painted pixels (and the bubble while visible,
-    // and any open right-click menu) should intercept clicks. Everything
-    // else inside the floater window should fall through to whatever app is
-    // behind it. Window-level `set_ignore_cursor_events(true)` is the only
-    // way to actually make a click pass to the underlying app (CSS pointer-
-    // events just decides which DOM element catches it, it doesn't make the
-    // OS pass-through). So we toggle the window state based on a JS
-    // mousemove + elementFromPoint hit-test, and Rust polls the OS cursor
-    // when ignoring (since an ignored window doesn't receive its own
-    // mousemove events — we'd lose the ability to detect cursor re-entry).
-    const onPointerMove = (e: MouseEvent) => {
-      if (isModalCatching()) {
-        setIgnore(false);
-        return;
-      }
-      const hit = hitTestAvatar(e.clientX, e.clientY);
-      setIgnore(!hit);
-    };
-    document.addEventListener("mousemove", onPointerMove);
-    let unlistenCursorEnter: (() => void) | undefined;
-    // Re-enter event from Rust: when the cursor crosses back into the
-    // window bounds (detected by the OS-cursor poller in cursor_poller.rs),
-    // Rust has already un-ignored us. Mirror the state so the next
-    // mousemove computes from the right base. We don't proactively start
-    // catching here — JS's mousemove will fire within ~milliseconds and
-    // make the final decision based on the actual hit-test.
-    listen("wispr:cursor_entered", () => {
-      isIgnoring = false;
-    }).then((u) => (unlistenCursorEnter = u));
-
     return () => {
-      document.removeEventListener("mousemove", onPointerMove);
-      unlistenCursorEnter?.();
       unlisten?.();
       unlistenMode?.();
       unlistenMsg?.();
