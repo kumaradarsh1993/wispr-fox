@@ -86,6 +86,64 @@
   let hoverShiftX = $state(0);
   let hoverShiftY = $state(0);
 
+  // ── Clickthrough scaffolding (used by onMount's mousemove hit-test) ──
+  // The window starts catching; we toggle to ignore=true when the cursor
+  // moves off the avatar shape so clicks pass through to whatever app is
+  // behind. The hit-test walks up from elementFromPoint looking for one of
+  // these classes; with SVG `pointer-events: visiblePainted` the SVG only
+  // appears as the hit element when the cursor is over an actually-painted
+  // pixel — pixel-perfect for SVG avatars, bounding-rect-perfect for the
+  // PNG fox / sprite Clippy / our bubble.
+  let isIgnoring = $state(false);
+  const CATCH_CLASSES = [
+    "character", // SVG avatar root (stylized / cat / cat-lab)
+    "fox-stage", // fox-skin PNG cluster
+    "clippy", // real-clippy sprite div (clippyjs adds this class)
+    "clippy-balloon", // real-clippy speech balloon
+    "bubble", // our speech bubble
+  ];
+  function hitTestAvatar(clientX: number, clientY: number): boolean {
+    const el = document.elementFromPoint(clientX, clientY);
+    if (!el) return false;
+    let cur: Element | null = el;
+    while (cur && cur !== document.body) {
+      const cl = cur.classList;
+      if (cl) {
+        for (const klass of CATCH_CLASSES) {
+          if (cl.contains(klass)) return true;
+        }
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
+  function setIgnore(next: boolean) {
+    if (next === isIgnoring) return;
+    isIgnoring = next;
+    invoke("set_clickthrough", { ignore: next }).catch((e) =>
+      console.warn("[clippy] set_clickthrough failed", e),
+    );
+  }
+  function isModalCatching(): boolean {
+    // User picked "bubble catches clicks while visible" — so any non-idle
+    // displayState (which is when the bubble shows) and any open right-click
+    // menu both unconditionally force catching.
+    if (displayState !== "idle") return true;
+    if (ctxMenuOpen) return true;
+    return false;
+  }
+  // When the bubble appears/disappears OR the right-click menu opens/closes,
+  // re-evaluate catching state immediately. The user shouldn't have to jiggle
+  // the mouse to "unlock" interaction with a freshly-appeared bubble.
+  $effect(() => {
+    // Touch reactive state so the effect re-runs on change.
+    void displayState;
+    void ctxMenuOpen;
+    if (isModalCatching()) {
+      setIgnore(false);
+    }
+  });
+
   // Transient message override — when Rust emits `wispr:clippy_message`
   // (e.g. "Copied to clipboard" after a cross-process silent delivery),
   // we show this text in the bubble for ~3s, overriding the state-driven
@@ -373,15 +431,6 @@
   onMount(() => {
     skinStore.subscribe();
 
-    // Tag the document so the CSS Mac-fallback rule (opaque cream background)
-    // kicks in only on macOS. Drives the rule in this component's <style>.
-    if (typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.userAgent)) {
-      try {
-        document.documentElement.setAttribute("data-platform", "macos");
-        document.body.setAttribute("data-platform", "macos");
-      } catch {/* ignore */}
-    }
-
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
     let unlistenMsg: (() => void) | undefined;
@@ -652,7 +701,40 @@
     };
     window.addEventListener("mouseup", onMove);
 
+    // ── Clickthrough hit-shape tracker ──────────────────────────────────
+    // Goal: only the avatar's painted pixels (and the bubble while visible,
+    // and any open right-click menu) should intercept clicks. Everything
+    // else inside the floater window should fall through to whatever app is
+    // behind it. Window-level `set_ignore_cursor_events(true)` is the only
+    // way to actually make a click pass to the underlying app (CSS pointer-
+    // events just decides which DOM element catches it, it doesn't make the
+    // OS pass-through). So we toggle the window state based on a JS
+    // mousemove + elementFromPoint hit-test, and Rust polls the OS cursor
+    // when ignoring (since an ignored window doesn't receive its own
+    // mousemove events — we'd lose the ability to detect cursor re-entry).
+    const onPointerMove = (e: MouseEvent) => {
+      if (isModalCatching()) {
+        setIgnore(false);
+        return;
+      }
+      const hit = hitTestAvatar(e.clientX, e.clientY);
+      setIgnore(!hit);
+    };
+    document.addEventListener("mousemove", onPointerMove);
+    let unlistenCursorEnter: (() => void) | undefined;
+    // Re-enter event from Rust: when the cursor crosses back into the
+    // window bounds (detected by the OS-cursor poller in cursor_poller.rs),
+    // Rust has already un-ignored us. Mirror the state so the next
+    // mousemove computes from the right base. We don't proactively start
+    // catching here — JS's mousemove will fire within ~milliseconds and
+    // make the final decision based on the actual hit-test.
+    listen("wispr:cursor_entered", () => {
+      isIgnoring = false;
+    }).then((u) => (unlistenCursorEnter = u));
+
     return () => {
+      document.removeEventListener("mousemove", onPointerMove);
+      unlistenCursorEnter?.();
       unlisten?.();
       unlistenMode?.();
       unlistenMsg?.();
@@ -1354,23 +1436,31 @@
     -webkit-user-select: none;
   }
 
-  /* macOS fallback: tauri.macos.conf.json forces the floater window to be
-     OPAQUE (`transparent: false`) because the transparent + macOSPrivateApi
-     combo was rendering as a zero-alpha ghost surface on macOS Sequoia / M4
-     — the avatar SVG was painting, you just couldn't see anything behind
-     it. Without the transparent flag the WindowServer composites the surface
-     reliably, but the html/body `background: transparent` declaration above
-     leaves an unstyled near-white box. Detect Mac via userAgent and paint
-     the warm cream surface from the app palette so the floater visually
-     matches the rest of the app instead of looking like an alert. This is
-     a temporary tactical retreat — we'll restore native transparency once
-     we land a proven workaround for the macOS-Sequoia ghost-window issue. */
-  @media not all and (prefers-reduced-transparency: reduce) {
-    :global(html[data-platform="macos"]),
-    :global(body[data-platform="macos"]) {
-      background: var(--bg-card, #faf6ec) !important;
-      border-radius: 14px;
-    }
+  /* ── Clickthrough hit-shape scoping ────────────────────────────────────
+     The floater window stays catching by default, but JS dynamically toggles
+     `set_ignore_cursor_events(true)` whenever the cursor leaves the avatar
+     shape (or the bubble, when visible). The hit-test uses
+     `document.elementFromPoint(x, y)` and walks up looking for one of the
+     "catching" classes below — so the CSS here is mostly a guarantee that
+     SVG avatars only intercept clicks on PAINTED pixels (not their
+     transparent bounding rect). Browsers natively respect
+     `pointer-events: visiblePainted` on SVG: clicks/hover only register
+     where the SVG actually drew something. */
+  :global(svg.character) {
+    pointer-events: visiblePainted;
+  }
+  /* Real-Clippy sprite is a div with background-image; its rectangular
+     bounds are tight against the visible sprite so a rect hit-test is fine. */
+  :global(body > .clippy),
+  :global(body > .clippy-balloon),
+  :global(.bubble) {
+    pointer-events: auto;
+  }
+  /* The fox-stage is a 130×150 cluster of cross-faded PNGs; clicks should
+     register over the cluster but NOT over the transparent gap between
+     the cluster and the window edge. */
+  :global(.fox-stage) {
+    pointer-events: auto;
   }
 
   /* clippyts injects a div.clippy + div.clippy-balloon into document.body.

@@ -1,6 +1,7 @@
 mod audio;
 mod clippy;
 mod commands;
+mod cursor_poller;
 mod flow;
 mod gc;
 mod history;
@@ -264,6 +265,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::js_heartbeat_ping,
+            commands::set_clickthrough,
             commands::recover_clippy_window,
             commands::accessibility_ok,
             commands::floater_trigger,

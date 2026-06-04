@@ -140,6 +140,8 @@ export const api = {
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
   floaterTrigger: (mode: "light" | "advanced" | "drafting") =>
     invoke<void>("floater_trigger", { mode }),
+  setClickthrough: (ignore: boolean) =>
+    invoke<void>("set_clickthrough", { ignore }),
   revealFolder: (kind: "audio" | "sounds" | "avatars" | "data") =>
     invoke<void>("reveal_folder", { kind }),
   checkForUpdates: () => invoke<UpdateInfo>("check_for_updates"),

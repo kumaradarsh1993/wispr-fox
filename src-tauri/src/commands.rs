@@ -80,6 +80,25 @@ pub fn recover_clippy_window(app: AppHandle) {
     force_repaint(&w);
 }
 
+/// Toggle the floater window's clickthrough mode. When `ignore=true` the
+/// window passes all clicks through to whatever app is behind it — and stops
+/// receiving any mouse events itself. Used by the JS hit-test in
+/// `clippy/+page.svelte` to make ONLY the avatar shape (and the bubble while
+/// it's visible) catch clicks; empty pixels around the avatar become
+/// transparent to mouse input.
+///
+/// When ignore goes true we also kick off a background OS-cursor poller so
+/// the moment the user moves their mouse back over the floater bounds we can
+/// re-enable catching — without the poller, a cursor-ignored window can
+/// never notice the cursor returning.
+#[tauri::command]
+pub fn set_clickthrough(window: tauri::WebviewWindow, ignore: bool) {
+    let _ = window.set_ignore_cursor_events(ignore);
+    if ignore {
+        crate::cursor_poller::spawn_if_needed(window);
+    }
+}
+
 /// Trigger a recording from the floater's right-click context menu (or any
 /// non-hotkey caller). Behaves like a sticky-invoke hotkey press: a second
 /// call toggles recording off. `mode` is "light", "advanced", or "drafting".
