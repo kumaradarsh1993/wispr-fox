@@ -34,18 +34,32 @@ pub fn js_heartbeat_ping(ping_state: State<'_, crate::power::JsPingState>) {
 /// is to change the window size, which forces WebView2 to recreate its swap
 /// chain and repaint. We bump by 1px then restore the exact size.
 pub(crate) fn force_repaint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
-    let _ = window.show();
-    let _ = window.set_always_on_top(true);
-    // The size-nudge is a Windows-only workaround: WebView2 loses its
-    // DirectComposition surface after sleep and only a resize forces it to
-    // rebuild. On macOS/Linux (WKWebView / WebKitGTK) the surface survives
-    // resume, so the nudge is pointless there — and a 1px resize on a
-    // transparent always-on-top floater can cause a visible jitter. Skip it.
-    #[cfg(windows)]
-    if let Ok(size) = window.outer_size() {
-        let bumped = tauri::PhysicalSize::new(size.width + 1, size.height + 1);
-        let _ = window.set_size(bumped);
-        let _ = window.set_size(size);
+    // macOS path: hide() → show() in sequence forces the WKWebView surface to
+    // re-register with the WindowServer. This recovers from the zero-alpha
+    // "ghost window" state where AppKit thinks the window is visible but no
+    // pixels are composited (reported on M4 Pro for transparent + macOSPrivateApi
+    // + alwaysOnTop floaters). A plain `show()` is a no-op on an already-
+    // visible-from-AppKit's-POV window, so the previous version of this
+    // function silently failed to recover on Mac.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.hide();
+        let _ = window.show();
+        let _ = window.set_always_on_top(true);
+        return;
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = window.show();
+        let _ = window.set_always_on_top(true);
+        // Windows-only: WebView2 loses its DirectComposition surface after
+        // sleep and only a resize forces it to rebuild.
+        #[cfg(windows)]
+        if let Ok(size) = window.outer_size() {
+            let bumped = tauri::PhysicalSize::new(size.width + 1, size.height + 1);
+            let _ = window.set_size(bumped);
+            let _ = window.set_size(size);
+        }
     }
 }
 

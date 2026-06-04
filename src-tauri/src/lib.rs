@@ -162,6 +162,45 @@ pub fn run() {
                 });
                 // Show by default; users can hide via the X button or tray menu.
                 let _ = clippy.show();
+                // macOS: transparent + alwaysOnTop + macOSPrivateApi windows
+                // need a kick to actually composite. Without this, `show()`
+                // marks the window visible at the AppKit level but no pixels
+                // are drawn — the user sees nothing, the WKWebView gets
+                // throttled (heartbeat goes stale), and `recover_clippy_window`
+                // from the JS heartbeat doesn't help because `show()` on an
+                // already-shown-but-invisible window is a no-op. The reliable
+                // wake-up is hide()→show() in sequence so the WindowServer
+                // re-registers the surface fresh.
+                #[cfg(target_os = "macos")]
+                {
+                    let c = clippy.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        let _ = c.hide();
+                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                        let _ = c.show();
+                        let _ = c.set_always_on_top(true);
+                    });
+                }
+            }
+
+            // macOS first-launch surface. The main window has visible: false
+            // in tauri.conf.json so it doesn't flash if `open_silently` is on.
+            // But on a Mac with no on-disk settings yet (fresh install), the
+            // frontend's "if !open_silently { show() }" path runs from inside
+            // the main window's webview — which doesn't actually load until
+            // the window is first shown. Classic chicken-and-egg. Solve from
+            // Rust: show + explicitly activate the app so the user sees the
+            // homepage on first launch. RunEvent::Reopen handles subsequent
+            // Dock clicks.
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.unminimize();
+                    let _ = main.set_focus();
+                }
+                macos_activate_app();
             }
 
             // Layer 1: resume detector — detects system sleep/wake from the
@@ -245,23 +284,55 @@ pub fn run() {
     app.run(|_app_handle, _event| {
         #[cfg(target_os = "macos")]
         {
-            if let RunEvent::Reopen { has_visible_windows, .. } = &_event {
-                if !*has_visible_windows {
-                    if let Some(w) = _app_handle.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                    }
-                    // The floater may also have been hidden; re-show it via
-                    // the recovery path that force-repaints, so a stale
-                    // transparent surface doesn't render as a ghost window.
-                    if let Some(c) = _app_handle.get_webview_window("clippy") {
-                        if !c.is_visible().unwrap_or(false) {
-                            crate::commands::force_repaint(&c);
-                        }
-                    }
+            // Dock-icon click. We do NOT gate on `has_visible_windows` because
+            // a transparent + macOSPrivateApi window can be "visible" at the
+            // AppKit level while invisible to the user (zero-alpha surface
+            // never composited). In that situation `has_visible_windows = true`
+            // would skip the re-show and leave the user stuck — which is
+            // exactly the M4 Pro bug reported on nightly.8 and nightly.9.
+            // Always re-show and activate so the click ALWAYS lands the user
+            // on the main window.
+            if let RunEvent::Reopen { .. } = &_event {
+                if let Some(w) = _app_handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
                 }
+                // Kick the clippy floater too — hide + show forces the
+                // WKWebView surface to re-register with the WindowServer,
+                // recovering from any zero-alpha "ghost window" state.
+                if let Some(c) = _app_handle.get_webview_window("clippy") {
+                    let _ = c.hide();
+                    let _ = c.show();
+                    let _ = c.set_always_on_top(true);
+                }
+                macos_activate_app();
             }
         }
     });
+}
+
+/// Explicitly activate the macOS app via `[NSApplication.shared
+/// activateIgnoringOtherApps:YES]`. Tauri's `window.show()` marks the window
+/// visible with AppKit but doesn't bring the app to the foreground — and
+/// without foreground activation, transparent + macOSPrivateApi windows
+/// don't get composited, so the user sees no pixels even though Tauri
+/// reports `is_visible() == true`. Calling this immediately after `show()`
+/// is what makes the window actually appear on screen on a fresh M-series
+/// MacBook (reported on M4 Pro, nightly.8/9).
+#[cfg(target_os = "macos")]
+fn macos_activate_app() {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSApplication;
+    use objc2::ClassType;
+    // SAFETY: NSApplication.sharedApplication is documented to be safe to
+    // call from any thread; activate(ignoringOtherApps:) is documented as
+    // main-thread-only. We're invoked from the Tauri setup closure or the
+    // RunEvent loop, both of which run on the main thread.
+    unsafe {
+        let ns_app: *mut AnyObject =
+            msg_send![NSApplication::class(), sharedApplication];
+        let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+    }
 }

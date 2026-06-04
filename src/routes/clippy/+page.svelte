@@ -503,43 +503,68 @@
       invoke("js_heartbeat_ping").catch(() => {});
     }, 10_000);
 
-    // Restore the saved floater position — but VALIDATE it against the
-    // current monitor layout first. WebView2's localStorage survives
-    // uninstall/reinstall (lives in %LOCALAPPDATA%\com.wispr-fox.app\EBWebView\),
-    // so a position from a previous setup (e.g. coords on a 4K external
-    // monitor that's no longer plugged in) would otherwise drop the window
-    // somewhere off-screen and the user thinks the floater is broken.
-    // Reported on an XPS 13 — fixed by clamping to a real monitor.
+    // Place the floater on first launch / restore saved position. The tauri.conf
+    // initial position (x=100, y=100) is fine on Windows but on macOS can land
+    // the window under the menu bar / notch on a 14" / 16" MacBook, where the
+    // user thinks "the avatar didn't show up" — actually it did, just hidden
+    // by the notch. Always run this block (even with no saved position) so the
+    // first-launch experience is a guaranteed-visible bottom-right placement.
+    // WebView2/WKWebView's localStorage also survives uninstall/reinstall, so
+    // an old saved position from a no-longer-attached monitor is validated
+    // against current monitors (XPS 13 offscreen-floater bug).
     (async () => {
+      const win = getCurrentWindow();
+      const winW = 190;
+      const winH = 210;
+      const margin = 60;
+
+      const placeDefault = async () => {
+        try {
+          const { availableMonitors, primaryMonitor } = await import(
+            "@tauri-apps/api/window"
+          );
+          const monitors = await availableMonitors();
+          // Prefer the primary monitor if the API surfaces it; some Tauri
+          // builds return monitors[0] as the primary, but on Mac with an
+          // external display attached the order can flip — primaryMonitor()
+          // is the authoritative answer.
+          let m = monitors[0];
+          try {
+            const p = await primaryMonitor();
+            if (p) m = p;
+          } catch {
+            /* fall back to monitors[0] */
+          }
+          if (!m) return;
+          const defaultX = m.position.x + m.size.width - winW * 2 - 32;
+          const defaultY = m.position.y + m.size.height - winH * 2 - 80;
+          await win.setPosition(new LogicalPosition(defaultX, defaultY));
+        } catch (e) {
+          console.warn("[clippy] default-position placement failed", e);
+        }
+      };
+
       const saved = localStorage.getItem("wispr.clippy.pos");
-      if (!saved) return;
+      if (!saved) {
+        await placeDefault();
+        return;
+      }
       let parsed: { x: number; y: number };
       try {
         parsed = JSON.parse(saved);
       } catch {
         localStorage.removeItem("wispr.clippy.pos");
+        await placeDefault();
         return;
       }
-      const win = getCurrentWindow();
       try {
         const { availableMonitors } = await import("@tauri-apps/api/window");
         const monitors = await availableMonitors();
-        // Window is 190x210 (logical). Position is stored as physical pixels
-        // from outerPosition(); compare in physical space against monitor
-        // physical bounds. Treat the position as "valid" if at least 60×60
-        // of the window lies within any monitor's bounds.
-        const winW = 190;
-        const winH = 210;
-        const margin = 60;
-        const inside = monitors.some((m) => {
-          const left = m.position.x;
-          const top = m.position.y;
-          const right = left + m.size.width;
-          const bottom = top + m.size.height;
-          // Account for DPI scaling — Tauri's outerPosition is physical pixels,
-          // monitor.position/size are physical pixels too, so they're
-          // commensurable. But the saved pos was stored verbatim from
-          // outerPosition(); confirm overlap with at least `margin` pixels.
+        const inside = monitors.some((mn) => {
+          const left = mn.position.x;
+          const top = mn.position.y;
+          const right = left + mn.size.width;
+          const bottom = top + mn.size.height;
           return (
             parsed.x + winW - margin > left &&
             parsed.x + margin < right &&
@@ -556,16 +581,11 @@
             "is offscreen; dropping it and using default",
           );
           localStorage.removeItem("wispr.clippy.pos");
-          // Place near bottom-right of primary monitor as a sensible default.
-          const primary = monitors[0];
-          if (primary) {
-            const defaultX = primary.position.x + primary.size.width - winW * 2 - 32;
-            const defaultY = primary.position.y + primary.size.height - winH * 2 - 80;
-            await win.setPosition(new LogicalPosition(defaultX, defaultY));
-          }
+          await placeDefault();
         }
       } catch (e) {
         console.warn("[clippy] position restore failed", e);
+        await placeDefault();
       }
     })();
 
