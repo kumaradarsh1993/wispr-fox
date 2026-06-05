@@ -388,8 +388,11 @@
       {#if showA11yBanner}
         <div class="a11y-banner" role="alert">
           <span class="a11y-text">
-            Auto-paste needs <strong>Accessibility</strong> permission. Until you grant it,
-            dictated text is copied to your clipboard but won't paste itself.
+            Auto-paste needs <strong>Accessibility</strong> permission, and macOS ties it to the
+            exact app binary — so <strong>after every update you have to re-grant it</strong>. If
+            wispr-fox is already in the list but this still shows, select it, click <strong>–</strong>
+            to remove it, then click Open Settings and re-add wispr-fox (or toggle it off and on).
+            Until then, dictated text is copied to your clipboard but won't paste itself.
           </span>
           <button class="a11y-btn" onclick={grantAccessibility}>Open Settings</button>
           <button class="a11y-btn ghost" onclick={() => checkAccessibility()}>Re-check</button>

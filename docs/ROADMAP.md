@@ -66,6 +66,12 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.9** — tightened every avatar's box (less L/R + bottom
+  padding, much smaller overall — e.g. cat 198×252 → 174×190); the bubble
+  now anchors just above each character's head and grows upward, so it hugs
+  the head at rest instead of floating with a gap. macOS Accessibility
+  banner now explains the real cause (unsigned-update invalidates the grant)
+  + how to re-grant. (Durable fix = stable code-signing in CI — proposed.)
 - ✅ **v1.3.0-nightly.8** — Mac hotkeys simplified to a single ⌥ chord
   (⌥Space dictate, ⌥Enter draft, ⌘ for sticky) instead of the ⌃⌥ three-key
   combos — works out of the box, no macOS "standard function keys" setting

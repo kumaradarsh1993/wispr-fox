@@ -190,19 +190,39 @@
   // everything stays in proportion. This kills the jump, the flicker, and
   // the bubble-on-face problems that the dynamic-resize approach caused.
   //
-  // Sizes are LOGICAL px at scale 1.0. Bottom area = the avatar; top area =
-  // room for the bubble. Tightened per-skin but each still reserves enough
-  // headroom for a 3-line bubble. Tweak freely; nothing else depends on
-  // these now.
+  // Each avatar's footprint + where its head is, all LOGICAL px at scale 1.0.
+  //   w/h  = the rendered character size (must match the avatar CSS below).
+  //   head = distance from the window BOTTOM up to where the speech bubble's
+  //          tail sits — just above the character's visible head. The bubble
+  //          anchors here and grows UPWARD, so even at rest it hugs the head
+  //          (no big gap) and long text never reaches the face.
+  // The box is derived from these so it's as TIGHT as possible while still
+  // fitting the character + a 3-line bubble. Bubble-driven width keeps L/R
+  // padding minimal; bottom padding is small (the shadow sits at 6px).
   type Size = { w: number; h: number };
-  const BOX: Record<string, Size> = {
-    fox:           { w: 196, h: 206 },
-    stylized:      { w: 196, h: 212 },
-    "real-clippy": { w: 192, h: 204 },
-    cat:           { w: 198, h: 252 },
-    "cat-lab":     { w: 198, h: 252 },
-    off:           { w: 196, h: 206 },
+  type Art = { w: number; h: number; head: number };
+  const ART: Record<string, Art> = {
+    fox:           { w: 116, h: 116, head: 110 },
+    stylized:      { w: 128, h: 122, head: 120 },
+    "real-clippy": { w: 118, h: 112, head: 110 },
+    cat:           { w: 150, h: 168, head: 128 },
+    "cat-lab":     { w: 150, h: 168, head: 128 },
+    off:           { w: 116, h: 116, head: 110 },
   };
+  const SIDE_PAD = 8; // L/R breathing room around the character
+  const BOTTOM_PAD = 8; // gap below the character (shadow lives at 6px)
+  const TOP_MARGIN = 6; // gap above the character/bubble to the window top
+  const BUBBLE_BAND = 62; // room above the head for the bubble (~3 lines)
+  const BUBBLE_W = 174; // min box width — enough to host the centred bubble
+
+  function boxFor(skin: string): Size {
+    const a = ART[skin] ?? ART.fox;
+    return {
+      w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
+      h: Math.max(a.h + BOTTOM_PAD + TOP_MARGIN, a.head + BUBBLE_BAND),
+    };
+  }
+
   // The right-click menu renders INSIDE this window and does NOT scale with
   // fscale, so while it's open the window must be at least this big (logical
   // px) or the menu gets cropped. Tall enough for the Avatar sub-pane (7 rows).
@@ -212,6 +232,10 @@
   // User-chosen size multiplier (sticky, sidebar + settings slider). The ONLY
   // input (besides skin + the open menu) that changes the window size now.
   let fscale = $derived(floaterScale.current);
+
+  // Where the bubble's tail sits (logical px from window bottom), scaled.
+  // The bubble anchors here and grows upward, so it hugs the head at rest.
+  let bubbleBottom = $derived((ART[skin]?.head ?? ART.fox.head) * fscale);
 
   // Debug overlay (off by default). Shows the requested vs ACTUAL window size
   // so we can tell at a glance whether setSize is taking effect — the whole
@@ -262,7 +286,7 @@
   // resizes mid-dictation (no jump, no flicker). The bubble lives inside this
   // fixed box.
   $effect(() => {
-    const box = BOX[skin] ?? BOX.fox;
+    const box = boxFor(skin);
     let w = Math.round(box.w * fscale);
     let h = Math.round(box.h * fscale);
     // While the right-click menu is open, ensure the window is at least big
@@ -872,7 +896,7 @@
 
 <div
   class="clippy-stage"
-  style="--fscale:{fscale};"
+  style="--fscale:{fscale}; --bubble-bottom:{bubbleBottom}px;"
   role="button"
   tabindex="0"
   aria-label="wispr-fox floater — drag to move, right-click for options"
@@ -1640,7 +1664,7 @@
     justify-content: center;
     /* Matches BOTTOM_PAD in the sizing math so the avatar's baseline lines up
        with where the window-size + bubble-anchor calculations expect it. */
-    padding-bottom: 12px;
+    padding-bottom: 8px;
     cursor: grab;
   }
 
@@ -1914,19 +1938,19 @@
        visual regressions on the stylized skin per user feedback. Will
        resurface as part of the new fox skin in a future build.) */
 
-  /* Speech bubble — pinned near the TOP of the fixed box, above the avatar
-     (which is bottom-anchored). The box is sized per-skin with enough headroom
-     that even a 3-line bubble never reaches the character's face. */
+  /* Speech bubble — anchored just above the character's head (--bubble-bottom,
+     measured from the window bottom) and grows UPWARD as text gets longer, so
+     it hugs the head at rest (no big gap) and never reaches the face. The box
+     is sized per-skin with enough headroom above for a 3-line bubble. */
   .bubble {
     position: absolute;
-    top: calc(8px * var(--fscale, 1));
-    bottom: auto;
+    bottom: var(--bubble-bottom, 130px);
+    top: auto;
     left: 50%;
-    transform: translateX(-50%) translateY(-6px) scale(0.92);
-    /* Scale the bubble WITH the floater scale: at Small the window + band
-       shrink, so the bubble (font, padding, width) must shrink too or the
-       same text overflows the smaller band and clips/covers the face. */
-    max-width: calc(184px * var(--fscale, 1));
+    transform: translateX(-50%) translateY(6px) scale(0.92);
+    /* Scale the bubble WITH the floater scale so Small shrinks text + box
+       together instead of overflowing. */
+    max-width: calc(162px * var(--fscale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 14px;
