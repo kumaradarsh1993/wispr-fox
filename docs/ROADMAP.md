@@ -66,6 +66,14 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.4** — floater jump + bubble polish: bottom-centre
+  anchor so the character holds its spot while the window grows upward for
+  the bubble (no more downward jump on F8 / settle-back when done); the
+  speech bubble now anchors above the head and grows upward with a
+  guaranteed buffer, so long "marathon" text never covers the face; window
+  sizes derived from each skin's art footprint (so S/M/L scales the box
+  too); and the window is size-locked (min==max) so you can't accidentally
+  drag-resize it.
 - ✅ **v1.3.0-nightly.3** — the real fix: the floater webview's JS window
   API was broken (`outerSize()` rejected, so the resize aborted before
   `setSize` ever ran — the debug overlay showed `got 0×0`). Moved the whole

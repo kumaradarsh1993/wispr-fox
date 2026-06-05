@@ -204,16 +204,49 @@
   type Size = { w: number; h: number };
   type SizeState = "dormant" | "idle" | "active";
   type SkinSizes = Record<SizeState, Size>;
-  const WINDOW_SIZES: Record<string, SkinSizes> = {
-    stylized:      { dormant: { w: 100, h: 104 }, idle: { w: 136, h: 144 }, active: { w: 190, h: 188 } },
-    fox:           { dormant: { w: 100, h: 104 }, idle: { w: 130, h: 140 }, active: { w: 190, h: 186 } },
-    "real-clippy": { dormant: { w: 104, h: 100 }, idle: { w: 126, h: 124 }, active: { w: 186, h: 168 } },
-    cat:           { dormant: { w: 122, h: 134 }, idle: { w: 158, h: 178 }, active: { w: 196, h: 226 } },
-    "cat-lab":     { dormant: { w: 122, h: 134 }, idle: { w: 158, h: 178 }, active: { w: 196, h: 226 } },
-    // "off" never shows a visible floater so the size is moot, but keep an
-    // entry so the lookup is total.
-    off:           { dormant: { w: 120, h: 140 }, idle: { w: 140, h: 160 }, active: { w: 190, h: 200 } },
+  // Per-skin ART FOOTPRINT (the avatar's rendered box at scale 1.0, in
+  // logical px). EVERYTHING else — the three window sizes AND the bubble
+  // anchor — is derived from this so they can never drift out of sync. These
+  // must match the avatar CSS width/height for each skin below.
+  type Art = { w: number; h: number };
+  const ART: Record<string, Art> = {
+    fox:           { w: 116, h: 116 },
+    stylized:      { w: 128, h: 122 },
+    "real-clippy": { w: 120, h: 112 },
+    cat:           { w: 150, h: 168 },
+    "cat-lab":     { w: 150, h: 168 },
+    off:           { w: 120, h: 120 },
   };
+  // Layout constants (logical px, at scale 1.0).
+  const SIDE_PAD = 10; // breathing room left/right of the avatar at idle
+  const BOTTOM_PAD = 12; // gap below the avatar (its feet aren't on the edge)
+  const TOP_PAD = 12; // gap above the avatar's head when no bubble is shown
+  const BUBBLE_GAP = 10; // gap between the avatar's head and the bubble's tail
+  const BUBBLE_BAND = 70; // reserved vertical room for the bubble (~3 lines)
+  const BUBBLE_W = 188; // min active width — enough to host the centred bubble
+  const DORMANT_ART = 0.72; // avatar shrink factor when dormant
+
+  /** Derive the three window sizes from an art footprint. The avatar stays the
+   *  SAME size between idle and active — only the empty room above it (for the
+   *  bubble) changes — so the character never jumps. Dormant additionally
+   *  shrinks the art. All bottom-anchored. */
+  function sizesFor(skin: string): SkinSizes {
+    const a = ART[skin] ?? ART.fox;
+    return {
+      idle: {
+        w: a.w + 2 * SIDE_PAD,
+        h: a.h + BOTTOM_PAD + TOP_PAD,
+      },
+      active: {
+        w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
+        h: a.h + BOTTOM_PAD + BUBBLE_GAP + BUBBLE_BAND,
+      },
+      dormant: {
+        w: Math.round(a.w * DORMANT_ART) + 2 * SIDE_PAD,
+        h: Math.round(a.h * DORMANT_ART) + BOTTOM_PAD + 8,
+      },
+    };
+  }
 
   // Dormant-mode timer. After this much idle-with-no-hover the floater
   // settles into its smallest self. Tunable; surfaced as a setting later.
@@ -306,14 +339,21 @@
   // "active" don't churn the window, and hover never touches it. The no-op
   // guard inside resizeFloaterCentered absorbs any duplicate target.
   $effect(() => {
-    const sizes = WINDOW_SIZES[skin] ?? WINDOW_SIZES.fox;
-    const base = sizes[sizeState];
+    const base = sizesFor(skin)[sizeState];
     const target = {
       w: Math.round(base.w * fscale),
       h: Math.round(base.h * fscale),
     };
     void resizeFloaterCentered(target);
   });
+
+  // Where the speech bubble's tail sits, measured from the window bottom:
+  // just above the avatar's head. The bubble is anchored here and grows
+  // UPWARD into the empty band above, so longer text never creeps down onto
+  // the character's face. Scales with the avatar (× fscale).
+  let bubbleBottom = $derived(
+    (BOTTOM_PAD + (ART[skin]?.h ?? ART.fox.h) + BUBBLE_GAP) * fscale,
+  );
 
   // Ask the backend to force-repaint the floater (size nudge) — used to heal
   // a blank-after-resume WebView2 surface. Safe to over-call: the backend
@@ -911,7 +951,7 @@
   class="clippy-stage"
   data-tauri-drag-region
   data-size={sizeState}
-  style="--fscale:{fscale}; --state-scale:{stateScale};"
+  style="--fscale:{fscale}; --state-scale:{stateScale}; --bubble-bottom:{bubbleBottom}px;"
   role="button"
   tabindex="0"
   aria-label="Clippy floater — drag to move, double-click to open main window, right-click for options"
@@ -1684,7 +1724,9 @@
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    padding-bottom: 14px;
+    /* Matches BOTTOM_PAD in the sizing math so the avatar's baseline lines up
+       with where the window-size + bubble-anchor calculations expect it. */
+    padding-bottom: 12px;
     cursor: grab;
   }
 
@@ -1788,10 +1830,10 @@
        clipped left/right. Now 128px wide with height derived from the
        viewBox aspect, scaled by user-scale × dormant-shrink. */
     width: calc(128px * var(--fscale, 1) * var(--state-scale, 1));
-    height: auto;
+    height: calc(122px * var(--fscale, 1) * var(--state-scale, 1));
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25))
             drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
-    transition: width 320ms ease;
+    transition: width 320ms ease, height 320ms ease;
   }
 
   /* "Clippy notices you" — eyes pop slightly larger when the cursor enters
@@ -1988,12 +2030,16 @@
        visual regressions on the stylized skin per user feedback. Will
        resurface as part of the new fox skin in a future build.) */
 
-  /* Speech bubble — pinned to the top of the window. */
+  /* Speech bubble — anchored just above the avatar's head (via --bubble-bottom,
+     measured from the window bottom) and grows UPWARD as the text gets longer,
+     so it never creeps down over the character's face. The tail (::after)
+     stays at the bubble's bottom pointing down at the avatar. */
   .bubble {
     position: absolute;
-    top: 6px;
+    bottom: var(--bubble-bottom, 140px);
+    top: auto;
     left: 50%;
-    transform: translateX(-50%) translateY(-6px) scale(0.92);
+    transform: translateX(-50%) translateY(6px) scale(0.92);
     max-width: 170px;
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
@@ -2159,8 +2205,8 @@
        window and grew the cat whenever the bubble appeared). Height derives
        from the viewBox aspect. */
     width: calc(150px * var(--fscale, 1) * var(--state-scale, 1));
-    height: auto;
-    transition: width 320ms ease;
+    height: calc(168px * var(--fscale, 1) * var(--state-scale, 1));
+    transition: width 320ms ease, height 320ms ease;
   }
 
   /* Idle: gentle breathing + sleepy eyes */

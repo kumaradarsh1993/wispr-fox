@@ -98,16 +98,21 @@ pub fn resize_floater(
     center: bool,
 ) -> Result<(u32, u32, f64), String> {
     let sf = window.scale_factor().unwrap_or(1.0);
-    // Snapshot current geometry BEFORE resizing so we can re-centre.
+    // Snapshot current geometry BEFORE resizing so we can re-anchor.
     let cur_pos = window.outer_position().ok();
     let cur_size = window.outer_size().ok();
 
-    // A non-resizable window ignores set_size on Windows — make sure it's
-    // resizable first. (Config sets this too; belt-and-suspenders.)
-    let _ = window.set_resizable(true);
-
+    let logical = tauri::LogicalSize::new(width, height);
+    // Lock the window to EXACTLY this size: min == max == target. This stops
+    // the user from drag-resizing the borderless floater (the "I grabbed the
+    // edge and it scaled" problem) while still letting us change it ourselves
+    // (we update the bounds on every call). Avoids toggling WS_THICKFRAME,
+    // which can shift a borderless window and reintroduce jitter.
+    let _ = window.set_resizable(true); // belt-and-suspenders so set_size lands
+    let _ = window.set_min_size(Some(logical));
+    let _ = window.set_max_size(Some(logical));
     window
-        .set_size(tauri::LogicalSize::new(width, height))
+        .set_size(logical)
         .map_err(|e| format!("set_size: {e}"))?;
 
     if center {
@@ -116,8 +121,14 @@ pub fn resize_floater(
             let new_h = (height * sf).round() as i32;
             let dx = new_w - old.width as i32;
             let dy = new_h - old.height as i32;
+            // Bottom-CENTRE anchor. The avatar is horizontally centred and
+            // sits on the window's bottom edge, so to keep it visually still:
+            //   • keep the horizontal centre fixed  → x shifts by half of dx
+            //   • keep the BOTTOM edge fixed         → y shifts by the FULL dy
+            // The window then grows UPWARD to make room for the speech bubble
+            // and the character doesn't move at all.
             let nx = pos.x - dx / 2;
-            let ny = pos.y - dy / 2;
+            let ny = pos.y - dy;
             let _ = window.set_position(tauri::PhysicalPosition::new(nx, ny));
         }
     }
