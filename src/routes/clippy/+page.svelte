@@ -5,6 +5,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
+  import { floaterScale } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
 
@@ -169,39 +170,92 @@
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
 
-  // ── Per-skin window sizing + bubble-driven growth ────────────────────
+  // ── Per-skin window sizing: three deliberate size-states ─────────────
   //
-  // The old fixed 190×210 window was both (a) too big when idle — chunky
-  // rectangle blocking your clicks for no reason — and (b) too small when
-  // the bubble appeared, so the bubble had to live inside the avatar's
-  // breathing room and felt cramped. We solve both at once: hold a small
-  // skin-shaped window when idle, grow it to fit the bubble when one's
-  // showing, contract back when the bubble fades. Sizes are LOGICAL px;
-  // the resize math converts to PHYSICAL because Tauri's window-position
-  // and window-size APIs all speak in physical pixels (see the Retina
-  // bug deep-dive in CLAUDE.md — DO NOT mix logical/physical or you're
-  // back to off-screen floaters).
+  // Design intent (per user, nightly.15): ONE box, no per-frame thrash.
+  // The window only changes size on a genuine *size-state* change, of
+  // which there are three:
   //
-  // Anchor strategy: center the resize so the avatar stays visually in
-  // place. Without this, the OS anchors at the top-left and the avatar
-  // appears to jerk down-right whenever the bubble appears.
+  //   • active  — a bubble is showing (recording / thinking / writing /
+  //               pasting). Widest: must host the centred speech bubble.
+  //   • idle    — at rest, no bubble. Tight box hugging the avatar so the
+  //               transparent click-dead-zone around it is minimal.
+  //   • dormant — no activity for DORMANT_MS. Smallest: the avatar shrinks
+  //               into a calmer, smaller self and the box tucks in around
+  //               it (kills almost all dead-zone while you're not using it).
+  //
+  // During a single dictation the box grows ONCE (idle→active) and shrinks
+  // ONCE (active→idle) — not on every pipeline step (thinking/writing/
+  // pasting all map to "active"). Hover changes NOTHING at the window
+  // level (that was the nightly.13 flicker); it only wakes a dormant
+  // floater back to idle.
+  //
+  // Sizes below are the "design" LOGICAL px at scale 1.0. They were
+  // re-derived from each skin's actual painted bounds (the old numbers
+  // were eyeballed — the paperclip's 150px art was being clipped by a
+  // 110px window, and every skin reserved bubble-width even at rest,
+  // which is the "too much space on the right" the user reported). The
+  // active width is bubble-driven (~196) for every skin; the idle/dormant
+  // widths track the art. Final values get tuned over a nightly or two.
+  //
+  // The resize math converts these to PHYSICAL px (Tauri's window APIs all
+  // speak physical — see the Retina deep-dive in CLAUDE.md; DO NOT mix
+  // logical/physical or the floater lands off-screen).
   type Size = { w: number; h: number };
-  type SkinSizes = { idle: Size; bubble: Size };
-  // Pads include the bubble's horizontal reach (typ. ~150px to the right)
-  // and a little vertical room for ascenders/descenders + the EQ bars.
+  type SizeState = "dormant" | "idle" | "active";
+  type SkinSizes = Record<SizeState, Size>;
   const WINDOW_SIZES: Record<string, SkinSizes> = {
-    fox:           { idle: { w: 150, h: 175 }, bubble: { w: 290, h: 220 } },
-    stylized:      { idle: { w: 110, h: 195 }, bubble: { w: 270, h: 240 } },
-    "real-clippy": { idle: { w: 130, h: 145 }, bubble: { w: 280, h: 200 } },
-    cat:           { idle: { w: 160, h: 200 }, bubble: { w: 300, h: 240 } },
-    "cat-lab":     { idle: { w: 160, h: 200 }, bubble: { w: 300, h: 240 } },
-    // "off" never has a visible floater so the size doesn't matter, but
-    // keep an entry so the lookup is total.
-    off:           { idle: { w: 150, h: 175 }, bubble: { w: 290, h: 220 } },
+    stylized:      { dormant: { w: 108, h: 114 }, idle: { w: 140, h: 152 }, active: { w: 196, h: 208 } },
+    fox:           { dormant: { w: 106, h: 114 }, idle: { w: 134, h: 150 }, active: { w: 196, h: 206 } },
+    "real-clippy": { dormant: { w: 114, h: 124 }, idle: { w: 132, h: 150 }, active: { w: 196, h: 202 } },
+    cat:           { dormant: { w: 128, h: 144 }, idle: { w: 166, h: 188 }, active: { w: 202, h: 240 } },
+    "cat-lab":     { dormant: { w: 128, h: 144 }, idle: { w: 166, h: 188 }, active: { w: 202, h: 240 } },
+    // "off" never shows a visible floater so the size is moot, but keep an
+    // entry so the lookup is total.
+    off:           { dormant: { w: 120, h: 140 }, idle: { w: 140, h: 160 }, active: { w: 196, h: 210 } },
   };
-  /** Bubble is "visible" whenever displayState != "idle" (the template's
-   *  class:show binds to exactly that — see the bubble element above). */
-  let bubbleVisible = $derived(displayState !== "idle");
+
+  // Dormant-mode timer. After this much idle-with-no-hover the floater
+  // settles into its smallest self. Tunable; surfaced as a setting later.
+  const DORMANT_MS = 60_000;
+  let dormant = $state(false);
+  let dormantTimer: ReturnType<typeof setTimeout> | null = null;
+  // Drive the dormant flag from activity. Re-runs when displayState or the
+  // hover flag flips (NOT on mousemove — hoverShiftX/Y aren't read here, so
+  // tracking the cursor never reschedules and never resizes the window).
+  $effect(() => {
+    const busy = displayState !== "idle" || hovering;
+    if (dormantTimer) {
+      clearTimeout(dormantTimer);
+      dormantTimer = null;
+    }
+    if (busy) {
+      dormant = false; // any activity wakes us immediately
+    } else {
+      // At rest + not hovered → start the countdown to dormant.
+      dormantTimer = setTimeout(() => {
+        dormant = true;
+        dormantTimer = null;
+      }, DORMANT_MS);
+    }
+    return () => {
+      if (dormantTimer) {
+        clearTimeout(dormantTimer);
+        dormantTimer = null;
+      }
+    };
+  });
+
+  // The single source of truth for the window's size bucket.
+  let sizeState = $derived<SizeState>(
+    displayState !== "idle" ? "active" : dormant ? "dormant" : "idle",
+  );
+  // Avatar art shrink applied ONLY in dormant (baked into the avatar's
+  // width/height via the --state-scale CSS var so it composes cleanly with
+  // the transform-based bob/breathe animations instead of fighting them).
+  let stateScale = $derived(sizeState === "dormant" ? 0.72 : 1);
+  // User-chosen size multiplier (sticky, sidebar + settings slider).
+  let fscale = $derived(floaterScale.current);
 
   /**
    * Resize the floater window, keeping its visual CENTER fixed so the avatar
@@ -242,11 +296,17 @@
     }
   }
 
-  // Watch the skin + bubble-visible inputs and apply the right size. Debounced
-  // implicitly by the resize no-op guard above.
+  // Watch (skin, sizeState, user-scale) and apply the right physical size.
+  // Re-runs only on real size-state changes — pipeline steps that all map to
+  // "active" don't churn the window, and hover never touches it. The no-op
+  // guard inside resizeFloaterCentered absorbs any duplicate target.
   $effect(() => {
     const sizes = WINDOW_SIZES[skin] ?? WINDOW_SIZES.fox;
-    const target = bubbleVisible ? sizes.bubble : sizes.idle;
+    const base = sizes[sizeState];
+    const target = {
+      w: Math.round(base.w * fscale),
+      h: Math.round(base.h * fscale),
+    };
     void resizeFloaterCentered(target);
   });
 
@@ -468,6 +528,7 @@
 
   onMount(() => {
     skinStore.subscribe();
+    floaterScale.subscribe();
 
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
@@ -838,6 +899,8 @@
 <div
   class="clippy-stage"
   data-tauri-drag-region
+  data-size={sizeState}
+  style="--fscale:{fscale}; --state-scale:{stateScale};"
   role="button"
   tabindex="0"
   aria-label="Clippy floater — drag to move, double-click to open main window, right-click for options"
@@ -874,6 +937,12 @@
        gently while listening to reinforce the "alive and attentive" feel. -->
   {#if skin !== "off"}
     <div class="shadow" class:pulse={displayState === "listening"}></div>
+  {/if}
+
+  <!-- Dormant "napping" cue — a soft drifting z z z while the floater has
+       receded to its smallest self. Disappears the instant anything wakes it. -->
+  {#if skin !== "off" && sizeState === "dormant"}
+    <div class="zzz" aria-hidden="true">z&thinsp;z&thinsp;z</div>
   {/if}
 
   {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab"}
@@ -1504,11 +1573,14 @@
     bottom: 6px;
     left: 50%;
     transform: translateX(-50%);
-    width: 116px;
-    height: 116px;
+    /* Size = base art × user-scale × dormant-shrink. Baked into width/height
+       (not a transform) so it composes with the per-layer breathe/tilt
+       transforms instead of overwriting them. */
+    width: calc(116px * var(--fscale, 1) * var(--state-scale, 1));
+    height: calc(116px * var(--fscale, 1) * var(--state-scale, 1));
     object-fit: contain;
     opacity: 0;
-    transition: opacity 240ms ease;
+    transition: opacity 240ms ease, width 320ms ease, height 320ms ease;
   }
   /* Default: idle visible. */
   .fox-stage[data-state="idle"] .fox-idle {
@@ -1611,6 +1683,36 @@
     animation: shadow-pulse 1.4s ease-in-out infinite;
   }
 
+  /* ── Dormant rest ─────────────────────────────────────────────────────
+     After DORMANT_MS of no activity the avatar shrinks (via --state-scale,
+     already baked into each skin's width) and dims slightly so it recedes
+     until you need it. A tiny "z z z" drifts up to show it's napping, not
+     gone. Any activity OR a hover wakes it instantly (back to idle size). */
+  .clippy-stage[data-size="dormant"] .character,
+  .clippy-stage[data-size="dormant"] .fox-stage {
+    opacity: 0.78;
+    transition: opacity 360ms ease;
+  }
+  .zzz {
+    position: absolute;
+    top: 6px;
+    left: 56%;
+    font-size: calc(12px * var(--fscale, 1));
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #9aa0aa;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    animation: zzz-drift 3.2s ease-in-out infinite;
+  }
+  @keyframes zzz-drift {
+    0%   { opacity: 0; transform: translateY(5px) scale(0.9); }
+    30%  { opacity: 0.9; }
+    70%  { opacity: 0.9; }
+    100% { opacity: 0; transform: translateY(-10px) scale(1.05); }
+  }
+
   @keyframes shadow-pulse {
     0%, 100% { width: 70px; opacity: 1; }
     50% { width: 56px; opacity: 0.6; }
@@ -1625,10 +1727,14 @@
   }
 
   .clippy-stylized {
-    width: 150px;
-    height: 150px;
+    /* Was a flat 150px square, which over-ran the idle window and got
+       clipped left/right. Now 128px wide with height derived from the
+       viewBox aspect, scaled by user-scale × dormant-shrink. */
+    width: calc(128px * var(--fscale, 1) * var(--state-scale, 1));
+    height: auto;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25))
             drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+    transition: width 320ms ease;
   }
 
   /* "Clippy notices you" — eyes pop slightly larger when the cursor enters
@@ -1990,7 +2096,15 @@
      DESK CAT — animations
      ═══════════════════════════════════════════════════════════════════════ */
 
-  .cat-skin { pointer-events: none; width: 100%; height: 100%; }
+  .cat-skin {
+    pointer-events: none;
+    /* Fixed scaled box (was width/height:100%, which stretched with the
+       window and grew the cat whenever the bubble appeared). Height derives
+       from the viewBox aspect. */
+    width: calc(150px * var(--fscale, 1) * var(--state-scale, 1));
+    height: auto;
+    transition: width 320ms ease;
+  }
 
   /* Idle: gentle breathing + sleepy eyes */
   .cat-body-group {

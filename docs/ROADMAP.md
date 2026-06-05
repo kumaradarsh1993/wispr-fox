@@ -66,6 +66,13 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.1** — floater overhaul, part 1: per-skin window
+  sizing re-derived from real art bounds (kills the right-side dead-zone
+  and the clipped paperclip), one deliberate "box" with three size-states
+  (active / idle / dormant) instead of per-frame resizing, a global
+  floater **scale** control (sidebar S/M/L + a Settings slider, sticky),
+  and a **dormant rest** state — the avatar shrinks and naps after a
+  minute idle, waking the instant you use it or hover.
 - ✅ **v1.2.0 (stable, 2026-06-04)** — macOS launch fix, platform-aware
   hotkeys, Escape-to-stop, Retina position fix, onboarding scroll/skip,
   Cat (lab) experimental skin, Gemini model refresh, check-for-updates.

@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { floaterScale, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
   type SkinOption = { id: Skin; label: string; desc: string };
@@ -27,8 +28,14 @@
     await setClippyWindowVisible(s !== "off");
   }
 
+  function onScaleInput(e: Event) {
+    const v = Number.parseFloat((e.currentTarget as HTMLInputElement).value);
+    floaterScale.set(v);
+  }
+
   onMount(() => {
     skinStore.subscribe();
+    floaterScale.subscribe();
   });
 </script>
 
@@ -57,6 +64,33 @@
     {/each}
   </div>
 
+  <h3>Floater size</h3>
+  <p class="lede">Scale the floating character and its window together. Smaller frees up screen space on 13″ laptops; larger is easier to see. Applies live and sticks across restarts.</p>
+  <div class="scale-control">
+    <input
+      class="scale-slider"
+      type="range"
+      min={SCALE_MIN}
+      max={SCALE_MAX}
+      step="0.05"
+      value={floaterScale.current}
+      oninput={onScaleInput}
+      aria-label="Floater size"
+    />
+    <span class="scale-value">{Math.round(floaterScale.current * 100)}%</span>
+  </div>
+  <div class="scale-presets">
+    {#each SCALE_PRESETS as p (p.id)}
+      <button
+        class="preset-chip"
+        class:active={Math.abs(floaterScale.current - p.value) < 0.001}
+        onclick={() => floaterScale.set(p.value)}
+      >
+        {p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}
+      </button>
+    {/each}
+  </div>
+
   <h3>Theme</h3>
   <p class="lede">App-wide colour scheme. (Retro warm theme is in progress — placeholder for now.)</p>
   <div class="radio-grid">
@@ -75,3 +109,51 @@
     {/each}
   </div>
 </section>
+
+<style>
+  .scale-control {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: 420px;
+    margin-bottom: 10px;
+  }
+  .scale-slider {
+    flex: 1 1 auto;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .scale-value {
+    flex: 0 0 auto;
+    min-width: 44px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .scale-presets {
+    display: flex;
+    gap: 8px;
+  }
+  .preset-chip {
+    padding: 5px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .preset-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .preset-chip.active {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+</style>

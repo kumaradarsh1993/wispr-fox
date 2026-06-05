@@ -6,6 +6,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { usageStore } from "$lib/usage-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { api } from "$lib/api";
   import SkinIcon from "$lib/SkinIcon.svelte";
@@ -65,6 +66,9 @@
     await setClippyWindowVisible(s !== "off");
   }
 
+  // Floater size presets (S/M/L). Sticky + cross-window via floaterScale.
+  let scaleActive = $derived(floaterScale.activePreset());
+
   // Percentage of daily-limit used (Groq free tier: 2000 STT, 1000 LLM per UTC day).
   let sttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
   let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
@@ -102,6 +106,7 @@
     if (saved === "1") collapsed = true;
     usageStore.subscribe();
     skinStore.subscribe();
+    floaterScale.subscribe();
 
     // Init settings, then decide whether to show the main window. The
     // window starts hidden (tauri.conf.json visible=false) so we don't
@@ -263,6 +268,20 @@
                 </button>
               {/each}
             </div>
+            {#if skinStore.current !== "off"}
+              <div class="scale-row" role="group" aria-label="Floater size">
+                <span class="scale-label">Size</span>
+                {#each SCALE_PRESETS as p (p.id)}
+                  <button
+                    class="scale-btn"
+                    class:active={scaleActive === p.id}
+                    onclick={() => floaterScale.set(p.value)}
+                    title={`Floater size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
+                    aria-label={`Floater size ${p.label}`}
+                  >{p.label}</button>
+                {/each}
+              </div>
+            {/if}
           {:else}
             <div class="skin-grid-collapsed">
               {#each SKIN_OPTIONS as opt (opt.id)}
@@ -276,6 +295,18 @@
                 </button>
               {/each}
             </div>
+            {#if skinStore.current !== "off"}
+              <div class="scale-row-collapsed" role="group" aria-label="Floater size">
+                {#each SCALE_PRESETS as p (p.id)}
+                  <button
+                    class="scale-btn"
+                    class:active={scaleActive === p.id}
+                    onclick={() => floaterScale.set(p.value)}
+                    title={`Floater size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
+                  >{p.label}</button>
+                {/each}
+              </div>
+            {/if}
           {/if}
         </div>
       </div>
@@ -672,6 +703,57 @@
     gap: 4px;
     margin-top: 4px;
     align-items: center;
+  }
+
+  /* Floater size presets (S / M / L) */
+  .scale-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 2px 2px;
+  }
+  .scale-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 2px;
+  }
+  .scale-row-collapsed {
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 6px;
+  }
+  .scale-btn {
+    flex: 1 1 0;
+    min-width: 22px;
+    padding: 3px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .scale-row-collapsed .scale-btn {
+    flex: 0 0 auto;
+    width: 15px;
+    padding: 2px 0;
+    font-size: 9px;
+  }
+  .scale-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .scale-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
   }
 
   .skin-icon-btn {
