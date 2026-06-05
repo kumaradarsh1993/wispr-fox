@@ -5,7 +5,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
-  import { floaterScale } from "$lib/floater-scale.svelte";
+  import { floaterScale, floaterDebug } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
 
@@ -205,14 +205,14 @@
   type SizeState = "dormant" | "idle" | "active";
   type SkinSizes = Record<SizeState, Size>;
   const WINDOW_SIZES: Record<string, SkinSizes> = {
-    stylized:      { dormant: { w: 108, h: 114 }, idle: { w: 140, h: 152 }, active: { w: 196, h: 208 } },
-    fox:           { dormant: { w: 106, h: 114 }, idle: { w: 134, h: 150 }, active: { w: 196, h: 206 } },
-    "real-clippy": { dormant: { w: 114, h: 124 }, idle: { w: 132, h: 150 }, active: { w: 196, h: 202 } },
-    cat:           { dormant: { w: 128, h: 144 }, idle: { w: 166, h: 188 }, active: { w: 202, h: 240 } },
-    "cat-lab":     { dormant: { w: 128, h: 144 }, idle: { w: 166, h: 188 }, active: { w: 202, h: 240 } },
+    stylized:      { dormant: { w: 100, h: 104 }, idle: { w: 136, h: 144 }, active: { w: 190, h: 188 } },
+    fox:           { dormant: { w: 100, h: 104 }, idle: { w: 130, h: 140 }, active: { w: 190, h: 186 } },
+    "real-clippy": { dormant: { w: 104, h: 100 }, idle: { w: 126, h: 124 }, active: { w: 186, h: 168 } },
+    cat:           { dormant: { w: 122, h: 134 }, idle: { w: 158, h: 178 }, active: { w: 196, h: 226 } },
+    "cat-lab":     { dormant: { w: 122, h: 134 }, idle: { w: 158, h: 178 }, active: { w: 196, h: 226 } },
     // "off" never shows a visible floater so the size is moot, but keep an
     // entry so the lookup is total.
-    off:           { dormant: { w: 120, h: 140 }, idle: { w: 140, h: 160 }, active: { w: 196, h: 210 } },
+    off:           { dormant: { w: 120, h: 140 }, idle: { w: 140, h: 160 }, active: { w: 190, h: 200 } },
   };
 
   // Dormant-mode timer. After this much idle-with-no-hover the floater
@@ -257,6 +257,19 @@
   // User-chosen size multiplier (sticky, sidebar + settings slider).
   let fscale = $derived(floaterScale.current);
 
+  // Debug overlay (off by default). Shows the requested vs ACTUAL window size
+  // so we can tell at a glance whether setSize is taking effect — the whole
+  // point of this turn's fix. dbg.targetLogical is what we asked for;
+  // dbg.actualLogical is what the OS actually gave us back (outerSize ÷ sf).
+  let debug = $derived(floaterDebug.current);
+  let dbg = $state({
+    targetW: 0,
+    targetH: 0,
+    actualW: 0,
+    actualH: 0,
+    sf: 1,
+  });
+
   /**
    * Resize the floater window, keeping its visual CENTER fixed so the avatar
    * doesn't appear to jump. All coordinates are PHYSICAL pixels (Tauri's
@@ -270,6 +283,9 @@
       );
       const w = getCurrentWindow();
       const sf = await w.scaleFactor();
+      dbg.targetW = target.w;
+      dbg.targetH = target.h;
+      dbg.sf = sf;
       const targetPhys = {
         w: Math.round(target.w * sf),
         h: Math.round(target.h * sf),
@@ -278,6 +294,8 @@
       // No-op if we're already at the target — guards against tight effect
       // re-runs (skin + displayState changing in the same tick).
       if (curSize.width === targetPhys.w && curSize.height === targetPhys.h) {
+        dbg.actualW = Math.round(curSize.width / sf);
+        dbg.actualH = Math.round(curSize.height / sf);
         return;
       }
       const curPos = await w.outerPosition();
@@ -291,6 +309,12 @@
       // place at the wrong size.
       await w.setSize(new PhysicalSize(targetPhys.w, targetPhys.h));
       await w.setPosition(new PhysicalPosition(newX, newY));
+      // Read back the ACTUAL size — if this doesn't match the target, setSize
+      // was rejected (e.g. a non-resizable window) and the debug overlay will
+      // show the mismatch loud and clear.
+      const after = await w.outerSize();
+      dbg.actualW = Math.round(after.width / sf);
+      dbg.actualH = Math.round(after.height / sf);
     } catch (e) {
       console.warn("[clippy] resizeFloaterCentered failed", e);
     }
@@ -529,6 +553,12 @@
   onMount(() => {
     skinStore.subscribe();
     floaterScale.subscribe();
+    floaterDebug.subscribe();
+    // Belt-and-suspenders: guarantee the window is resizable so programmatic
+    // setSize actually applies. A non-resizable Tauri window silently ignores
+    // setSize on Windows — the root cause of "the box never changes size".
+    // (tauri.conf.json also sets resizable:true now; this covers cached state.)
+    getCurrentWindow().setResizable(true).catch(() => {});
 
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
@@ -943,6 +973,22 @@
        receded to its smallest self. Disappears the instant anything wakes it. -->
   {#if skin !== "off" && sizeState === "dormant"}
     <div class="zzz" aria-hidden="true">z&thinsp;z&thinsp;z</div>
+  {/if}
+
+  <!-- Debug overlay (Settings → Appearance → Floater debug overlay). Draws
+       the exact window bounds + a live size readout so you can SEE whether
+       the box is resizing and how tightly it hugs the avatar. The "ask vs
+       got" line is the tell: if they differ, setSize was rejected. -->
+  {#if debug}
+    <div class="dbg-frame" aria-hidden="true"></div>
+    <div class="dbg-readout" aria-hidden="true">
+      <div><b>{skin}</b> · {sizeState}</div>
+      <div>ask {dbg.targetW}×{dbg.targetH}</div>
+      <div class:dbg-bad={dbg.actualW !== dbg.targetW || dbg.actualH !== dbg.targetH}>
+        got {dbg.actualW}×{dbg.actualH}
+      </div>
+      <div>scale {Math.round(fscale * 100)}% · sf {dbg.sf}</div>
+    </div>
   {/if}
 
   {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab"}
@@ -1712,6 +1758,36 @@
     70%  { opacity: 0.9; }
     100% { opacity: 0; transform: translateY(-10px) scale(1.05); }
   }
+
+  /* ── Debug overlay ────────────────────────────────────────────────────
+     Off by default. The frame traces the exact webview (= window content)
+     bounds so dead-zone is obvious; the readout shows requested vs actual
+     size so a rejected setSize is visible. */
+  .dbg-frame {
+    position: fixed;
+    inset: 0;
+    border: 1px dashed rgba(255, 0, 140, 0.9);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    pointer-events: none;
+    z-index: 9998;
+  }
+  .dbg-readout {
+    position: fixed;
+    top: 2px;
+    left: 2px;
+    z-index: 9999;
+    pointer-events: none;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 9px;
+    line-height: 1.25;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.72);
+    border-radius: 4px;
+    padding: 2px 4px;
+    white-space: nowrap;
+  }
+  .dbg-readout b { color: #ff5fb0; }
+  .dbg-readout .dbg-bad { color: #ff6b6b; font-weight: 700; }
 
   @keyframes shadow-pulse {
     0%, 100% { width: 70px; opacity: 1; }

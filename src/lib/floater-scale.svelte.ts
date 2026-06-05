@@ -84,3 +84,47 @@ class FloaterScaleStore {
 }
 
 export const floaterScale = new FloaterScaleStore();
+
+// ── Floater debug overlay ───────────────────────────────────────────────
+// Off by default. When on, the floater draws its window bounds (a thin
+// frame around the whole webview) plus a live readout of the requested vs
+// actual window size, the size-state, scale-factor and user-scale — so you
+// can SEE whether the box is resizing and how tightly it hugs the avatar.
+// Same localStorage + cross-window event plumbing as the scale store.
+const DEBUG_KEY = "wispr.clippy.debug";
+const DEBUG_EVENT = "wispr:floater-debug-change";
+
+class FloaterDebugStore {
+  current = $state<boolean>(
+    typeof localStorage !== "undefined" && localStorage.getItem(DEBUG_KEY) === "1",
+  );
+  private subscribed = false;
+
+  async subscribe() {
+    if (this.subscribed) return;
+    this.subscribed = true;
+    await listen<boolean | string>(DEBUG_EVENT, (e) => {
+      const v = e.payload === true || e.payload === "1" || e.payload === "true";
+      this.current = v;
+      try {
+        localStorage.setItem(DEBUG_KEY, v ? "1" : "0");
+      } catch {}
+    });
+  }
+
+  async set(on: boolean) {
+    this.current = on;
+    try {
+      localStorage.setItem(DEBUG_KEY, on ? "1" : "0");
+    } catch {}
+    try {
+      await emit(DEBUG_EVENT, on);
+    } catch {}
+  }
+
+  async toggle() {
+    await this.set(!this.current);
+  }
+}
+
+export const floaterDebug = new FloaterDebugStore();

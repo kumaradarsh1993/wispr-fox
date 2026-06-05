@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
-  import { floaterScale, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
+  import { floaterScale, floaterDebug, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
   type SkinOption = { id: Skin; label: string; desc: string };
@@ -36,6 +36,7 @@
   onMount(() => {
     skinStore.subscribe();
     floaterScale.subscribe();
+    floaterDebug.subscribe();
   });
 </script>
 
@@ -89,6 +90,18 @@
         {p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}
       </button>
     {/each}
+  </div>
+
+  <div class="debug-row">
+    <label class="debug-toggle">
+      <input
+        type="checkbox"
+        checked={floaterDebug.current}
+        onchange={(e) => floaterDebug.set((e.currentTarget as HTMLInputElement).checked)}
+      />
+      <span>Show floater debug overlay</span>
+    </label>
+    <p class="debug-hint">Draws the floater's window bounds and a live size readout on the character, so you can see exactly how big the box is and whether it's resizing. For tuning only — leave off for normal use.</p>
   </div>
 
   <h3>Theme</h3>
@@ -155,5 +168,29 @@
     background: var(--accent-fade);
     color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .debug-row {
+    margin-top: 14px;
+  }
+  .debug-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .debug-toggle input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .debug-hint {
+    margin: 4px 0 0 23px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    max-width: 460px;
+    line-height: 1.4;
   }
 </style>

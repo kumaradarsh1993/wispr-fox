@@ -66,6 +66,13 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.2** — floater resize **actually works now**: the
+  window was `resizable: false`, which makes programmatic `setSize` a
+  silent no-op on Windows, so the box was frozen at 190×210 the whole
+  time (hence "too big, never changes with S/M/L"). Made it resizable,
+  tightened every skin's boxes, and added a **debug overlay** (Settings →
+  Appearance → "Show floater debug overlay") that draws the window bounds
+  + a live requested-vs-actual size readout for tuning.
 - ✅ **v1.3.0-nightly.1** — floater overhaul, part 1: per-skin window
   sizing re-derived from real art bounds (kills the right-side dead-zone
   and the clipped paperclip), one deliberate "box" with three size-states
