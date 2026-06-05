@@ -18,14 +18,13 @@
   function openContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    // Clamp position so the menu stays inside the floater window (190×210).
-    // The menu is ~168px wide max and ~190px tall worst case (avatar pane
-    // with 6 rows). Anchor to click point but pull back from the edges.
-    const win = { w: window.innerWidth, h: window.innerHeight };
-    const menuW = 170;
-    const menuH = 200;
-    ctxMenuX = Math.max(4, Math.min(win.w - menuW - 4, e.clientX));
-    ctxMenuY = Math.max(4, Math.min(win.h - menuH - 4, e.clientY));
+    // Opening the menu grows the window to MENU_W×MENU_H (see the resize
+    // effect) so the whole menu fits even at Small size. We can't rely on the
+    // click coordinates (they're in the OLD, possibly tiny window), so anchor
+    // the menu near the top-centre of the grown window where it's guaranteed
+    // not to be clipped. ~168px-wide menu centred in MENU_W.
+    ctxMenuX = Math.max(6, Math.round((MENU_W - 168) / 2));
+    ctxMenuY = 8;
     ctxMenuOpen = true;
   }
 
@@ -229,6 +228,12 @@
   const BUBBLE_BAND = 86; // reserved vertical room above the head for the bubble
   const BUBBLE_W = 206; // min active width — wider so text wraps to fewer lines
   const DORMANT_ART = 0.72; // avatar shrink factor when dormant
+  // The right-click menu renders INSIDE this window and does NOT scale with
+  // fscale, so the window must be at least this big (logical px) whenever the
+  // menu is open — otherwise the menu gets cropped (worst at Small size). Tall
+  // enough for the Avatar sub-pane (7 rows).
+  const MENU_W = 192;
+  const MENU_H = 244;
 
   /** Derive the three window sizes from an art footprint. The avatar stays the
    *  SAME size between idle and active — only the empty room above it (for the
@@ -345,11 +350,16 @@
   // guard inside resizeFloaterCentered absorbs any duplicate target.
   $effect(() => {
     const base = sizesFor(skin)[sizeState];
-    const target = {
-      w: Math.round(base.w * fscale),
-      h: Math.round(base.h * fscale),
-    };
-    void resizeFloaterCentered(target);
+    let w = Math.round(base.w * fscale);
+    let h = Math.round(base.h * fscale);
+    // While the right-click menu is open, ensure the window is at least big
+    // enough to show the whole menu (which is fixed-size). Grow only — never
+    // shrink below what the avatar/bubble already need.
+    if (ctxMenuOpen) {
+      w = Math.max(w, MENU_W);
+      h = Math.max(h, MENU_H);
+    }
+    void resizeFloaterCentered({ w, h });
   });
 
   // Where the speech bubble's tail sits, measured from the window bottom:

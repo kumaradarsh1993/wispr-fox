@@ -66,6 +66,11 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.6** — right-click menu no longer cropped: the menu
+  renders inside the floater window and doesn't scale, so at Small/idle it
+  was clipped to ~2 rows. Opening it now grows the window to a fixed
+  menu-sized box (whatever the scale/state) and anchors the menu where it
+  can't be clipped; it shrinks back on close.
 - ✅ **v1.3.0-nightly.5** — floater fixes: (1) double-clicking the avatar no
   longer blows the transparent window up to fill the whole screen
   (`data-tauri-drag-region` was toggling maximize — now `maximizable:false`);
