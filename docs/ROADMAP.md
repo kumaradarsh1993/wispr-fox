@@ -7,9 +7,6 @@ maintainer project, scope can shift.
 
 These are queued, scoped, and likely to land in the next 1–2 releases.
 
-- **Time saved / words saved stats** — fun personal dashboard with date
-  filters and a weekly digest. Captures total time spent, words dictated,
-  estimated time saved vs typing. ~ETA next nightly.
 - **Avatar plugin loader** — load user-authored avatars from
   `%APPDATA%\com.wispr-fox.app\avatars\` per the
   [Avatar SDK](AVATAR_SDK.md). Drop-folder install + Settings UI for
@@ -66,6 +63,18 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.10** — **Analytics dashboard**: a new Stats page +
+  at-a-glance widget on top of History showing lifetime time-saved (vs typing
+  at 40 wpm), words & sessions per day, speaking speed, and a day-streak, with
+  a 7/30/90-day bar chart. Totals are kept in a dedicated `daily_stats` table
+  that survives the 7-day retention purge AND app updates. **macOS: durable
+  Accessibility fix** — CI now signs every build with a stable (self-signed)
+  identity so the Accessibility grant persists across updates instead of
+  breaking on each one (one-time setup in `docs/MACOS_SIGNING.md`; no paid
+  Apple cert needed). Floater: more gap between the speech bubble and the
+  avatar's head, more top room + a wider bubble so long lines no longer clip,
+  and the same dialog bubble now shows on the classic Clippy skin too. Sidebar:
+  the S/M/L size buttons now stack vertically in the collapsed rail so they fit.
 - ✅ **v1.3.0-nightly.9** — tightened every avatar's box (less L/R + bottom
   padding, much smaller overall — e.g. cat 198×252 → 174×190); the bubble
   now anchors just above each character's head and grows upward, so it hugs

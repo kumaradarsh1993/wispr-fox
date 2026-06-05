@@ -76,6 +76,35 @@ fn mode_parse(s: &str) -> ClippyMode {
     }
 }
 
+/// One day's rolled-up dictation stats. Lives in its own `daily_stats` table
+/// that is incremented once per completed recording and is NEVER pruned by the
+/// retention GC — so the analytics dashboard shows LIFETIME numbers even after
+/// the underlying audio + history rows have aged out (7-day default retention).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyStat {
+    /// Local calendar date, "YYYY-MM-DD".
+    pub date: String,
+    pub sessions: i64,
+    pub words: i64,
+    pub dictation_ms: i64,
+    /// Sessions run in Light/Advanced (cleanup) modes.
+    pub light_count: i64,
+    /// Sessions run in Drafting mode.
+    pub draft_count: i64,
+}
+
+/// Aggregate analytics payload for the dashboard: per-day rows (ascending by
+/// date) plus lifetime totals. Tiny — one row per active day.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsSummary {
+    pub days: Vec<DailyStat>,
+    pub total_sessions: i64,
+    pub total_words: i64,
+    pub total_dictation_ms: i64,
+    /// First day with any recorded activity ("YYYY-MM-DD"), or None if empty.
+    pub first_day: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recording {
     pub id: String,
@@ -135,6 +164,19 @@ impl History {
             );
             CREATE INDEX IF NOT EXISTS recordings_created_at_idx
               ON recordings(created_at);
+
+            -- Lifetime analytics rollup. One row per LOCAL calendar day,
+            -- incremented on each completed recording. Deliberately NOT touched
+            -- by the retention GC so the stats dashboard survives the 7-day
+            -- audio/row purge (and app updates — it's in the same persisted DB).
+            CREATE TABLE IF NOT EXISTS daily_stats (
+              date          TEXT PRIMARY KEY,
+              sessions      INTEGER NOT NULL DEFAULT 0,
+              words         INTEGER NOT NULL DEFAULT 0,
+              dictation_ms  INTEGER NOT NULL DEFAULT 0,
+              light_count   INTEGER NOT NULL DEFAULT 0,
+              draft_count   INTEGER NOT NULL DEFAULT 0
+            );
             "#,
         )?;
 
@@ -360,6 +402,79 @@ impl History {
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }
+    }
+
+    /// Increment the lifetime daily-stats rollup for one completed recording.
+    /// `date` is the LOCAL calendar day ("YYYY-MM-DD"); `mode` decides whether
+    /// it counts toward the light/cleanup bucket or the drafting bucket. Called
+    /// exactly once per recording from the flow pipeline (not on retry — that
+    /// would double-count an already-tallied session).
+    pub fn record_session(
+        &self,
+        date: &str,
+        words: i64,
+        dictation_ms: i64,
+        mode: ClippyMode,
+    ) -> Result<()> {
+        let (light_delta, draft_delta) = match mode {
+            ClippyMode::Drafting => (0i64, 1i64),
+            _ => (1i64, 0i64),
+        };
+        let conn = self.inner.lock();
+        conn.execute(
+            r#"INSERT INTO daily_stats
+                 (date, sessions, words, dictation_ms, light_count, draft_count)
+               VALUES (?1, 1, ?2, ?3, ?4, ?5)
+               ON CONFLICT(date) DO UPDATE SET
+                 sessions     = sessions + 1,
+                 words        = words + ?2,
+                 dictation_ms = dictation_ms + ?3,
+                 light_count  = light_count + ?4,
+                 draft_count  = draft_count + ?5"#,
+            params![date, words, dictation_ms, light_delta, draft_delta],
+        )?;
+        Ok(())
+    }
+
+    /// Read the full lifetime stats rollup: every active day (ascending) plus
+    /// totals. Cheap — one row per day.
+    pub fn stats_summary(&self) -> Result<StatsSummary> {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare(
+            r#"SELECT date, sessions, words, dictation_ms, light_count, draft_count
+               FROM daily_stats
+               ORDER BY date ASC"#,
+        )?;
+        let days = stmt
+            .query_map([], |r| {
+                Ok(DailyStat {
+                    date: r.get(0)?,
+                    sessions: r.get(1)?,
+                    words: r.get(2)?,
+                    dictation_ms: r.get(3)?,
+                    light_count: r.get(4)?,
+                    draft_count: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut total_sessions = 0i64;
+        let mut total_words = 0i64;
+        let mut total_dictation_ms = 0i64;
+        for d in &days {
+            total_sessions += d.sessions;
+            total_words += d.words;
+            total_dictation_ms += d.dictation_ms;
+        }
+        let first_day = days.first().map(|d| d.date.clone());
+
+        Ok(StatsSummary {
+            days,
+            total_sessions,
+            total_words,
+            total_dictation_ms,
+            first_day,
+        })
     }
 
     /// On app launch, mark any rows still in non-terminal states as error.

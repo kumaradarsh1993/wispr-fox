@@ -122,6 +122,23 @@ export interface DailyUsage {
   llm_count: number;
 }
 
+export interface DailyStat {
+  date: string;
+  sessions: number;
+  words: number;
+  dictation_ms: number;
+  light_count: number;
+  draft_count: number;
+}
+
+export interface StatsSummary {
+  days: DailyStat[];
+  total_sessions: number;
+  total_words: number;
+  total_dictation_ms: number;
+  first_day: string | null;
+}
+
 export interface CurrentModels {
   stt: string;
   llm_light: string;
@@ -161,6 +178,7 @@ export const api = {
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),
   appPaths: () => invoke<AppPaths>("app_paths"),
   dailyUsage: () => invoke<DailyUsage>("daily_usage"),
+  statsSummary: () => invoke<StatsSummary>("stats_summary"),
   currentModels: () => invoke<CurrentModels>("current_models"),
   getDefaultPrompts: () => invoke<DefaultPrompts>("get_default_prompts"),
   clearAllHistory: () => invoke<number>("clear_all_history"),

@@ -595,6 +595,22 @@ impl Flow {
             transcript.text.clone()
         };
 
+        // Tally the lifetime daily-stats rollup once per recording, right after
+        // the final text exists and before delivery (so it's counted whether we
+        // paste or fall back to silent clipboard). Keyed by LOCAL calendar day
+        // so "per day" lines up with the user's wall calendar, not UTC. Failure
+        // here is non-fatal — stats are a nicety, never block the paste.
+        {
+            let words = final_text.split_whitespace().count() as i64;
+            let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+            if let Err(e) =
+                self.history
+                    .record_session(&date, words, duration_ms, ClippyMode::from(mode))
+            {
+                tracing::warn!("daily-stats record_session failed (non-fatal): {e:#}");
+            }
+        }
+
         let _ = app.emit("wispr:state", "injecting");
         self.history.update_status(&record_id, Status::Injecting)?;
 

@@ -288,6 +288,7 @@ pub fn run() {
             commands::reveal_folder,
             commands::check_for_updates,
             commands::daily_usage,
+            commands::stats_summary,
             commands::current_models,
             commands::clear_all_history,
             commands::get_default_prompts,

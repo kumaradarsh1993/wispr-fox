@@ -170,6 +170,7 @@
   type NavItem = { href: string; label: string; icon: string };
   const navItems: NavItem[] = [
     { href: "/history", label: "History", icon: "🕓" },
+    { href: "/stats", label: "Stats", icon: "📊" },
     { href: "/settings", label: "Settings", icon: "⚙" },
   ];
 
@@ -723,11 +724,17 @@
     letter-spacing: 0.04em;
     margin-right: 2px;
   }
+  /* Collapsed sidebar is only 56px wide. Three side-by-side S/M/L buttons
+     overflowed that, so stack them vertically (matching the skin-icon column
+     directly above) where they sit comfortably in the thin bar. */
   .scale-row-collapsed {
     display: flex;
-    justify-content: center;
-    gap: 3px;
-    margin-top: 6px;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-subtle);
   }
   .scale-btn {
     flex: 1 1 0;
@@ -744,9 +751,9 @@
   }
   .scale-row-collapsed .scale-btn {
     flex: 0 0 auto;
-    width: 15px;
-    padding: 2px 0;
-    font-size: 9px;
+    width: 36px;
+    padding: 4px 0;
+    font-size: 11px;
   }
   .scale-btn:hover {
     border-color: var(--accent);

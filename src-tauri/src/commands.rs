@@ -396,6 +396,13 @@ pub fn daily_usage(usage: State<'_, UsageTracker>) -> DailyUsage {
     usage.snapshot()
 }
 
+/// Lifetime analytics rollup for the stats dashboard (per-day rows + totals).
+/// Reads the dedicated `daily_stats` table, which survives history retention.
+#[tauri::command]
+pub fn stats_summary(history: State<'_, History>) -> Result<crate::history::StatsSummary, String> {
+    history.stats_summary().map_err(|e| e.to_string())
+}
+
 #[derive(Serialize)]
 pub struct DefaultPrompts {
     pub light: &'static str,

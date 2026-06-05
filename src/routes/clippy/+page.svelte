@@ -211,15 +211,24 @@
   };
   const SIDE_PAD = 8; // L/R breathing room around the character
   const BOTTOM_PAD = 8; // gap below the character (shadow lives at 6px)
-  const TOP_MARGIN = 6; // gap above the character/bubble to the window top
-  const BUBBLE_BAND = 62; // room above the head for the bubble (~3 lines)
-  const BUBBLE_W = 174; // min box width — enough to host the centred bubble
+  const TOP_MARGIN = 8; // gap above the character/bubble to the window top
+  // Clear air between the top of the character's head and the bottom (tail)
+  // of the speech bubble. User feedback: the bubble was sitting right on the
+  // avatar even at rest / on first press — give it a real gap.
+  const HEAD_GAP = 16;
+  // Vertical room above the head for the bubble itself. Sized for a 4–5 line
+  // bubble (the duration-aware listening copy — e.g. "still here whenever
+  // you're ready · WhatsApp" — can run long) PLUS the HEAD_GAP, so a tall
+  // bubble never gets clipped at the top of the window.
+  const BUBBLE_BAND = 104;
+  const BUBBLE_W = 196; // min box width — wide enough that long copy wraps to
+                        // ~4 lines instead of overflowing / clipping.
 
   function boxFor(skin: string): Size {
     const a = ART[skin] ?? ART.fox;
     return {
       w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
-      h: Math.max(a.h + BOTTOM_PAD + TOP_MARGIN, a.head + BUBBLE_BAND),
+      h: Math.max(a.h + BOTTOM_PAD + TOP_MARGIN, a.head + HEAD_GAP + BUBBLE_BAND),
     };
   }
 
@@ -234,8 +243,9 @@
   let fscale = $derived(floaterScale.current);
 
   // Where the bubble's tail sits (logical px from window bottom), scaled.
-  // The bubble anchors here and grows upward, so it hugs the head at rest.
-  let bubbleBottom = $derived((ART[skin]?.head ?? ART.fox.head) * fscale);
+  // The bubble anchors here and grows upward. We add HEAD_GAP so there's a
+  // real gap between the head and the bubble (it no longer sits on the face).
+  let bubbleBottom = $derived(((ART[skin]?.head ?? ART.fox.head) + HEAD_GAP) * fscale);
 
   // Debug overlay (off by default). Shows the requested vs ACTUAL window size
   // so we can tell at a glance whether setSize is taking effect — the whole
@@ -950,12 +960,13 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab"}
+  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "real-clippy"}
 
-    <!-- State-driven bubble — shown for skins that don't have their own
-         balloon (real Clippy has its own). Hidden while a toast is up so
-         we don't stack two bubbles. Same bubble for all SVG/PNG skins so
-         the dialog vocabulary feels consistent across skins. -->
+    <!-- State-driven bubble — our own consistent dialog box, shown for ALL
+         skins including real Clippy (user asked for the same dialog box on
+         old-style Clippy too; we never call clippyts' own .speak balloon, so
+         there's no double-bubble). Hidden while a toast is up so we don't
+         stack two bubbles. -->
     {#if !toastMessage}
       <div class="bubble" class:show={displayState !== "idle"} data-state={displayState} data-skin={skin}>
         {#if displayState === "listening"}
@@ -1949,8 +1960,9 @@
     left: 50%;
     transform: translateX(-50%) translateY(6px) scale(0.92);
     /* Scale the bubble WITH the floater scale so Small shrinks text + box
-       together instead of overflowing. */
-    max-width: calc(162px * var(--fscale, 1));
+       together instead of overflowing. Wider than before so the long
+       duration-aware listening copy wraps to ~4 lines instead of clipping. */
+    max-width: calc(180px * var(--fscale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 14px;

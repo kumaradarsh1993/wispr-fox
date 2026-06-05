@@ -143,10 +143,27 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Uncomment for signed Mac builds:
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # ── macOS code signing with a STABLE self-signed identity ──────────
+          # Why this exists: macOS ties an Accessibility (TCC) grant to the
+          # app's code-signing identity. An UNSIGNED app is keyed by its
+          # per-build cdhash, so every nightly update invalidates the grant —
+          # the user has to re-add wispr-fox to Accessibility after each update
+          # and auto-paste silently breaks until they do. Signing every build
+          # with ONE stable self-signed cert gives the app a constant
+          # designated requirement, so the grant persists across updates.
+          #
+          # This needs NO paid Apple Developer cert ($99) and does NOT notarize
+          # (Gatekeeper's right-click-Open / xattr step is unchanged). It ONLY
+          # buys TCC-grant persistence. One-time setup in docs/MACOS_SIGNING.md:
+          # generate a self-signed Code Signing cert, export the .p12, and add
+          # these three repo secrets. Until those secrets exist these vars are
+          # empty and tauri-action builds UNSIGNED exactly as before — so this
+          # change is safe to merge before the secrets are added.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization (optional, needs a paid Apple Developer account) stays
+          # off — leave these commented until/unless we enroll:
           # APPLE_ID: ${{ secrets.APPLE_ID }}
           # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

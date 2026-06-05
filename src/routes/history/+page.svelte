@@ -3,6 +3,7 @@
   import { history } from "$lib/history-store.svelte";
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
+  import StatsWidget from "$lib/StatsWidget.svelte";
   import { openPath } from "@tauri-apps/plugin-opener";
   import { settings } from "$lib/settings-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
@@ -124,6 +125,11 @@
 </script>
 
 <section class="history">
+  <!-- Lifetime analytics at-a-glance — time saved, words, sessions, streak +
+       a 14-day sparkline. Click through to the full /stats dashboard. Renders
+       only once there's at least one recording. -->
+  <StatsWidget />
+
   <header class="history-head">
     <div class="title-row">
       <h1>History</h1>
