@@ -35,14 +35,33 @@
     e.preventDefault();
   }
 
-  // Manual window drag. We do NOT use `data-tauri-drag-region` because its
-  // built-in double-click-to-maximize behaviour blew the transparent floater
-  // up to fill the whole screen (and `maximizable:false` didn't reliably
-  // suppress it). startDragging() gives us move-on-drag with zero maximize
-  // logic. Left button only; right button opens the context menu.
-  function startDrag(e: MouseEvent) {
-    if (e.button !== 0) return;
-    getCurrentWindow().startDragging().catch(() => {});
+  // Manual window drag with a MOVEMENT THRESHOLD. We do NOT use
+  // `data-tauri-drag-region` (its double-click-to-maximize blew the
+  // transparent floater up to fill the screen). But we also can't call
+  // `startDragging()` straight away on mousedown: doing so enters the OS
+  // move-loop immediately and SWALLOWS the subsequent double-click, so
+  // "double-click the avatar → open the main window" silently stopped
+  // working. Instead we arm on mousedown and only begin dragging once the
+  // pointer actually moves past a few px — a plain click (or double-click)
+  // never crosses the threshold, so it reaches the dblclick handler.
+  let dragArmed: { x: number; y: number } | null = null;
+  const DRAG_THRESHOLD_SQ = 16; // (4px)²
+
+  function onStageMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return; // left button only; right opens the menu
+    dragArmed = { x: e.clientX, y: e.clientY };
+  }
+  function maybeStartDrag(e: MouseEvent) {
+    if (!dragArmed || (e.buttons & 1) === 0) return;
+    const dx = e.clientX - dragArmed.x;
+    const dy = e.clientY - dragArmed.y;
+    if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) {
+      dragArmed = null;
+      getCurrentWindow().startDragging().catch(() => {});
+    }
+  }
+  function endDrag() {
+    dragArmed = null;
   }
 
   type ClippyState = "idle" | "listening" | "thinking" | "writing" | "pasting";
@@ -221,8 +240,9 @@
   // you're ready · WhatsApp" — can run long) PLUS the HEAD_GAP, so a tall
   // bubble never gets clipped at the top of the window.
   const BUBBLE_BAND = 104;
-  const BUBBLE_W = 196; // min box width — wide enough that long copy wraps to
-                        // ~4 lines instead of overflowing / clipping.
+  const BUBBLE_W = 226; // min box width — wide enough that long copy wraps to
+                        // ~3 lines and the bubble reads as a roomy box (user
+                        // preference: wider rather than tall/narrow).
 
   function boxFor(skin: string): Size {
     const a = ART[skin] ?? ART.fox;
@@ -910,11 +930,14 @@
   role="button"
   tabindex="0"
   aria-label="wispr-fox floater — drag to move, right-click for options"
-  onmousedown={startDrag}
+  onmousedown={onStageMouseDown}
+  onmouseup={endDrag}
+  ondblclick={openMainWindow}
   oncontextmenu={openContextMenu}
   onmouseenter={() => (hovering = true)}
-  onmouseleave={() => { hovering = false; hoverShiftX = 0; hoverShiftY = 0; }}
+  onmouseleave={() => { hovering = false; hoverShiftX = 0; hoverShiftY = 0; endDrag(); }}
   onmousemove={(e) => {
+    maybeStartDrag(e);
     if (!hovering) return;
     // Translate cursor position to a small pupil offset. Window inner
     // dimensions are 190x210 (set in tauri.conf.json). Clippy's centre is
@@ -1960,9 +1983,9 @@
     left: 50%;
     transform: translateX(-50%) translateY(6px) scale(0.92);
     /* Scale the bubble WITH the floater scale so Small shrinks text + box
-       together instead of overflowing. Wider than before so the long
-       duration-aware listening copy wraps to ~4 lines instead of clipping. */
-    max-width: calc(180px * var(--fscale, 1));
+       together instead of overflowing. Roomy width so long duration-aware
+       listening copy reads as a wide box and wraps in fewer lines. */
+    max-width: calc(208px * var(--fscale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 14px;

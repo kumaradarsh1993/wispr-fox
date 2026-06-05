@@ -63,6 +63,11 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.11** — double-click the avatar opens the main window
+  again (the move-drag was grabbing the OS move-loop on mousedown and eating
+  the double-click; now dragging only starts once the pointer actually moves a
+  few px, so a plain double-click gets through). Speech bubble box widened
+  further per preference (roomier, fewer wraps).
 - ✅ **v1.3.0-nightly.10** — **Analytics dashboard**: a new Stats page +
   at-a-glance widget on top of History showing lifetime time-saved (vs typing
   at 40 wpm), words & sessions per day, speaking speed, and a day-streak, with
