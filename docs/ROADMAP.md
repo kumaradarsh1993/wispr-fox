@@ -66,6 +66,11 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.3** — the real fix: the floater webview's JS window
+  API was broken (`outerSize()` rejected, so the resize aborted before
+  `setSize` ever ran — the debug overlay showed `got 0×0`). Moved the whole
+  resize into a native Rust command (`resize_floater`), centre-anchored,
+  which returns the actual size back for the overlay. The box now resizes.
 - ✅ **v1.3.0-nightly.2** — floater resize **actually works now**: the
   window was `resizable: false`, which makes programmatic `setSize` a
   silent no-op on Windows, so the box was frozen at 190×210 the whole

@@ -267,6 +267,7 @@ pub fn run() {
             commands::js_heartbeat_ping,
             commands::set_clickthrough,
             commands::recover_clippy_window,
+            commands::resize_floater,
             commands::accessibility_ok,
             commands::floater_trigger,
             commands::open_accessibility_settings,

@@ -80,6 +80,54 @@ pub fn recover_clippy_window(app: AppHandle) {
     force_repaint(&w);
 }
 
+/// Resize the floater window from Rust, optionally keeping its visual centre
+/// fixed. We do this in Rust instead of the JS window API because on the
+/// floater webview `WebviewWindow.outerSize()` / `setSize()` from JS were
+/// silently failing (outerSize() rejected, so the JS resize aborted before it
+/// ever called setSize — the "got 0×0, window never resizes" bug). Native
+/// calls here are reliable.
+///
+/// `width`/`height` are LOGICAL pixels; Tauri converts to physical using the
+/// window's scale factor. Returns the ACTUAL outer size in PHYSICAL px plus
+/// the scale factor so the frontend debug overlay can show requested-vs-actual.
+#[tauri::command]
+pub fn resize_floater(
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    center: bool,
+) -> Result<(u32, u32, f64), String> {
+    let sf = window.scale_factor().unwrap_or(1.0);
+    // Snapshot current geometry BEFORE resizing so we can re-centre.
+    let cur_pos = window.outer_position().ok();
+    let cur_size = window.outer_size().ok();
+
+    // A non-resizable window ignores set_size on Windows — make sure it's
+    // resizable first. (Config sets this too; belt-and-suspenders.)
+    let _ = window.set_resizable(true);
+
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| format!("set_size: {e}"))?;
+
+    if center {
+        if let (Some(pos), Some(old)) = (cur_pos, cur_size) {
+            let new_w = (width * sf).round() as i32;
+            let new_h = (height * sf).round() as i32;
+            let dx = new_w - old.width as i32;
+            let dy = new_h - old.height as i32;
+            let nx = pos.x - dx / 2;
+            let ny = pos.y - dy / 2;
+            let _ = window.set_position(tauri::PhysicalPosition::new(nx, ny));
+        }
+    }
+
+    let after = window
+        .outer_size()
+        .map_err(|e| format!("outer_size: {e}"))?;
+    Ok((after.width, after.height, sf))
+}
+
 /// Toggle the floater window's clickthrough mode. When `ignore=true` the
 /// window passes all clicks through to whatever app is behind it — and stops
 /// receiving any mouse events itself. Used by the JS hit-test in

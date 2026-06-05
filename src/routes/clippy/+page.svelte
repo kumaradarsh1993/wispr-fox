@@ -270,53 +270,34 @@
     sf: 1,
   });
 
+  // De-dupe guard so an effect double-fire doesn't spam the backend.
+  let _lastResizeKey = "";
+
   /**
-   * Resize the floater window, keeping its visual CENTER fixed so the avatar
-   * doesn't appear to jump. All coordinates are PHYSICAL pixels (Tauri's
-   * outerPosition / outerSize / setSize / setPosition all operate in
-   * physical px regardless of the logical units in the size constants).
+   * Resize the floater window via a RUST command, centre-anchored. We do NOT
+   * use the JS window API here: on the floater webview `outerSize()` rejects
+   * (and `setSize()` silently no-ops), so the old JS path aborted before it
+   * ever resized — the "got 0×0, never resizes" bug. The Rust side uses native
+   * window calls and returns the ACTUAL physical size + scale factor so the
+   * debug overlay can show requested-vs-actual.
    */
   async function resizeFloaterCentered(target: Size) {
+    const key = `${target.w}x${target.h}`;
+    if (key === _lastResizeKey) return;
+    _lastResizeKey = key;
+    dbg.targetW = target.w;
+    dbg.targetH = target.h;
     try {
-      const { getCurrentWindow, PhysicalPosition, PhysicalSize } = await import(
-        "@tauri-apps/api/window"
-      );
-      const w = getCurrentWindow();
-      const sf = await w.scaleFactor();
-      dbg.targetW = target.w;
-      dbg.targetH = target.h;
+      const [aw, ah, sf] = await invoke<[number, number, number]>("resize_floater", {
+        width: target.w,
+        height: target.h,
+        center: true,
+      });
       dbg.sf = sf;
-      const targetPhys = {
-        w: Math.round(target.w * sf),
-        h: Math.round(target.h * sf),
-      };
-      const curSize = await w.outerSize();
-      // No-op if we're already at the target — guards against tight effect
-      // re-runs (skin + displayState changing in the same tick).
-      if (curSize.width === targetPhys.w && curSize.height === targetPhys.h) {
-        dbg.actualW = Math.round(curSize.width / sf);
-        dbg.actualH = Math.round(curSize.height / sf);
-        return;
-      }
-      const curPos = await w.outerPosition();
-      const dx = targetPhys.w - curSize.width;
-      const dy = targetPhys.h - curSize.height;
-      const newX = curPos.x - Math.round(dx / 2);
-      const newY = curPos.y - Math.round(dy / 2);
-      // Order matters here: resize first (grows around the current top-left)
-      // then move so the centre ends up in the right place. Doing it in the
-      // other order produces a brief flash where the window is in the wrong
-      // place at the wrong size.
-      await w.setSize(new PhysicalSize(targetPhys.w, targetPhys.h));
-      await w.setPosition(new PhysicalPosition(newX, newY));
-      // Read back the ACTUAL size — if this doesn't match the target, setSize
-      // was rejected (e.g. a non-resizable window) and the debug overlay will
-      // show the mismatch loud and clear.
-      const after = await w.outerSize();
-      dbg.actualW = Math.round(after.width / sf);
-      dbg.actualH = Math.round(after.height / sf);
+      dbg.actualW = sf ? Math.round(aw / sf) : aw;
+      dbg.actualH = sf ? Math.round(ah / sf) : ah;
     } catch (e) {
-      console.warn("[clippy] resizeFloaterCentered failed", e);
+      console.warn("[clippy] resize_floater failed", e);
     }
   }
 
