@@ -35,6 +35,16 @@
     e.preventDefault();
   }
 
+  // Manual window drag. We do NOT use `data-tauri-drag-region` because its
+  // built-in double-click-to-maximize behaviour blew the transparent floater
+  // up to fill the whole screen (and `maximizable:false` didn't reliably
+  // suppress it). startDragging() gives us move-on-drag with zero maximize
+  // logic. Left button only; right button opens the context menu.
+  function startDrag(e: MouseEvent) {
+    if (e.button !== 0) return;
+    getCurrentWindow().startDragging().catch(() => {});
+  }
+
   type ClippyState = "idle" | "listening" | "thinking" | "writing" | "pasting";
   type Mode = "light" | "advanced";
 
@@ -169,135 +179,38 @@
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
 
-  // ── Per-skin window sizing: three deliberate size-states ─────────────
+  // ── Per-skin window sizing: ONE fixed box per avatar ─────────────────
   //
-  // Design intent (per user, nightly.15): ONE box, no per-frame thrash.
-  // The window only changes size on a genuine *size-state* change, of
-  // which there are three:
+  // Reverted (per user) to stable's model: each avatar has a SINGLE window
+  // size, big enough to hold the character AND the speech bubble above it.
+  // The window does NOT resize as the pipeline state changes — the bubble
+  // simply appears/disappears INSIDE the fixed box. The only thing that
+  // changes the window size is the user's S/M/L scale, which multiplies the
+  // whole box (and the avatar + bubble + text scale by the same factor), so
+  // everything stays in proportion. This kills the jump, the flicker, and
+  // the bubble-on-face problems that the dynamic-resize approach caused.
   //
-  //   • active  — a bubble is showing (recording / thinking / writing /
-  //               pasting). Widest: must host the centred speech bubble.
-  //   • idle    — at rest, no bubble. Tight box hugging the avatar so the
-  //               transparent click-dead-zone around it is minimal.
-  //   • dormant — no activity for DORMANT_MS. Smallest: the avatar shrinks
-  //               into a calmer, smaller self and the box tucks in around
-  //               it (kills almost all dead-zone while you're not using it).
-  //
-  // During a single dictation the box grows ONCE (idle→active) and shrinks
-  // ONCE (active→idle) — not on every pipeline step (thinking/writing/
-  // pasting all map to "active"). Hover changes NOTHING at the window
-  // level (that was the nightly.13 flicker); it only wakes a dormant
-  // floater back to idle.
-  //
-  // Sizes below are the "design" LOGICAL px at scale 1.0. They were
-  // re-derived from each skin's actual painted bounds (the old numbers
-  // were eyeballed — the paperclip's 150px art was being clipped by a
-  // 110px window, and every skin reserved bubble-width even at rest,
-  // which is the "too much space on the right" the user reported). The
-  // active width is bubble-driven (~196) for every skin; the idle/dormant
-  // widths track the art. Final values get tuned over a nightly or two.
-  //
-  // The resize math converts these to PHYSICAL px (Tauri's window APIs all
-  // speak physical — see the Retina deep-dive in CLAUDE.md; DO NOT mix
-  // logical/physical or the floater lands off-screen).
+  // Sizes are LOGICAL px at scale 1.0. Bottom area = the avatar; top area =
+  // room for the bubble. Tightened per-skin but each still reserves enough
+  // headroom for a 3-line bubble. Tweak freely; nothing else depends on
+  // these now.
   type Size = { w: number; h: number };
-  type SizeState = "dormant" | "idle" | "active";
-  type SkinSizes = Record<SizeState, Size>;
-  // Per-skin ART FOOTPRINT (the avatar's rendered box at scale 1.0, in
-  // logical px). EVERYTHING else — the three window sizes AND the bubble
-  // anchor — is derived from this so they can never drift out of sync. These
-  // must match the avatar CSS width/height for each skin below.
-  // `head` = logical px from the window BOTTOM up to where the speech bubble's
-  // tail should sit (just above the character's visible head). It's per-skin
-  // because each character's head is at a different height within its box
-  // (the cat's head is low in a tall box; the paperclip's eyes are near the
-  // top). The bubble anchors here and grows upward.
-  type Art = { w: number; h: number; head: number };
-  const ART: Record<string, Art> = {
-    fox:           { w: 116, h: 116, head: 108 },
-    stylized:      { w: 128, h: 122, head: 120 },
-    "real-clippy": { w: 120, h: 112, head: 116 },
-    cat:           { w: 150, h: 168, head: 128 },
-    "cat-lab":     { w: 150, h: 168, head: 128 },
-    off:           { w: 120, h: 120, head: 116 },
+  const BOX: Record<string, Size> = {
+    fox:           { w: 196, h: 206 },
+    stylized:      { w: 196, h: 212 },
+    "real-clippy": { w: 192, h: 204 },
+    cat:           { w: 198, h: 252 },
+    "cat-lab":     { w: 198, h: 252 },
+    off:           { w: 196, h: 206 },
   };
-  // Layout constants (logical px, at scale 1.0).
-  const SIDE_PAD = 10; // breathing room left/right of the avatar at idle
-  const BOTTOM_PAD = 12; // gap below the avatar (its feet aren't on the edge)
-  const TOP_PAD = 12; // gap above the avatar's head when no bubble is shown
-  const BUBBLE_BAND = 86; // reserved vertical room above the head for the bubble
-  const BUBBLE_W = 206; // min active width — wider so text wraps to fewer lines
-  const DORMANT_ART = 0.72; // avatar shrink factor when dormant
   // The right-click menu renders INSIDE this window and does NOT scale with
-  // fscale, so the window must be at least this big (logical px) whenever the
-  // menu is open — otherwise the menu gets cropped (worst at Small size). Tall
-  // enough for the Avatar sub-pane (7 rows).
+  // fscale, so while it's open the window must be at least this big (logical
+  // px) or the menu gets cropped. Tall enough for the Avatar sub-pane (7 rows).
   const MENU_W = 192;
   const MENU_H = 244;
 
-  /** Derive the three window sizes from an art footprint. The avatar stays the
-   *  SAME size between idle and active — only the empty room above it (for the
-   *  bubble) changes — so the character never jumps. Active height is anchored
-   *  to the head + a generous bubble band so even 3-line text never clips or
-   *  covers the face. Dormant additionally shrinks the art. All bottom-anchored. */
-  function sizesFor(skin: string): SkinSizes {
-    const a = ART[skin] ?? ART.fox;
-    return {
-      idle: {
-        w: a.w + 2 * SIDE_PAD,
-        h: a.h + BOTTOM_PAD + TOP_PAD,
-      },
-      active: {
-        w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
-        h: Math.max(a.h + BOTTOM_PAD + TOP_PAD, a.head + BUBBLE_BAND),
-      },
-      dormant: {
-        w: Math.round(a.w * DORMANT_ART) + 2 * SIDE_PAD,
-        h: Math.round(a.h * DORMANT_ART) + BOTTOM_PAD + 8,
-      },
-    };
-  }
-
-  // Dormant-mode timer. After this much idle-with-no-hover the floater
-  // settles into its smallest self. Tunable; surfaced as a setting later.
-  const DORMANT_MS = 60_000;
-  let dormant = $state(false);
-  let dormantTimer: ReturnType<typeof setTimeout> | null = null;
-  // Drive the dormant flag from activity. Re-runs when displayState or the
-  // hover flag flips (NOT on mousemove — hoverShiftX/Y aren't read here, so
-  // tracking the cursor never reschedules and never resizes the window).
-  $effect(() => {
-    const busy = displayState !== "idle" || hovering;
-    if (dormantTimer) {
-      clearTimeout(dormantTimer);
-      dormantTimer = null;
-    }
-    if (busy) {
-      dormant = false; // any activity wakes us immediately
-    } else {
-      // At rest + not hovered → start the countdown to dormant.
-      dormantTimer = setTimeout(() => {
-        dormant = true;
-        dormantTimer = null;
-      }, DORMANT_MS);
-    }
-    return () => {
-      if (dormantTimer) {
-        clearTimeout(dormantTimer);
-        dormantTimer = null;
-      }
-    };
-  });
-
-  // The single source of truth for the window's size bucket.
-  let sizeState = $derived<SizeState>(
-    displayState !== "idle" ? "active" : dormant ? "dormant" : "idle",
-  );
-  // Avatar art shrink applied ONLY in dormant (baked into the avatar's
-  // width/height via the --state-scale CSS var so it composes cleanly with
-  // the transform-based bob/breathe animations instead of fighting them).
-  let stateScale = $derived(sizeState === "dormant" ? 0.72 : 1);
-  // User-chosen size multiplier (sticky, sidebar + settings slider).
+  // User-chosen size multiplier (sticky, sidebar + settings slider). The ONLY
+  // input (besides skin + the open menu) that changes the window size now.
   let fscale = $derived(floaterScale.current);
 
   // Debug overlay (off by default). Shows the requested vs ACTUAL window size
@@ -344,29 +257,22 @@
     }
   }
 
-  // Watch (skin, sizeState, user-scale) and apply the right physical size.
-  // Re-runs only on real size-state changes — pipeline steps that all map to
-  // "active" don't churn the window, and hover never touches it. The no-op
-  // guard inside resizeFloaterCentered absorbs any duplicate target.
+  // Apply the window size. Re-runs ONLY when the skin, the user scale, or the
+  // open-menu flag changes — NOT on pipeline state, so the window never
+  // resizes mid-dictation (no jump, no flicker). The bubble lives inside this
+  // fixed box.
   $effect(() => {
-    const base = sizesFor(skin)[sizeState];
-    let w = Math.round(base.w * fscale);
-    let h = Math.round(base.h * fscale);
+    const box = BOX[skin] ?? BOX.fox;
+    let w = Math.round(box.w * fscale);
+    let h = Math.round(box.h * fscale);
     // While the right-click menu is open, ensure the window is at least big
-    // enough to show the whole menu (which is fixed-size). Grow only — never
-    // shrink below what the avatar/bubble already need.
+    // enough to show the whole (fixed-size) menu — grow only, never shrink.
     if (ctxMenuOpen) {
       w = Math.max(w, MENU_W);
       h = Math.max(h, MENU_H);
     }
     void resizeFloaterCentered({ w, h });
   });
-
-  // Where the speech bubble's tail sits, measured from the window bottom:
-  // just above the avatar's head. The bubble is anchored here and grows
-  // UPWARD into the empty band above, so longer text never creeps down onto
-  // the character's face. Scales with the avatar (× fscale).
-  let bubbleBottom = $derived((ART[skin]?.head ?? ART.fox.head) * fscale);
 
   // Ask the backend to force-repaint the floater (size nudge) — used to heal
   // a blank-after-resume WebView2 surface. Safe to over-call: the backend
@@ -966,13 +872,11 @@
 
 <div
   class="clippy-stage"
-  data-tauri-drag-region
-  data-size={sizeState}
-  style="--fscale:{fscale}; --state-scale:{stateScale}; --bubble-bottom:{bubbleBottom}px;"
+  style="--fscale:{fscale};"
   role="button"
   tabindex="0"
-  aria-label="Clippy floater — drag to move, double-click to open main window, right-click for options"
-  ondblclick={openMainWindow}
+  aria-label="wispr-fox floater — drag to move, right-click for options"
+  onmousedown={startDrag}
   oncontextmenu={openContextMenu}
   onmouseenter={() => (hovering = true)}
   onmouseleave={() => { hovering = false; hoverShiftX = 0; hoverShiftY = 0; }}
@@ -1007,20 +911,13 @@
     <div class="shadow" class:pulse={displayState === "listening"}></div>
   {/if}
 
-  <!-- Dormant "napping" cue — a soft drifting z z z while the floater has
-       receded to its smallest self. Disappears the instant anything wakes it. -->
-  {#if skin !== "off" && sizeState === "dormant"}
-    <div class="zzz" aria-hidden="true">z&thinsp;z&thinsp;z</div>
-  {/if}
-
   <!-- Debug overlay (Settings → Appearance → Floater debug overlay). Draws
-       the exact window bounds + a live size readout so you can SEE whether
-       the box is resizing and how tightly it hugs the avatar. The "ask vs
-       got" line is the tell: if they differ, setSize was rejected. -->
+       the exact window bounds + a live size readout. The "ask vs got" line is
+       the tell: if they differ, the resize was rejected. -->
   {#if debug}
     <div class="dbg-frame" aria-hidden="true"></div>
     <div class="dbg-readout" aria-hidden="true">
-      <div><b>{skin}</b> · {sizeState}</div>
+      <div><b>{skin}</b></div>
       <div>ask {dbg.targetW}×{dbg.targetH}</div>
       <div class:dbg-bad={dbg.actualW !== dbg.targetW || dbg.actualH !== dbg.targetH}>
         got {dbg.actualW}×{dbg.actualH}
@@ -1769,36 +1666,6 @@
     animation: shadow-pulse 1.4s ease-in-out infinite;
   }
 
-  /* ── Dormant rest ─────────────────────────────────────────────────────
-     After DORMANT_MS of no activity the avatar shrinks (via --state-scale,
-     already baked into each skin's width) and dims slightly so it recedes
-     until you need it. A tiny "z z z" drifts up to show it's napping, not
-     gone. Any activity OR a hover wakes it instantly (back to idle size). */
-  .clippy-stage[data-size="dormant"] .character,
-  .clippy-stage[data-size="dormant"] .fox-stage {
-    opacity: 0.78;
-    transition: opacity 360ms ease;
-  }
-  .zzz {
-    position: absolute;
-    top: 6px;
-    left: 56%;
-    font-size: calc(12px * var(--fscale, 1));
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: #9aa0aa;
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
-    pointer-events: none;
-    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-    animation: zzz-drift 3.2s ease-in-out infinite;
-  }
-  @keyframes zzz-drift {
-    0%   { opacity: 0; transform: translateY(5px) scale(0.9); }
-    30%  { opacity: 0.9; }
-    70%  { opacity: 0.9; }
-    100% { opacity: 0; transform: translateY(-10px) scale(1.05); }
-  }
-
   /* ── Debug overlay ────────────────────────────────────────────────────
      Off by default. The frame traces the exact webview (= window content)
      bounds so dead-zone is obvious; the readout shows requested vs actual
@@ -2047,16 +1914,15 @@
        visual regressions on the stylized skin per user feedback. Will
        resurface as part of the new fox skin in a future build.) */
 
-  /* Speech bubble — anchored just above the avatar's head (via --bubble-bottom,
-     measured from the window bottom) and grows UPWARD as the text gets longer,
-     so it never creeps down over the character's face. The tail (::after)
-     stays at the bubble's bottom pointing down at the avatar. */
+  /* Speech bubble — pinned near the TOP of the fixed box, above the avatar
+     (which is bottom-anchored). The box is sized per-skin with enough headroom
+     that even a 3-line bubble never reaches the character's face. */
   .bubble {
     position: absolute;
-    bottom: var(--bubble-bottom, 140px);
-    top: auto;
+    top: calc(8px * var(--fscale, 1));
+    bottom: auto;
     left: 50%;
-    transform: translateX(-50%) translateY(6px) scale(0.92);
+    transform: translateX(-50%) translateY(-6px) scale(0.92);
     /* Scale the bubble WITH the floater scale: at Small the window + band
        shrink, so the bubble (font, padding, width) must shrink too or the
        same text overflows the smaller band and clips/covers the face. */
