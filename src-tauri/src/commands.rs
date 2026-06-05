@@ -432,13 +432,24 @@ pub fn current_models(flow: State<'_, Flow>) -> CurrentModels {
 }
 
 #[tauri::command]
-pub fn clear_all_history(history: State<'_, History>) -> Result<u64, String> {
+pub fn clear_all_history(app: AppHandle, history: State<'_, History>) -> Result<u64, String> {
     let recs = history.list_recent(10_000).map_err(|e| e.to_string())?;
     let mut removed = 0u64;
     for r in &recs {
         let _ = std::fs::remove_file(&r.audio_path);
         if history.delete(&r.id).is_ok() {
             removed += 1;
+        }
+    }
+    // Hard clear: also wipe the entire audio directory so NO orphaned .wav
+    // files or date-folders survive on disk (the DB only tracks files it
+    // created — a real "clear everything" should leave nothing behind). The
+    // folder is recreated empty so the next recording has somewhere to land.
+    if let Ok(dir) = app.path().app_data_dir() {
+        let audio = dir.join("audio");
+        if audio.is_dir() {
+            let _ = std::fs::remove_dir_all(&audio);
+            let _ = std::fs::create_dir_all(&audio);
         }
     }
     Ok(removed)

@@ -66,6 +66,17 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.8** — Mac hotkeys simplified to a single ⌥ chord
+  (⌥Space dictate, ⌥Enter draft, ⌘ for sticky) instead of the ⌃⌥ three-key
+  combos — works out of the box, no macOS "standard function keys" setting
+  needed; existing Mac installs auto-migrate. "Clear all" in History is now
+  press-and-hold-3s (no modal) and hard-deletes the .wav files on disk (the
+  whole audio dir), not just the DB rows.
+- ✅ **v1.3.0-nightly.7** — reverted the floater to stable's model: ONE fixed
+  box per avatar, no resize on dictation state (bubble lives inside it), and
+  S/M/L scale is the only thing that resizes the window (scaling everything
+  in proportion). Killed the double-click-fills-screen bug for good by
+  dropping `data-tauri-drag-region` (manual drag instead — no maximize path).
 - ✅ **v1.3.0-nightly.6** — right-click menu no longer cropped: the menu
   renders inside the floater window and doesn't scale, so at Small/idle it
   was clipped to ~2 rows. Opening it now grows the window to a fixed

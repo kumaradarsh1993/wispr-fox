@@ -126,50 +126,64 @@ class SettingsStore {
       migrated = true;
     }
 
-    // 2b) macOS hotkey migration. F8/F9 collide with the Mac media keys, so
-    //     macOS defaults to ⌃⌥ chords (see Rust AppSettings::default). Mac
-    //     installs created before this split carry the Windows F-key values
-    //     — remap any still sitting at those exact defaults. One-time, gated
-    //     by a store marker so we never re-clobber a deliberate later choice.
+    // 2b) macOS hotkey migration. F8/F9 are media keys on Mac, so macOS uses a
+    //     single ⌥ chord (⌥Space dictate, ⌥Enter draft, ⌘ for sticky). Two
+    //     one-time steps, each gated by a marker so we never clobber a user's
+    //     deliberate rebind:
+    //       • macHotkeyMigrated  — moves Windows F-key defaults → Mac combos
+    //         (covers installs that predate the platform split).
+    //       • macHotkeyV2Migrated — moves the OLD ⌃⌥ chord defaults (D/F/C)
+    //         that shipped briefly → the new ⌥Space scheme.
     const isMac =
       typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
     if (isMac) {
+      const store = await this.getStore().catch(() => null);
+
+      // Step 1: Windows F-key defaults → Mac (⌥Space) defaults.
       let macDone = false;
       try {
-        const store = await this.getStore();
-        macDone = (await store.get<boolean>("macHotkeyMigrated")) ?? false;
+        macDone = (await store?.get<boolean>("macHotkeyMigrated")) ?? false;
       } catch {
-        /* ignore — treat as not-yet-migrated */
+        /* treat as not-yet-migrated */
       }
+      const remap = (field: string, from: string, to: string) => {
+        if ((this.s as Record<string, unknown>)[field] === from) {
+          (this.s as Record<string, unknown>)[field] = to;
+          migrated = true;
+        }
+      };
       if (!macDone) {
-        if (this.s.light_hotkey === "F8") {
-          this.s.light_hotkey = "Ctrl+Alt+D";
-          migrated = true;
-        }
-        if (this.s.drafting_hotkey === "F9") {
-          this.s.drafting_hotkey = "Ctrl+Alt+F";
-          migrated = true;
-        }
-        if (this.s.light_sticky_hotkey === "Super+F8") {
-          this.s.light_sticky_hotkey = "Ctrl+Alt+Shift+D";
-          migrated = true;
-        }
-        if (this.s.drafting_sticky_hotkey === "Super+F9") {
-          this.s.drafting_sticky_hotkey = "Ctrl+Alt+Shift+F";
-          migrated = true;
-        }
-        if (this.s.force_clean_hotkey === "Shift+F8") {
-          this.s.force_clean_hotkey = "Ctrl+Alt+C";
-          migrated = true;
-        }
-        if (this.s.force_clean_sticky_hotkey === "Shift+Super+F8") {
-          this.s.force_clean_sticky_hotkey = "Ctrl+Alt+Shift+C";
-          migrated = true;
-        }
+        remap("light_hotkey", "F8", "Alt+Space");
+        remap("drafting_hotkey", "F9", "Alt+Enter");
+        remap("light_sticky_hotkey", "Super+F8", "Super+Alt+Space");
+        remap("drafting_sticky_hotkey", "Super+F9", "Super+Alt+Enter");
+        remap("force_clean_hotkey", "Shift+F8", "Shift+Alt+Space");
+        remap("force_clean_sticky_hotkey", "Shift+Super+F8", "Super+Shift+Alt+Space");
         try {
-          const store = await this.getStore();
-          await store.set("macHotkeyMigrated", true);
-          await store.save();
+          await store?.set("macHotkeyMigrated", true);
+          await store?.save();
+        } catch {
+          /* best-effort marker */
+        }
+      }
+
+      // Step 2: old ⌃⌥ chord defaults → the new ⌥Space scheme.
+      let macV2Done = false;
+      try {
+        macV2Done = (await store?.get<boolean>("macHotkeyV2Migrated")) ?? false;
+      } catch {
+        /* treat as not-yet-migrated */
+      }
+      if (!macV2Done) {
+        remap("light_hotkey", "Ctrl+Alt+D", "Alt+Space");
+        remap("drafting_hotkey", "Ctrl+Alt+F", "Alt+Enter");
+        remap("light_sticky_hotkey", "Ctrl+Alt+Shift+D", "Super+Alt+Space");
+        remap("drafting_sticky_hotkey", "Ctrl+Alt+Shift+F", "Super+Alt+Enter");
+        remap("force_clean_hotkey", "Ctrl+Alt+C", "Shift+Alt+Space");
+        remap("force_clean_sticky_hotkey", "Ctrl+Alt+Shift+C", "Super+Shift+Alt+Space");
+        try {
+          await store?.set("macHotkeyV2Migrated", true);
+          await store?.save();
         } catch {
           /* best-effort marker */
         }

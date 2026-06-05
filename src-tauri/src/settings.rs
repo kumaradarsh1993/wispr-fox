@@ -156,15 +156,19 @@ impl Default for AppSettings {
         // migrated off F8/F9 by the frontend settings store.)
         let mac = cfg!(target_os = "macos");
         Self {
-            light_hotkey: if mac { "Ctrl+Alt+D" } else { "F8" }.to_string(),
+            // macOS: a single ⌥ chord (Option+Space / Option+Enter) instead of
+            // ⌃⌥ three-key combos — one modifier + one key, works out of the box
+            // (no "use F-keys as standard" setting needed, unlike bare F8/F9).
+            // ⌘ is the sticky modifier (the Mac analogue of Win+F8).
+            light_hotkey: if mac { "Alt+Space" } else { "F8" }.to_string(),
             advanced_hotkey: String::new(),
-            drafting_hotkey: if mac { "Ctrl+Alt+F" } else { "F9" }.to_string(),
+            drafting_hotkey: if mac { "Alt+Enter" } else { "F9" }.to_string(),
             sticky_light: false,
             sticky_advanced: false,
             sticky_drafting: false,
-            light_sticky_hotkey: if mac { "Ctrl+Alt+Shift+D" } else { "Super+F8" }.to_string(),
+            light_sticky_hotkey: if mac { "Super+Alt+Space" } else { "Super+F8" }.to_string(),
             advanced_sticky_hotkey: String::new(),
-            drafting_sticky_hotkey: if mac { "Ctrl+Alt+Shift+F" } else { "Super+F9" }.to_string(),
+            drafting_sticky_hotkey: if mac { "Super+Alt+Enter" } else { "Super+F9" }.to_string(),
             force_clean_hotkey: default_force_clean_hotkey(),
             force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
             // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
@@ -227,11 +231,11 @@ fn default_open_silently() -> bool {
 }
 
 fn default_force_clean_hotkey() -> String {
-    if cfg!(target_os = "macos") { "Ctrl+Alt+C" } else { "Shift+F8" }.to_string()
+    if cfg!(target_os = "macos") { "Shift+Alt+Space" } else { "Shift+F8" }.to_string()
 }
 
 fn default_force_clean_sticky_hotkey() -> String {
-    if cfg!(target_os = "macos") { "Ctrl+Alt+Shift+C" } else { "Shift+Super+F8" }.to_string()
+    if cfg!(target_os = "macos") { "Super+Shift+Alt+Space" } else { "Shift+Super+F8" }.to_string()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

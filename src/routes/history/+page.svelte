@@ -63,19 +63,55 @@
     return order.map((label) => ({ label, items: buckets[label] }));
   });
 
-  async function clearAll() {
-    const ok = confirm(
-      "Delete ALL recordings?\n\n" +
-      "This permanently removes:\n" +
-      "  • All transcripts and cleaned/drafted text\n" +
-      "  • All audio files (the .wav recordings)\n" +
-      "  • All history rows\n\n" +
-      "This cannot be undone. Are you sure?"
-    );
-    if (!ok) return;
-    const removed = await api.clearAllHistory();
-    await history.refresh();
-    alert(`Deleted ${removed} recording${removed === 1 ? "" : "s"}.`);
+  // Press-and-hold-to-confirm clear. Holding the button for HOLD_MS deletes
+  // everything (DB rows + transcripts + the .wav files on disk). Releasing
+  // early cancels — no accidental nukes, no modal dialog.
+  const HOLD_MS = 3000;
+  let holdActive = $state(false);
+  let holdProgress = $state(0); // 0..1
+  let clearing = $state(false);
+  let clearedMsg = $state("");
+  let _holdStart = 0;
+  let _holdRAF: number | null = null;
+
+  function holdTick() {
+    const t = Math.min(1, (Date.now() - _holdStart) / HOLD_MS);
+    holdProgress = t;
+    if (t >= 1) {
+      _holdRAF = null;
+      void doClear();
+      return;
+    }
+    _holdRAF = requestAnimationFrame(holdTick);
+  }
+  function startHold() {
+    if (clearing) return;
+    holdActive = true;
+    clearedMsg = "";
+    _holdStart = Date.now();
+    _holdRAF = requestAnimationFrame(holdTick);
+  }
+  function cancelHold() {
+    if (_holdRAF !== null) {
+      cancelAnimationFrame(_holdRAF);
+      _holdRAF = null;
+    }
+    holdActive = false;
+    holdProgress = 0;
+  }
+  async function doClear() {
+    cancelHold();
+    clearing = true;
+    try {
+      const removed = await api.clearAllHistory();
+      await history.refresh();
+      clearedMsg = `Deleted ${removed} recording${removed === 1 ? "" : "s"} + audio files.`;
+    } catch (e) {
+      clearedMsg = `Clear failed: ${e}`;
+    } finally {
+      clearing = false;
+      setTimeout(() => (clearedMsg = ""), 4000);
+    }
   }
 
   async function openRecordingsFolder() {
@@ -132,7 +168,22 @@
             <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
         </button>
-        <button class="icon-btn danger" onclick={clearAll} title="Delete all recordings">Clear all</button>
+        <button
+          class="hold-clear"
+          class:armed={holdActive}
+          disabled={clearing}
+          style="--hold:{holdProgress}"
+          onmousedown={startHold}
+          onmouseup={cancelHold}
+          onmouseleave={cancelHold}
+          title="Press and hold 3 seconds to delete all recordings and audio files"
+        >
+          <span class="hold-fill"></span>
+          <span class="hold-text">
+            {#if clearing}Clearing…{:else if holdActive}Keep holding to delete…{:else}Hold to clear all{/if}
+          </span>
+        </button>
+        {#if clearedMsg}<span class="cleared-msg">{clearedMsg}</span>{/if}
       </div>
     </div>
   </header>
@@ -361,6 +412,54 @@
   .icon-btn.danger:hover {
     background: var(--danger-fade);
     border-color: var(--danger);
+  }
+
+  /* Press-and-hold-to-clear button. A danger-tinted fill sweeps left→right
+     over 3s while held; releasing early cancels. */
+  .hold-clear {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--danger);
+    user-select: none;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .hold-clear:hover {
+    border-color: var(--danger);
+    background: var(--danger-fade);
+  }
+  .hold-clear:disabled {
+    opacity: 0.7;
+    cursor: default;
+  }
+  .hold-clear.armed {
+    border-color: var(--danger);
+    color: #fff;
+  }
+  .hold-fill {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    transform-origin: left center;
+    transform: scaleX(var(--hold, 0));
+    background: var(--danger);
+    transition: transform 60ms linear;
+  }
+  .hold-text {
+    position: relative;
+    white-space: nowrap;
+  }
+  .cleared-msg {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 8px;
+    align-self: center;
   }
 
   /* Date dividers */
