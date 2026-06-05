@@ -208,28 +208,33 @@
   // logical px). EVERYTHING else — the three window sizes AND the bubble
   // anchor — is derived from this so they can never drift out of sync. These
   // must match the avatar CSS width/height for each skin below.
-  type Art = { w: number; h: number };
+  // `head` = logical px from the window BOTTOM up to where the speech bubble's
+  // tail should sit (just above the character's visible head). It's per-skin
+  // because each character's head is at a different height within its box
+  // (the cat's head is low in a tall box; the paperclip's eyes are near the
+  // top). The bubble anchors here and grows upward.
+  type Art = { w: number; h: number; head: number };
   const ART: Record<string, Art> = {
-    fox:           { w: 116, h: 116 },
-    stylized:      { w: 128, h: 122 },
-    "real-clippy": { w: 120, h: 112 },
-    cat:           { w: 150, h: 168 },
-    "cat-lab":     { w: 150, h: 168 },
-    off:           { w: 120, h: 120 },
+    fox:           { w: 116, h: 116, head: 108 },
+    stylized:      { w: 128, h: 122, head: 120 },
+    "real-clippy": { w: 120, h: 112, head: 116 },
+    cat:           { w: 150, h: 168, head: 128 },
+    "cat-lab":     { w: 150, h: 168, head: 128 },
+    off:           { w: 120, h: 120, head: 116 },
   };
   // Layout constants (logical px, at scale 1.0).
   const SIDE_PAD = 10; // breathing room left/right of the avatar at idle
   const BOTTOM_PAD = 12; // gap below the avatar (its feet aren't on the edge)
   const TOP_PAD = 12; // gap above the avatar's head when no bubble is shown
-  const BUBBLE_GAP = 10; // gap between the avatar's head and the bubble's tail
-  const BUBBLE_BAND = 70; // reserved vertical room for the bubble (~3 lines)
-  const BUBBLE_W = 188; // min active width — enough to host the centred bubble
+  const BUBBLE_BAND = 86; // reserved vertical room above the head for the bubble
+  const BUBBLE_W = 206; // min active width — wider so text wraps to fewer lines
   const DORMANT_ART = 0.72; // avatar shrink factor when dormant
 
   /** Derive the three window sizes from an art footprint. The avatar stays the
    *  SAME size between idle and active — only the empty room above it (for the
-   *  bubble) changes — so the character never jumps. Dormant additionally
-   *  shrinks the art. All bottom-anchored. */
+   *  bubble) changes — so the character never jumps. Active height is anchored
+   *  to the head + a generous bubble band so even 3-line text never clips or
+   *  covers the face. Dormant additionally shrinks the art. All bottom-anchored. */
   function sizesFor(skin: string): SkinSizes {
     const a = ART[skin] ?? ART.fox;
     return {
@@ -239,7 +244,7 @@
       },
       active: {
         w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
-        h: a.h + BOTTOM_PAD + BUBBLE_GAP + BUBBLE_BAND,
+        h: Math.max(a.h + BOTTOM_PAD + TOP_PAD, a.head + BUBBLE_BAND),
       },
       dormant: {
         w: Math.round(a.w * DORMANT_ART) + 2 * SIDE_PAD,
@@ -351,9 +356,7 @@
   // just above the avatar's head. The bubble is anchored here and grows
   // UPWARD into the empty band above, so longer text never creeps down onto
   // the character's face. Scales with the avatar (× fscale).
-  let bubbleBottom = $derived(
-    (BOTTOM_PAD + (ART[skin]?.h ?? ART.fox.h) + BUBBLE_GAP) * fscale,
-  );
+  let bubbleBottom = $derived((ART[skin]?.head ?? ART.fox.head) * fscale);
 
   // Ask the backend to force-repaint the floater (size nudge) — used to heal
   // a blank-after-resume WebView2 surface. Safe to over-call: the backend
@@ -580,6 +583,10 @@
     // setSize on Windows — the root cause of "the box never changes size".
     // (tauri.conf.json also sets resizable:true now; this covers cached state.)
     getCurrentWindow().setResizable(true).catch(() => {});
+    // Forbid maximizing — double-clicking a `data-tauri-drag-region` toggles
+    // maximize by default, which blew the transparent floater up to fill the
+    // whole screen (and blocked every click behind it). Config sets this too.
+    getCurrentWindow().setMaximizable(false).catch(() => {});
 
     let unlisten: (() => void) | undefined;
     let unlistenMode: (() => void) | undefined;
@@ -2040,12 +2047,15 @@
     top: auto;
     left: 50%;
     transform: translateX(-50%) translateY(6px) scale(0.92);
-    max-width: 170px;
+    /* Scale the bubble WITH the floater scale: at Small the window + band
+       shrink, so the bubble (font, padding, width) must shrink too or the
+       same text overflows the smaller band and clips/covers the face. */
+    max-width: calc(184px * var(--fscale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 14px;
-    padding: 6px 11px;
-    font-size: 11px;
+    padding: calc(6px * var(--fscale, 1)) calc(11px * var(--fscale, 1));
+    font-size: calc(11px * var(--fscale, 1));
     color: #1d1d1f;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     opacity: 0;

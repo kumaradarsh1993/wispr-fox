@@ -66,6 +66,14 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.3.0-nightly.5** — floater fixes: (1) double-clicking the avatar no
+  longer blows the transparent window up to fill the whole screen
+  (`data-tauri-drag-region` was toggling maximize — now `maximizable:false`);
+  (2) much smoother resize — the window is moved+resized in ONE atomic
+  Win32 `SetWindowPos` instead of two paints, and the size-lock no longer
+  causes an intermediate clamp; (3) the speech bubble scales with the floater
+  scale (so Small no longer clips/overflows it), is wider (fewer line wraps),
+  and anchors per-skin (the cat's bubble sat too high).
 - ✅ **v1.3.0-nightly.4** — floater jump + bubble polish: bottom-centre
   anchor so the character holds its spot while the window grows upward for
   the bubble (no more downward jump on F8 / settle-back when done); the

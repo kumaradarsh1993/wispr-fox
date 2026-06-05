@@ -102,36 +102,80 @@ pub fn resize_floater(
     let cur_pos = window.outer_position().ok();
     let cur_size = window.outer_size().ok();
 
-    let logical = tauri::LogicalSize::new(width, height);
-    // Lock the window to EXACTLY this size: min == max == target. This stops
-    // the user from drag-resizing the borderless floater (the "I grabbed the
-    // edge and it scaled" problem) while still letting us change it ourselves
-    // (we update the bounds on every call). Avoids toggling WS_THICKFRAME,
-    // which can shift a borderless window and reintroduce jitter.
-    let _ = window.set_resizable(true); // belt-and-suspenders so set_size lands
-    let _ = window.set_min_size(Some(logical));
-    let _ = window.set_max_size(Some(logical));
-    window
-        .set_size(logical)
-        .map_err(|e| format!("set_size: {e}"))?;
+    let new_w = (width * sf).round() as i32;
+    let new_h = (height * sf).round() as i32;
 
-    if center {
-        if let (Some(pos), Some(old)) = (cur_pos, cur_size) {
-            let new_w = (width * sf).round() as i32;
-            let new_h = (height * sf).round() as i32;
+    // Bottom-CENTRE anchored target top-left (physical). The avatar is
+    // horizontally centred and sits on the window's bottom edge, so to keep
+    // it visually still: keep the horizontal centre fixed (x shifts by half
+    // of dx) and the BOTTOM edge fixed (y shifts by the FULL dy). The window
+    // then grows UPWARD for the bubble and the character doesn't move.
+    let (nx, ny) = match (center, cur_pos, cur_size) {
+        (true, Some(pos), Some(old)) => {
             let dx = new_w - old.width as i32;
             let dy = new_h - old.height as i32;
-            // Bottom-CENTRE anchor. The avatar is horizontally centred and
-            // sits on the window's bottom edge, so to keep it visually still:
-            //   • keep the horizontal centre fixed  → x shifts by half of dx
-            //   • keep the BOTTOM edge fixed         → y shifts by the FULL dy
-            // The window then grows UPWARD to make room for the speech bubble
-            // and the character doesn't move at all.
-            let nx = pos.x - dx / 2;
-            let ny = pos.y - dy;
+            (pos.x - dx / 2, pos.y - dy)
+        }
+        _ => cur_pos.map(|p| (p.x, p.y)).unwrap_or((0, 0)),
+    };
+
+    // Unlock the size bounds first so the resize below isn't clamped by the
+    // PREVIOUS state's lock (which would otherwise force an intermediate
+    // resize/paint — a flicker source). We relock to the new size afterwards.
+    let _ = window.set_resizable(true);
+    let _ = window.set_maximizable(false);
+    let _ = window.set_min_size(None::<tauri::LogicalSize<f64>>);
+    let _ = window.set_max_size(None::<tauri::LogicalSize<f64>>);
+
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+        };
+        match window.hwnd() {
+            Ok(h) => unsafe {
+                // Rebuild the HWND in OUR windows-crate version from the raw
+                // pointer — Tauri's hwnd() may come from a different `windows`
+                // version, so passing it straight to our SetWindowPos fails the
+                // type/Param bound.
+                let hwnd = HWND(h.0 as *mut core::ffi::c_void);
+                // ONE atomic move+size = a single paint, far smoother than a
+                // separate set_size then set_position (two paints, and the
+                // window flashes briefly mis-placed in between — the flicker).
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND::default(),
+                    nx,
+                    ny,
+                    new_w,
+                    new_h,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                );
+            },
+            Err(_) => {
+                let _ = window.set_size(tauri::LogicalSize::new(width, height));
+                if center {
+                    let _ = window.set_position(tauri::PhysicalPosition::new(nx, ny));
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        window
+            .set_size(tauri::LogicalSize::new(width, height))
+            .map_err(|e| format!("set_size: {e}"))?;
+        if center {
             let _ = window.set_position(tauri::PhysicalPosition::new(nx, ny));
         }
     }
+
+    // Relock to exactly the new size so the user can't drag-resize the
+    // borderless floater. Equal to the size we just applied → no extra resize.
+    let logical = tauri::LogicalSize::new(width, height);
+    let _ = window.set_min_size(Some(logical));
+    let _ = window.set_max_size(Some(logical));
 
     let after = window
         .outer_size()
