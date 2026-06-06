@@ -70,11 +70,15 @@ New repository secret**. Add:
 | `APPLE_CERTIFICATE_PASSWORD` | the password you set in step 2 |
 | `APPLE_SIGNING_IDENTITY` | `wispr-fox self-signed` (the exact name from step 1) |
 
-### 5. Cut the next nightly
+### 5. Enable signing in CI, then cut a build
 
-Tag + push as usual. The macOS build now signs with your cert. Once you install
-that build and grant Accessibility **once**, every future signed nightly keeps
-the grant.
+After the three secrets exist, **uncomment** the three signing lines in
+`.github/workflows/release.yml` (the `APPLE_CERTIFICATE` /
+`APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` block — they're kept
+commented because tauri-action treats an *empty* identity as "please sign" and
+then fails the macOS build). Commit, tag + push as usual. The macOS build now
+signs with your cert. Once you install that build and grant Accessibility
+**once**, every future signed build keeps the grant.
 
 > If you ever rotate the cert (new identity), the grant resets one more time —
 > so don't regenerate it casually. One cert, kept forever, is the whole point.
