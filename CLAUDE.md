@@ -13,18 +13,27 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-Current de-facto stable: **v1.0.0-nightly.8** (commit `3b5291a`,
-2026-05-27). User confirmed this is the last release unaffected by
-the v1.1.0 secrets regression. v1.1.0 / v1.1.0-nightly.1–nightly.4 are
-on GitHub but the user has explicitly said NOT to promote anything past
-v1.0.0-nightly.8 to "Latest" until they confirm the v1.1.0-nightly.5
-key-storage fix works end-to-end.
+**Current stable: `v1.3.0`** (Latest, 2026-06-06) — user-confirmed working,
+promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
 
-Nightly channel is at **v1.1.0-nightly.5** (commit `<latest>`, 2026-06-01) —
-delivers: pure secrets::get (no side effects); duck skin retired; cat
-restored to charcoal; custom right-click menu on the floater; Avatar
-SDK doc in `docs/AVATAR_SDK.md` (contract for outsourcing avatar
-authoring to another AI / human). Single owner, no paid users.
+**What v1.3.0 shipped** (this is the live baseline; details below):
+- **Analytics dashboard** — `/stats` page + a widget on top of History
+  (time saved vs typing @40wpm, words/sessions per day, speaking speed, day
+  streak, 7/30/90-day chart). Backed by a lifetime `daily_stats` SQLite table
+  that is NOT pruned by retention.
+- **Floater = ONE fixed box per avatar** (reverted from the dynamic-resize
+  experiment). Box never resizes on dictation state; only the S/M/L scale (and
+  the right-click menu) changes window size. Bubble anchored above the head,
+  grows upward. Double-click avatar → opens main window. (Full model below.)
+- **macOS hotkeys = ⌥-based** (⌥Space dictate / ⌥Enter draft / ⌘ for sticky)
+  since nightly.8-v2, NOT the old ⌃⌥ chords. (Hotkey section below is updated.)
+- **macOS durable Accessibility signing** — infrastructure ready but NOT yet
+  enabled (the three signing env lines in `release.yml` are COMMENTED; CI fails
+  the mac build if they're set without the secrets). One-time enablement steps
+  in `docs/MACOS_SIGNING.md`. **Pending the user adding 3 GitHub secrets.**
+
+Nightly channel reached `v1.3.0-nightly.11` before promotion. History of the
+nightly.1→11 work is in `docs/ROADMAP.md` "Done — recent".
 
 ## Architecture (90-second tour)
 
@@ -37,19 +46,28 @@ src-tauri/src/
                 + chunk.rs   WAV split when > 20 MB (Groq's 25 MB cap)
   stt/groq.rs   Whisper Large v3 Turbo (Groq). Multi-chunk if needed.
   llm/          Groq Llama (primary) + Gemini (secondary). Per-mode prompt.
-  history/      SQLite. Three text columns: transcript, cleaned_text, drafted_text.
+  history/      SQLite. recordings (transcript/cleaned_text/drafted_text) +
+                daily_stats (lifetime analytics rollup, NOT pruned by GC).
   flow.rs       Top-level state machine. Hotkey → record → STT → LLM → inject.
+                Tallies daily_stats once per completed recording (record_session).
   hotkey.rs     8 registered combos: F8/F9/F10 + Win+ + Shift+F8 force-clean.
   power.rs      Cross-platform resume detector (wall-clock gap) + JS ping state.
   touchbar.rs   macOS Touch Bar UI (character picker + mode buttons + timer).
   settings.rs   AppSettings struct. Defaults here; user values in tauri-plugin-store.
 
 src/routes/
-  +layout.svelte   Sidebar (brand, hotkey hints, floater picker, usage, hero fox)
-  /history/        Rows with Raw/Cleaned/Drafted tabs, kebab menu, search/filter
+  +layout.svelte   Sidebar (brand, hotkey hints, floater picker+S/M/L, usage, fox)
+  /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
+  /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Provider keys, modes, hotkeys, behaviour, startup, look & feel
-  /clippy/         Always-on-top floater. Skin variants: off/fox/stylized/real-clippy/cat
+  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/cat-lab
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
+
+src/lib/
+  stats.ts                analytics derivation (time-saved, streak, gap-fill)
+  stats-store.svelte.ts   loads stats_summary, refreshes on flow idle
+  StatsWidget.svelte      compact home-page strip → links to /stats
+  floater-scale.svelte.ts S/M/L scale store + floater-debug toggle store
 ```
 
 ## Hotkey model (current, v1.0.0)
@@ -66,25 +84,20 @@ activation key. WM_SYSKEYUP leaks past RegisterHotKey and steals
 focus to Outlook's ribbon. Settings store auto-migrates old F10
 configs to F9 on first launch.
 
-**macOS uses different defaults** (since nightly.8, actually-wired-end-to-end
-in nightly.9): the Mac function row sends media/volume events by default
-(F7 = ⏮, F8 = ⏯, F9 = ⏭, F10 = mute, F11/F12 = volume), so a global F8/F9
-shortcut would either fight Apple Music for play-pause or only fire when the
-user holds fn. There is **no clean single-function-key option on Mac** — F5
-is system Dictation, F4 is Spotlight/Launchpad, F1–F3 are brightness /
-Mission Control / Spaces. So macOS defaults to ⌃⌥ chords — `Ctrl+Alt+D`
-(dictate/Light), `Ctrl+Alt+F` (draft), `Ctrl+Alt+C` (force-clean),
-`+Shift` for sticky variants. ⌃⌥ chords fire regardless of the "use F1/F2 as
-standard function keys" system setting and rarely collide with app shortcuts
-(matches Raycast/Bartender/etc. convention). Set per-platform in
-`AppSettings::default` via `cfg!(target_os="macos")`; existing Mac installs
-are remapped off F8/F9 by a one-time, marker-gated migration in
-`settings-store.svelte.ts`. The UI converts canonical combo strings to
-platform-pretty form via `src/lib/hotkey-display.ts`: `prettyHotkey()` reads
-the user's bound combo from settings and emits `⌃⌥D` on Mac vs `Ctrl+Alt+D`
-on Windows. Sidebar, onboarding, dictation settings, modes, history empty
-state, and the floater all route through it — no hardcoded `F8` strings in
-user-facing copy.
+**macOS uses ⌥-based defaults** (current scheme since the nightly.8 "v2"
+remap; the old ⌃⌥ three-key chords are gone per user request for a single
+near-function-key binding): **⌥Space = dictate (Light)**, **⌥Enter = draft**,
+**Shift+⌥Space = force-clean**, and **⌘+** the same combo for the sticky
+variants (`Super+Alt+Space` etc.). Rationale: the Mac function row sends
+media/volume by default, and there's no clean single-function-key (F5=Dictation,
+F4=Spotlight, F1–F3=system), so ⌥Space is the closest "one press" that works
+without the "use F1/F2 as standard function keys" setting. Defaults set
+per-platform in `AppSettings::default` via `cfg!(target_os="macos")`. TWO
+marker-gated migrations in `settings-store.svelte.ts`: `macHotkeyMigrated`
+(F8/F9 → Mac) and `macHotkeyV2Migrated` (old ⌃⌥ chords → ⌥Space scheme). The UI
+renders combos via `src/lib/hotkey-display.ts` `prettyHotkey()` (emits ⌥/⌘/⇧/⌃
+symbols on Mac; Space/Enter pass through) — single source of truth, no hardcoded
+key strings in user-facing copy.
 
 **Escape stops a recording in flight** (since nightly.9, both platforms).
 Registered dynamically via the global-shortcut plugin when
@@ -126,6 +139,29 @@ to find tray-only apps the way Windows users find the system tray).
 - **Empty/loading states** use the watercolor fox illustrations.
 - **History bottom** carries the `landscape-combined.png` autumn
   pastoral banner with a top-fade mask.
+
+## Floater model (current — settled v1.3.0, do not re-litigate)
+
+The floater (`/clippy`) went through a painful dynamic-resize experiment and was
+**reverted to stable's model** at the user's explicit instruction. The rules now:
+
+- **ONE fixed box per avatar.** The window does NOT resize on dictation state.
+  Box size derived from a per-skin `ART` table (`{w,h,head}`) + `boxFor()` in
+  `+page.svelte`. The speech bubble lives INSIDE this fixed box.
+- **Only S/M/L scale (and the open right-click menu) changes window size.**
+  Scale store: `lib/floater-scale.svelte.ts`; everything (window, avatar,
+  bubble, text) multiplies by `--fscale` together.
+- **Resize is a NATIVE Rust command** (`commands.rs::resize_floater`,
+  bottom-center anchored). JS `outerSize()`/`setSize()` THROW in the floater
+  webview — do NOT resize from JS. `clippy` window is `resizable:true,
+  maximizable:false`.
+- **No `data-tauri-drag-region`** (its built-in dbl-click-maximize blew the
+  transparent window fullscreen). Drag is manual with a 4px movement threshold
+  so a plain double-click still reaches `ondblclick` → opens the main window.
+- **Bubble** anchors `HEAD_GAP` px above the head and grows upward; box width
+  `BUBBLE_W`/bubble `max-width` tuned wide per user pref. Same bubble shows on
+  ALL skins incl. real-clippy. Tuning knobs are all consts at the top of the
+  `<script>` — change a number, not the structure.
 
 ## Persistence model
 
@@ -310,6 +346,20 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: v1.1.0 ship-day + nightly.2 (duck, cat, Touch Bar),*
-*by Claude Code session. Update when conventions or architecture*
-*change — not on every fix.*
+*Last touched: v1.3.0 stable ship-day (analytics dashboard, fixed-box floater,*
+*macOS ⌥ hotkeys, durable-signing infra pending secrets), by Claude Code*
+*session. Update when conventions or architecture change — not on every fix.*
+
+## Open threads (post-v1.3.0, for the next session)
+
+1. **Enable macOS signing** — user to add 3 GitHub secrets + uncomment the env
+   block in `release.yml` per `docs/MACOS_SIGNING.md`. Until then mac builds are
+   unsigned and the Accessibility grant resets each update (known/expected).
+2. **macOS auto-paste** — was reported not working even with Accessibility
+   granted; root cause is the unsigned-update grant reset (item 1 fixes it).
+   Re-verify after signing is on. Mac inject code is `inject/macos.rs`
+   (cfg-gated, can't cargo-check on the Windows dev box — change blind + lean on
+   CI, or test on the user's Mac).
+3. **Avatar plugin loader / SDK v2** — parked (ROADMAP "Next up").
+4. **Touch Bar** — code exists (`touchbar.rs`); auto-detect + toggle polish low
+   priority.
