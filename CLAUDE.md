@@ -159,6 +159,18 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   bottom-centre anchored, **with SWP_NOCOPYBITS** (nightly.2) — without that
   flag Windows blits the stale client pixels into the new geometry before
   WebView2 repaints, which showed as a smeared "glitch frame" on every grow.
+- **Every resize is MASKED by a stage fade** (nightly.4). NOCOPYBITS is not
+  enough: the webview re-rasterizes ASYNCHRONOUSLY after a native resize, so
+  for a few frames the old raster sits anchored to the moved top-left corner
+  (avatar teleports up-left on grow / down-right on shrink, clipped). That
+  lag is the Chromium compositor — no flag fixes it. `resizeFloaterCentered`
+  hides `.clippy-stage` (instant), waits two rAFs so the blank frame is
+  actually composited, resizes, waits one rAF, fades back in 140ms. Skipped
+  on the first sizing after mount. If even the blink bothers the user:
+  **Settings → Appearance → "Floater window" toggle** (`floaterFixedBox`
+  store, same cross-window localStorage+event pattern as floaterDebug) pins
+  the classic v1.3 full box — `boxFor(skin, fixedBox || talking)` — and the
+  dedupe key then guarantees zero resizes during dictation.
 - **S/M/L scale (and the open right-click menu) also change window size.**
   Scale store: `lib/floater-scale.svelte.ts`; everything (window, avatar,
   bubble, text) multiplies by `--fscale` together.

@@ -63,6 +63,17 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.4** — **floater corner-glitch properly masked + a
+  safety toggle**. Root cause of the glitch that survived nightly.2: after a
+  native resize the webview re-rasterizes asynchronously, so for a few frames
+  the old content sits anchored to the window's moved top-left (avatar
+  teleports up-left on grow, down-right on shrink, clipped — exactly as
+  reported). No window flag can make that synchronous, so the avatar now
+  hides for one painted frame before the resize and fades back (~150ms) after
+  — a soft blink that blends into the avatar's own state cross-fade. Plus
+  **Settings → Appearance → "Floater window"**: Compact (dynamic, default) vs
+  Full box (classic v1.3 fixed size, zero transitions) — pick whichever reads
+  better to your eye.
 - ✅ **v1.4.0-nightly.3** — hand-drawn **pastel meadow SVG** for the bottom of
   History (rolling sage hills, white/orange/blush flowers, grass tufts, one
   butterfly — matches the design-playbook mock, ~5 KB, scales crisply at any

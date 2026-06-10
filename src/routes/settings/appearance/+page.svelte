@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
-  import { floaterScale, floaterDebug, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
+  import { floaterScale, floaterDebug, floaterFixedBox, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
   type SkinOption = { id: Skin; label: string; desc: string };
@@ -37,7 +37,21 @@
     skinStore.subscribe();
     floaterScale.subscribe();
     floaterDebug.subscribe();
+    floaterFixedBox.subscribe();
   });
+
+  const BOX_OPTIONS = [
+    {
+      fixed: false,
+      label: "Compact",
+      desc: "Window hugs the character and expands upward only while it's speaking. Frees the screen area above the head — with a brief fade on each expand/contract.",
+    },
+    {
+      fixed: true,
+      label: "Full box (classic)",
+      desc: "Window always reserves room for the speech bubble, like v1.3. Never resizes during dictation, so there is zero transition — at the cost of an invisible band above the character that covers whatever is behind it.",
+    },
+  ] as const;
 </script>
 
 <section>
@@ -88,6 +102,24 @@
         onclick={() => floaterScale.set(p.value)}
       >
         {p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}
+      </button>
+    {/each}
+  </div>
+
+  <h3>Floater window</h3>
+  <p class="lede">How much screen the floater's (invisible) window claims around the character.</p>
+  <div class="radio-grid">
+    {#each BOX_OPTIONS as opt (opt.fixed)}
+      <button
+        class="radio-card"
+        class:active={floaterFixedBox.current === opt.fixed}
+        onclick={() => floaterFixedBox.set(opt.fixed)}
+      >
+        <div class="radio-card-head">
+          <span class="radio-dot">{floaterFixedBox.current === opt.fixed ? "●" : "○"}</span>
+          <span class="radio-label">{opt.label}</span>
+        </div>
+        <div class="radio-desc">{opt.desc}</div>
       </button>
     {/each}
   </div>

@@ -128,3 +128,48 @@ class FloaterDebugStore {
 }
 
 export const floaterDebug = new FloaterDebugStore();
+
+// ── Floater box mode: compact (dynamic) vs full (classic) ──────────────
+// Compact (default, v1.4.0): the window hugs the avatar at rest and grows
+// upward only while a speech bubble is showing — reclaims the dead band
+// above the head that used to cover content and eat clicks. The grow/shrink
+// is masked by a brief avatar fade because the webview re-rasterizes
+// asynchronously after a native resize (content briefly anchors to the
+// window's top-left at the old size — the "corner glitch").
+// Full (classic, v1.3.0): ONE fixed box per avatar that always reserves the
+// bubble band; the window never resizes on dictation, so there is zero
+// transition artifact. Surfaced in Settings → Appearance as a safety valve
+// for users who find any transition at all too noticeable.
+const FIXEDBOX_KEY = "wispr.clippy.fixedbox";
+const FIXEDBOX_EVENT = "wispr:floater-fixedbox-change";
+
+class FloaterFixedBoxStore {
+  current = $state<boolean>(
+    typeof localStorage !== "undefined" && localStorage.getItem(FIXEDBOX_KEY) === "1",
+  );
+  private subscribed = false;
+
+  async subscribe() {
+    if (this.subscribed) return;
+    this.subscribed = true;
+    await listen<boolean | string>(FIXEDBOX_EVENT, (e) => {
+      const v = e.payload === true || e.payload === "1" || e.payload === "true";
+      this.current = v;
+      try {
+        localStorage.setItem(FIXEDBOX_KEY, v ? "1" : "0");
+      } catch {}
+    });
+  }
+
+  async set(on: boolean) {
+    this.current = on;
+    try {
+      localStorage.setItem(FIXEDBOX_KEY, on ? "1" : "0");
+    } catch {}
+    try {
+      await emit(FIXEDBOX_EVENT, on);
+    } catch {}
+  }
+}
+
+export const floaterFixedBox = new FloaterFixedBoxStore();

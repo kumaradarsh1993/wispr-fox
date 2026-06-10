@@ -5,7 +5,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
-  import { floaterScale, floaterDebug } from "$lib/floater-scale.svelte";
+  import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
 
@@ -313,6 +313,18 @@
   // De-dupe guard so an effect double-fire doesn't spam the backend.
   let _lastResizeKey = "";
 
+  // Stage visibility used to MASK resizes. After a native window resize the
+  // webview re-rasterizes asynchronously: for a few frames the old content
+  // stays at its old size anchored to the window's (moved) top-left corner,
+  // so the avatar visibly teleported toward a corner, clipped, then snapped
+  // back (user report on nightly.2/.3 — SWP_NOCOPYBITS alone can't fix this,
+  // it's the compositor, not the blit). Hiding the stage for the resize and
+  // fading it back turns the corner-glitch into a soft ~150ms blink that
+  // blends into the avatar's own state cross-fade.
+  let stageVisible = $state(true);
+  let _maskDepth = 0;
+  const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+
   /**
    * Resize the floater window via a RUST command, centre-anchored. We do NOT
    * use the JS window API here: on the floater webview `outerSize()` rejects
@@ -324,9 +336,20 @@
   async function resizeFloaterCentered(target: Size) {
     const key = `${target.w}x${target.h}`;
     if (key === _lastResizeKey) return;
+    // Skip the mask on the very first sizing after mount — the window is
+    // settling into place anyway and there's nothing on screen to glitch.
+    const mask = _lastResizeKey !== "";
     _lastResizeKey = key;
     dbg.targetW = target.w;
     dbg.targetH = target.h;
+    if (mask) {
+      _maskDepth++;
+      stageVisible = false;
+      // Two rAFs: one to flush the hidden state into the DOM, one to be sure
+      // that frame actually reached the compositor before the window moves.
+      await nextFrame();
+      await nextFrame();
+    }
     try {
       const [aw, ah, sf] = await invoke<[number, number, number]>("resize_floater", {
         width: target.w,
@@ -338,15 +361,30 @@
       dbg.actualH = sf ? Math.round(ah / sf) : ah;
     } catch (e) {
       console.warn("[clippy] resize_floater failed", e);
+    } finally {
+      if (mask) {
+        // Give the webview one frame to lay out at the new size, then fade
+        // the stage back in (CSS handles the 140ms ease).
+        await nextFrame();
+        _maskDepth--;
+        if (_maskDepth === 0) stageVisible = true;
+      }
     }
   }
 
+  // User preference: "Full box (classic)" pins the window at the TALK size
+  // permanently — zero resizes during dictation, exactly the v1.3.0 model.
+  // Surfaced in Settings → Appearance for anyone who finds the masked
+  // grow/shrink transition too noticeable.
+  let fixedBox = $derived(floaterFixedBox.current);
+
   // Apply the window size. Re-runs when the skin, the user scale, the
-  // open-menu flag, or bubble visibility (debounced `talking`) changes —
-  // NOT on every pipeline state hop, so mid-dictation transitions
-  // (listening→thinking→writing) never touch the window.
+  // open-menu flag, the box-mode preference, or bubble visibility
+  // (debounced `talking`) changes — NOT on every pipeline state hop, so
+  // mid-dictation transitions (listening→thinking→writing) never touch
+  // the window.
   $effect(() => {
-    const box = boxFor(skin, talking);
+    const box = boxFor(skin, fixedBox || talking);
     let w = Math.round(box.w * fscale);
     let h = Math.round(box.h * fscale);
     // While the right-click menu is open, ensure the window is at least big
@@ -578,6 +616,7 @@
     skinStore.subscribe();
     floaterScale.subscribe();
     floaterDebug.subscribe();
+    floaterFixedBox.subscribe();
     // Belt-and-suspenders: guarantee the window is resizable so programmatic
     // setSize actually applies. A non-resizable Tauri window silently ignores
     // setSize on Windows — the root cause of "the box never changes size".
@@ -956,6 +995,7 @@
 
 <div
   class="clippy-stage"
+  class:stage-hidden={!stageVisible}
   style="--fscale:{fscale}; --bubble-bottom:{bubbleBottom}px;"
   role="button"
   tabindex="0"
@@ -1734,6 +1774,18 @@
 
   .clippy-stage:active {
     cursor: grabbing;
+  }
+
+  /* Resize mask — hide instantly (no transition) so the pre-resize frame is
+     already blank when the window moves, fade back in once the webview has
+     laid out at the new size. See resizeFloaterCentered(). */
+  .clippy-stage {
+    opacity: 1;
+    transition: opacity 140ms ease;
+  }
+  .clippy-stage.stage-hidden {
+    opacity: 0;
+    transition: none;
   }
 
   /* Floor shadow */
