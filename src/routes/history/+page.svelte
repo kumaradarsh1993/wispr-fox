@@ -237,7 +237,7 @@
        hills as you reach the end of the list. pointer-events: none —
        pure decoration, never intercepts clicks or scroll. -->
   <div class="history-meadow" aria-hidden="true">
-    <img src="/fox/landscape-combined.png" alt="" />
+    <img src="/fox/meadow-strip.svg" alt="" />
   </div>
 </section>
 
@@ -561,6 +561,18 @@
     display: block;
     object-fit: cover;
     object-position: center bottom;
+  }
+
+  /* The meadow is painted for the light cream theme; in the dark themes a
+     pastel-green strip would glow, so dim it to a faint silhouette. Covers
+     explicit dark AND auto-following-system-dark. */
+  :global(body[data-theme="dark"]) .history-meadow {
+    opacity: 0.22;
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(body[data-theme="auto"]) .history-meadow {
+      opacity: 0.22;
+    }
   }
 
   /* Watercolor fox illustrations from the design playbook (PNGs in

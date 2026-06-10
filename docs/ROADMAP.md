@@ -63,6 +63,11 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.3** — hand-drawn **pastel meadow SVG** for the bottom of
+  History (rolling sage hills, white/orange/blush flowers, grass tufts, one
+  butterfly — matches the design-playbook mock, ~5 KB, scales crisply at any
+  width). Replaces the autumn PNG banner there; auto-dims to a faint
+  silhouette in the dark themes.
 - ✅ **v1.4.0-nightly.2** — **fixed the grow glitch** from nightly.1: pressing
   F8 made the floater window briefly paint a smeared/shifted frame while it
   expanded for the bubble. Windows was blitting the old window pixels into

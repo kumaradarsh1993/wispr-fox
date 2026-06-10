@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 240" width="1600" height="240" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+  <!-- Ambient meadow strip for the bottom of the History pane (design
+       playbook "bottom wave"). Pastel greens warmed toward the Foxy cream/
+       orange palette; intentionally low-contrast so it reads as atmosphere
+       behind the cards, not content. -->
+  <defs>
+    <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#faf6ec" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#f3ecd8" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="hillBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dde3c2"/>
+      <stop offset="100%" stop-color="#cfd8af"/>
+    </linearGradient>
+    <linearGradient id="hillMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#cdd9a8"/>
+      <stop offset="100%" stop-color="#b9c98f"/>
+    </linearGradient>
+    <linearGradient id="bank" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b3c585"/>
+      <stop offset="70%" stop-color="#9db26e"/>
+      <stop offset="100%" stop-color="#8aa05e"/>
+    </linearGradient>
+    <filter id="soften" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+
+    <!-- Five-petal flower; petal colour comes from the fill set on each
+         <use> (unset here so it inherits). Each petal is the same ellipse
+         fanned around the centre. -->
+    <g id="flower">
+      <g>
+        <ellipse cx="0" cy="-4.2" rx="2.3" ry="3.4"/>
+        <ellipse cx="0" cy="-4.2" rx="2.3" ry="3.4" transform="rotate(72)"/>
+        <ellipse cx="0" cy="-4.2" rx="2.3" ry="3.4" transform="rotate(144)"/>
+        <ellipse cx="0" cy="-4.2" rx="2.3" ry="3.4" transform="rotate(216)"/>
+        <ellipse cx="0" cy="-4.2" rx="2.3" ry="3.4" transform="rotate(288)"/>
+      </g>
+      <circle cx="0" cy="0" r="1.7" fill="#e8b54a"/>
+    </g>
+
+    <!-- Grass tuft: three blades. -->
+    <g id="tuft" fill="none" stroke="#7c9352" stroke-width="1.6" stroke-linecap="round">
+      <path d="M 0 0 C -1 -6 -4 -9 -6 -12"/>
+      <path d="M 0 0 C 0 -7 0.5 -10 1 -14"/>
+      <path d="M 0 0 C 1.5 -6 4.5 -8 7 -11"/>
+    </g>
+  </defs>
+
+  <!-- Far hills — blurred, hazy. -->
+  <g filter="url(#soften)" opacity="0.85">
+    <path d="M -20 150 C 180 96 360 92 560 122 C 760 152 900 110 1100 100 C 1300 90 1460 112 1620 132 L 1620 260 L -20 260 Z" fill="url(#hillBack)"/>
+  </g>
+
+  <!-- Mid mounds. -->
+  <path d="M -20 178 C 140 138 330 130 520 154 C 680 174 800 148 980 140 C 1180 132 1330 150 1620 168 L 1620 260 L -20 260 Z" fill="url(#hillMid)"/>
+
+  <!-- Soft cream haze where the hills meet the page background. -->
+  <rect x="-20" y="60" width="1660" height="90" fill="url(#haze)"/>
+
+  <!-- Front bank — the band the cards float over. -->
+  <path d="M -20 206 C 200 182 380 178 560 192 C 760 208 920 186 1120 184 C 1320 182 1480 194 1620 200 L 1620 260 L -20 260 Z" fill="url(#bank)"/>
+
+  <!-- Grass tufts along the bank crest. -->
+  <g opacity="0.7">
+    <use href="#tuft" x="0" y="0" transform="translate(120 200)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(345 192) scale(0.85)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(540 198)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(760 204) scale(1.1)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(985 192) scale(0.9)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(1210 192)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(1430 200) scale(0.85)"/>
+    <use href="#tuft" x="0" y="0" transform="translate(1560 206)"/>
+  </g>
+
+  <!-- Flowers — white, soft orange, blush. Mostly on the front bank, a few
+       smaller ones drifting up the mid mounds. -->
+  <g>
+    <use href="#flower" fill="#fffaf0" transform="translate(95 214) scale(1.15)"/>
+    <use href="#flower" fill="#f3a45f" transform="translate(215 224) scale(0.95)"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(310 206) scale(0.8)"/>
+    <use href="#flower" fill="#f0b9a8" transform="translate(430 226) scale(1.05)"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(575 212) scale(1.2)"/>
+    <use href="#flower" fill="#f3a45f" transform="translate(690 230) scale(0.85)"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(820 218) scale(0.95)"/>
+    <use href="#flower" fill="#f0b9a8" transform="translate(930 208) scale(0.8)"/>
+    <use href="#flower" fill="#f3a45f" transform="translate(1050 226) scale(1.1)"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(1180 212) scale(0.9)"/>
+    <use href="#flower" fill="#f0b9a8" transform="translate(1300 228) scale(0.95)"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(1415 210) scale(1.1)"/>
+    <use href="#flower" fill="#f3a45f" transform="translate(1530 222) scale(0.85)"/>
+    <!-- drifted-up small ones -->
+    <use href="#flower" fill="#fffaf0" transform="translate(480 172) scale(0.55)" opacity="0.8"/>
+    <use href="#flower" fill="#f3a45f" transform="translate(880 168) scale(0.5)" opacity="0.8"/>
+    <use href="#flower" fill="#fffaf0" transform="translate(1260 166) scale(0.55)" opacity="0.8"/>
+  </g>
+
+  <!-- One tiny butterfly, accent orange — the playbook mock's wink. -->
+  <g transform="translate(1085 120) rotate(-12)" opacity="0.9">
+    <ellipse cx="-3.2" cy="-1" rx="3.4" ry="2.3" fill="#ec7c34" transform="rotate(-28)"/>
+    <ellipse cx="3.2" cy="-1" rx="3.4" ry="2.3" fill="#f3a45f" transform="rotate(28)"/>
+    <line x1="0" y1="-2.6" x2="0" y2="2.6" stroke="#5a4632" stroke-width="1" stroke-linecap="round"/>
+  </g>
+</svg>
