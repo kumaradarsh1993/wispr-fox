@@ -167,11 +167,15 @@
     false,
   );
 
-  type NavItem = { href: string; label: string; icon: string };
+  // Nav icons are inline stroke SVGs (see the snippet in the markup) instead
+  // of emoji — emoji glyphs render with the OS emoji font (inconsistent
+  // weight/colour, can't follow the theme), while currentColor strokes pick
+  // up the active/hover accent automatically.
+  type NavItem = { href: string; label: string; icon: "history" | "stats" | "settings" };
   const navItems: NavItem[] = [
-    { href: "/history", label: "History", icon: "🕓" },
-    { href: "/stats", label: "Stats", icon: "📊" },
-    { href: "/settings", label: "Settings", icon: "⚙" },
+    { href: "/history", label: "History", icon: "history" },
+    { href: "/stats", label: "Stats", icon: "stats" },
+    { href: "/settings", label: "Settings", icon: "settings" },
   ];
 
   // Hotkey reminder rendered at the top of the sidebar — always visible.
@@ -224,10 +228,35 @@
           {/if}
         </button>
 
+        {#snippet navIcon(icon: NavItem["icon"])}
+          {#if icon === "history"}
+            <!-- clock -->
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6" />
+              <path d="M 8 4.8 V 8 L 10.4 9.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          {:else if icon === "stats"}
+            <!-- bar chart -->
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path d="M 3.2 13 V 9.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M 8 13 V 3.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M 12.8 13 V 6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            </svg>
+          {:else}
+            <!-- settings sliders -->
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path d="M 2.5 5 H 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M 2.5 11 H 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <circle cx="6" cy="5" r="1.9" fill="var(--bg-sidebar)" stroke="currentColor" stroke-width="1.6" />
+              <circle cx="10" cy="11" r="1.9" fill="var(--bg-sidebar)" stroke="currentColor" stroke-width="1.6" />
+            </svg>
+          {/if}
+        {/snippet}
+
         <nav class="nav">
           {#each navItems as item (item.href)}
             <a href={item.href} class="nav-item" class:active={isActive(item.href)}>
-              <span class="nav-icon">{item.icon}</span>
+              <span class="nav-icon">{@render navIcon(item.icon)}</span>
               {#if !collapsed}<span class="nav-label">{item.label}</span>{/if}
             </a>
           {/each}
@@ -590,8 +619,17 @@
 
   .nav-icon {
     width: 18px;
-    text-align: center;
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .nav-item .nav-icon {
+    opacity: 0.75;
+  }
+  .nav-item:hover .nav-icon,
+  .nav-item.active .nav-icon {
+    opacity: 1;
   }
 
   .footer-block {

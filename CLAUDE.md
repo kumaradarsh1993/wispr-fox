@@ -140,15 +140,24 @@ to find tray-only apps the way Windows users find the system tray).
 - **History bottom** carries the `landscape-combined.png` autumn
   pastoral banner with a top-fade mask.
 
-## Floater model (current — settled v1.3.0, do not re-litigate)
+## Floater model (current — v1.4.0 two-box model)
 
-The floater (`/clippy`) went through a painful dynamic-resize experiment and was
-**reverted to stable's model** at the user's explicit instruction. The rules now:
+The floater (`/clippy`) went through a painful dynamic-resize experiment
+(nightly.1→7), was reverted to ONE fixed box for v1.3.0, then — at the user's
+explicit request post-v1.3.0 ("the transparent background obstructs my
+messages") — moved to a **constrained two-box model** in v1.4.0. The v1.3.0
+fixed box permanently reserved the ~110px bubble band above the head, an
+invisible always-on-top dead zone that covered content and ate clicks. Rules:
 
-- **ONE fixed box per avatar.** The window does NOT resize on dictation state.
-  Box size derived from a per-skin `ART` table (`{w,h,head}`) + `boxFor()` in
-  `+page.svelte`. The speech bubble lives INSIDE this fixed box.
-- **Only S/M/L scale (and the open right-click menu) changes window size.**
+- **TWO boxes per avatar: REST (tight around the character) and TALK (adds
+  the bubble band above the head).** `boxFor(skin, talking)` from the per-skin
+  `ART` table (`{w,h,head}`). The window grows upward when a bubble (state or
+  toast) appears and shrinks back ~350ms after it hides (debounced `talking`
+  state — fade-out finishes first; mid-pipeline state hops never resize).
+  This is NOT the old per-state experiment: resize keys off bubble visibility
+  only, and works because the resize is one atomic native SetWindowPos,
+  bottom-centre anchored.
+- **S/M/L scale (and the open right-click menu) also change window size.**
   Scale store: `lib/floater-scale.svelte.ts`; everything (window, avatar,
   bubble, text) multiplies by `--fscale` together.
 - **Resize is a NATIVE Rust command** (`commands.rs::resize_floater`,

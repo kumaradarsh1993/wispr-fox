@@ -125,12 +125,14 @@
 </script>
 
 <section class="history">
-  <!-- Lifetime analytics at-a-glance — time saved, words, sessions, streak +
-       a 14-day sparkline. Click through to the full /stats dashboard. Renders
-       only once there's at least one recording. -->
-  <StatsWidget />
-
   <header class="history-head">
+    <!-- Lifetime analytics at-a-glance — time saved, words, sessions, streak +
+         a 14-day sparkline. Click through to the full /stats dashboard.
+         Renders only once there's at least one recording. Lives INSIDE the
+         header block so it shares the same padding grid as the title/search
+         rows instead of floating flush against the window edges. -->
+    <StatsWidget />
+
     <div class="title-row">
       <h1>History</h1>
       <span class="count">{filtered.length} of {history.list.length}</span>

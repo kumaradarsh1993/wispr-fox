@@ -63,6 +63,17 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.1** — **floater no longer hogs screen space**: the
+  window now sits in a tight box around the character and grows upward only
+  while a speech bubble is actually showing, shrinking back right after. The
+  old model permanently reserved the bubble's headroom — an invisible
+  always-on-top band that covered chat messages and ate clicks above the
+  avatar's head. UI polish batch: the stats strip on History now lives inside
+  the page header (aligned to the same grid, no more edge-to-edge floating
+  card), sidebar nav icons are crisp theme-aware SVGs instead of emoji, and
+  the "Auto" theme's dark mode now matches the warm fireside dark palette
+  (it was still the retired grey one). Bundle diet: dropped ~7 MB of unused
+  landscape PNGs from the installer.
 - ✅ **v1.3.0-nightly.11** — double-click the avatar opens the main window
   again (the move-drag was grabbing the OS move-loop on mousedown and eating
   the double-click; now dragging only starts once the pointer actually moves a

@@ -198,16 +198,21 @@
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
 
-  // ── Per-skin window sizing: ONE fixed box per avatar ─────────────────
+  // ── Per-skin window sizing: TWO boxes per avatar (rest / talking) ─────
   //
-  // Reverted (per user) to stable's model: each avatar has a SINGLE window
-  // size, big enough to hold the character AND the speech bubble above it.
-  // The window does NOT resize as the pipeline state changes — the bubble
-  // simply appears/disappears INSIDE the fixed box. The only thing that
-  // changes the window size is the user's S/M/L scale, which multiplies the
-  // whole box (and the avatar + bubble + text scale by the same factor), so
-  // everything stays in proportion. This kills the jump, the flicker, and
-  // the bubble-on-face problems that the dynamic-resize approach caused.
+  // v1.4.0: the v1.3.0 "ONE fixed box" model permanently reserved the
+  // speech-bubble band ABOVE the avatar's head — ~110px of always-there
+  // invisible window that sat on top of whatever app the user had behind
+  // the floater, hiding content and eating clicks (user: "the transparent
+  // background obstructs my messages"). Now each avatar has a tight REST
+  // box (just the character + breathing room) and a taller TALK box (adds
+  // the bubble band). The window grows upward the moment a bubble needs to
+  // show and shrinks back shortly after it hides. This is safe where the
+  // old dynamic-resize experiment wasn't because every piece it was missing
+  // now exists: the resize is ONE atomic native SetWindowPos (no flicker),
+  // bottom-centre anchored (the character never moves), and it changes only
+  // on bubble visibility — never per pipeline state, never per frame.
+  // The S/M/L scale still multiplies the whole box uniformly.
   //
   // Each avatar's footprint + where its head is, all LOGICAL px at scale 1.0.
   //   w/h  = the rendered character size (must match the avatar CSS below).
@@ -244,13 +249,38 @@
                         // ~3 lines and the bubble reads as a roomy box (user
                         // preference: wider rather than tall/narrow).
 
-  function boxFor(skin: string): Size {
+  function boxFor(skin: string, talking: boolean): Size {
     const a = ART[skin] ?? ART.fox;
+    const rest: Size = { w: a.w + 2 * SIDE_PAD, h: a.h + BOTTOM_PAD + TOP_MARGIN };
+    if (!talking) return rest;
     return {
-      w: Math.max(a.w + 2 * SIDE_PAD, BUBBLE_W),
-      h: Math.max(a.h + BOTTOM_PAD + TOP_MARGIN, a.head + HEAD_GAP + BUBBLE_BAND),
+      w: Math.max(rest.w, BUBBLE_W),
+      h: Math.max(rest.h, a.head + HEAD_GAP + BUBBLE_BAND),
     };
   }
+
+  // A bubble is "up" when either the state bubble or a transient toast is
+  // showing. Growing happens immediately (the window must be tall before the
+  // bubble's 200ms fade-in paints); shrinking waits a beat so the fade-OUT
+  // finishes inside the still-tall window and quick state churn (e.g.
+  // thinking→writing) never causes a shrink-grow stutter.
+  let bubbleUp = $derived(toastMessage !== "" || (skin !== "off" && displayState !== "idle"));
+  let talking = $state(false);
+  let _shrinkTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    if (bubbleUp) {
+      if (_shrinkTimer) {
+        clearTimeout(_shrinkTimer);
+        _shrinkTimer = null;
+      }
+      talking = true;
+    } else if (talking && !_shrinkTimer) {
+      _shrinkTimer = setTimeout(() => {
+        _shrinkTimer = null;
+        talking = false;
+      }, 350);
+    }
+  });
 
   // The right-click menu renders INSIDE this window and does NOT scale with
   // fscale, so while it's open the window must be at least this big (logical
@@ -311,12 +341,12 @@
     }
   }
 
-  // Apply the window size. Re-runs ONLY when the skin, the user scale, or the
-  // open-menu flag changes — NOT on pipeline state, so the window never
-  // resizes mid-dictation (no jump, no flicker). The bubble lives inside this
-  // fixed box.
+  // Apply the window size. Re-runs when the skin, the user scale, the
+  // open-menu flag, or bubble visibility (debounced `talking`) changes —
+  // NOT on every pipeline state hop, so mid-dictation transitions
+  // (listening→thinking→writing) never touch the window.
   $effect(() => {
-    const box = boxFor(skin);
+    const box = boxFor(skin, talking);
     let w = Math.round(box.w * fscale);
     let h = Math.round(box.h * fscale);
     // While the right-click menu is open, ensure the window is at least big

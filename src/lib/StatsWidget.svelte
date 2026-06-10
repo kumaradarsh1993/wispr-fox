@@ -55,10 +55,11 @@
     align-items: center;
     gap: 16px;
     padding: 12px 16px;
-    margin-bottom: 14px;
     border-radius: 14px;
     background: var(--accent-fade);
-    border: 1px solid var(--accent-fade);
+    /* accent-soft (not accent-fade) so the card actually has a visible
+       edge against its own fill, in light AND dark themes. */
+    border: 1px solid var(--accent-soft);
     cursor: pointer;
     text-align: left;
     transition: transform 120ms ease, box-shadow 120ms ease;

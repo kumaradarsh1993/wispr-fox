@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "1.3.0"
+version = "1.4.0"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -39,7 +39,7 @@ hound = "3"
 # Clipboard with text + image preservation
 arboard = "3"
 
-# Audio cues (start/stop tones) — generated sine waves OR user-supplied
+# Audio cues (start/stop tones) â€” generated sine waves OR user-supplied
 # files dropped at %APPDATA%/com.wispr-fox.app/sounds/{start,stop}.{wav,mp3}
 rodio = { version = "0.20", default-features = false, features = ["wav", "mp3", "vorbis"] }
 
@@ -73,14 +73,14 @@ windows = { version = "0.58", features = [
 ] }
 
 # macOS text injection via Core Graphics / Quartz Event Services.
-# CGEvent + CGEventSource for synthesized unicode keystrokes — analog of
+# CGEvent + CGEventSource for synthesized unicode keystrokes â€” analog of
 # Win32 SendInput. The user must grant Accessibility permission for
-# events to reach focused apps (System Settings → Privacy & Security →
+# events to reach focused apps (System Settings â†’ Privacy & Security â†’
 # Accessibility); without it the clipboard fallback kicks in.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"
 core-foundation = "0.10"
-# Touch Bar support — objc2 + objc2-foundation are already transitive deps
+# Touch Bar support â€” objc2 + objc2-foundation are already transitive deps
 # from Tauri; adding them as direct deps pins the version and enables the
 # features we need (NSTouchBar, NSButton, etc.).  Zero added weight on
 # non-macOS builds.
