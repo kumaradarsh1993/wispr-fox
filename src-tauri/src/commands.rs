@@ -131,7 +131,7 @@ pub fn resize_floater(
     {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOOWNERZORDER, SWP_NOZORDER,
         };
         match window.hwnd() {
             Ok(h) => unsafe {
@@ -143,6 +143,15 @@ pub fn resize_floater(
                 // ONE atomic move+size = a single paint, far smoother than a
                 // separate set_size then set_position (two paints, and the
                 // window flashes briefly mis-placed in between — the flicker).
+                //
+                // SWP_NOCOPYBITS: without it, Windows BLITS the old client-area
+                // pixels into the new geometry while WebView2 is still
+                // repainting — and because the window grows UPWARD (top-left
+                // moves), the stale avatar lands shifted up for a frame or two
+                // before snapping back. That was the visible "glitched view"
+                // on every F8 grow (v1.4.0-nightly.1 feedback). Discarding the
+                // old bits means the worst case is one transparent frame, which
+                // disappears into the avatar's own state cross-fade.
                 let _ = SetWindowPos(
                     hwnd,
                     HWND::default(),
@@ -150,7 +159,7 @@ pub fn resize_floater(
                     ny,
                     new_w,
                     new_h,
-                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS,
                 );
             },
             Err(_) => {

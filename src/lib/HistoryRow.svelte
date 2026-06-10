@@ -475,18 +475,24 @@
 </article>
 
 <style>
+  /* Each recording is its own floating card on the cream surface (design
+     playbook mock) — rounded, bordered, with gaps between cards instead of
+     rule lines between flat rows. */
   .row {
     display: flex;
     flex-direction: column;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border-subtle);
-    transition: background 120ms ease;
+    padding: 13px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
     position: relative;
     cursor: pointer;
   }
 
   .row:hover {
-    background: var(--bg-subtle);
+    border-color: var(--border);
+    box-shadow: 0 2px 10px rgba(120, 80, 30, 0.08);
   }
 
   .row:focus-visible {
@@ -496,6 +502,7 @@
 
   .row.error-row {
     background: var(--danger-fade);
+    border-color: var(--danger-fade);
   }
 
   .row-head {

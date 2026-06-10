@@ -223,21 +223,22 @@
         <div class="date-divider">
           <span class="date-label">{group.label}</span>
           <span class="date-count">{group.items.length}</span>
-          <span class="date-line"></span>
         </div>
         {#each group.items as rec (rec.id)}
           <HistoryRow {rec} />
         {/each}
       {/each}
-      <!-- Pastoral horizon at the very end of the list — soft visual
-           full-stop that reads as "you've reached the end" without being
-           a hard divider. Watercolor autumn hills from the design
-           playbook; faded so it doesn't compete with the row text. -->
-      <div class="history-horizon" aria-hidden="true">
-        <img src="/fox/landscape-combined.png" alt="" />
-      </div>
     </div>
   {/if}
+
+  <!-- Ambient pastoral meadow pinned to the bottom of the pane (design
+       playbook: "the bottom sticky wave"). Sits BEHIND the row cards
+       (z-index 0 vs the content's 1) so the last cards float over the
+       hills as you reach the end of the list. pointer-events: none —
+       pure decoration, never intercepts clicks or scroll. -->
+  <div class="history-meadow" aria-hidden="true">
+    <img src="/fox/landscape-combined.png" alt="" />
+  </div>
 </section>
 
 <style>
@@ -248,17 +249,21 @@
     height: 100vh;
     background: var(--bg-surface);
     color: var(--text-primary);
+    /* Anchor for the bottom meadow strip. */
+    position: relative;
   }
 
+  /* Header sits directly on the cream surface (design playbook) — no
+     elevated white block, no hard border. The page reads as one warm
+     canvas with cards floating on it. */
   .history-head {
-    padding: 20px 28px 16px;
-    border-bottom: 1px solid var(--border);
+    padding: 20px 28px 10px;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    background: var(--bg-elev);
     flex-shrink: 0;
-    box-shadow: 0 1px 0 var(--border-subtle);
+    position: relative;
+    z-index: 1;
   }
 
   .title-row {
@@ -300,8 +305,8 @@
   .search {
     flex: 1;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 30px 8px 32px;
+    border-radius: 11px;
+    padding: 9px 30px 9px 32px;
     font-size: 13px;
     background: var(--bg-card);
     color: var(--text-primary);
@@ -470,16 +475,17 @@
     align-self: center;
   }
 
-  /* Date dividers */
+  /* Date group headers — label + count chip, no rule line (the card gaps
+     already separate groups visually, per the playbook mock). */
   .date-divider {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 18px 24px 8px;
+    gap: 8px;
+    padding: 10px 4px 2px;
     background: var(--bg-surface);
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: 2;
   }
 
   .date-label {
@@ -500,16 +506,17 @@
     flex-shrink: 0;
   }
 
-  .date-line {
-    flex: 1;
-    height: 1px;
-    background: var(--border-subtle);
-  }
-
+  /* Card stack. Generous bottom padding so the last card can scroll clear
+     of the meadow strip pinned underneath. */
   .rows {
     flex: 1;
     overflow-y: auto;
-    padding: 0;
+    padding: 2px 24px 130px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: relative;
+    z-index: 1;
   }
 
   .muted {
@@ -528,27 +535,27 @@
     text-align: center;
     padding: 40px;
     gap: 4px;
+    position: relative;
+    z-index: 1;
   }
 
-  /* Pastoral landscape banner at the bottom of the list. Subtle —
-     low opacity, soft top fade, clamped height — so it reads as ambient
-     decoration, not an actual UI element.
-     The aspect-ratio + max-height combo prevents the first-paint layout
-     shift that used to make the banner "overflow" momentarily on app
-     launch (image loaded after the first frame, suddenly took its
-     natural height, shoved everything around). */
-  .history-horizon {
-    margin-top: 40px;
-    width: 100%;
-    max-height: 220px;
+  /* Pastoral meadow pinned to the bottom of the pane — the playbook's
+     ambient "wave" footer. Low opacity + soft top fade so it reads as
+     atmosphere; cards scroll over it (it's z-index 0 under the content). */
+  .history-meadow {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 130px;
     overflow: hidden;
     pointer-events: none;
-    opacity: 0.7;
-    aspect-ratio: 4 / 1;
-    mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
+    opacity: 0.8;
+    z-index: 0;
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 45%, #000 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 45%, #000 100%);
   }
-  .history-horizon img {
+  .history-meadow img {
     width: 100%;
     height: 100%;
     display: block;

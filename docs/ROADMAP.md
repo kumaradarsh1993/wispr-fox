@@ -63,6 +63,17 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.2** — **fixed the grow glitch** from nightly.1: pressing
+  F8 made the floater window briefly paint a smeared/shifted frame while it
+  expanded for the bubble. Windows was blitting the old window pixels into
+  the new (taller) geometry before the webview repainted; `SWP_NOCOPYBITS`
+  discards them so the worst case is one transparent frame hidden inside the
+  avatar's own cross-fade. **History page restyled to the design playbook
+  mock**: recordings are floating rounded cards on the cream canvas (gaps,
+  not rule lines), the header sits directly on the surface instead of its own
+  white block, date groups are label+count chips, and the watercolor meadow
+  is now pinned to the bottom of the pane as an ambient strip the cards
+  scroll over (was only visible at the very end of the list).
 - ✅ **v1.4.0-nightly.1** — **floater no longer hogs screen space**: the
   window now sits in a tight box around the character and grows upward only
   while a speech bubble is actually showing, shrinking back right after. The

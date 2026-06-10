@@ -156,7 +156,9 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   state — fade-out finishes first; mid-pipeline state hops never resize).
   This is NOT the old per-state experiment: resize keys off bubble visibility
   only, and works because the resize is one atomic native SetWindowPos,
-  bottom-centre anchored.
+  bottom-centre anchored, **with SWP_NOCOPYBITS** (nightly.2) — without that
+  flag Windows blits the stale client pixels into the new geometry before
+  WebView2 repaints, which showed as a smeared "glitch frame" on every grow.
 - **S/M/L scale (and the open right-click menu) also change window size.**
   Scale store: `lib/floater-scale.svelte.ts`; everything (window, avatar,
   bubble, text) multiplies by `--fscale` together.
