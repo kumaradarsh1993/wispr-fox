@@ -13,6 +13,9 @@
 //                   lighter belly/paws, defined neck + mouth + tail). Lives
 //                   side-by-side with "cat" while we iterate on legibility
 //                   over dark wallpapers. Same animations + bubble theme.
+//   "duo"         — Khaumani & Indy, the two-cat team (v1.4): a serene white
+//                   cat loafing on a console slab + an orange tabby kitten
+//                   doing the actual work. Modeled on the user's real cats.
 //
 // Removed in v1.0.0-nightly.5: "beige" — the cream-variant paperclip.
 // Removed in v1.1.0-nightly.5: "duck" — the rubber-duck design didn't
@@ -21,12 +24,12 @@
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat" | "cat-lab";
+export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat" | "cat-lab" | "duo";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "cat-lab"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "cat-lab", "duo"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"

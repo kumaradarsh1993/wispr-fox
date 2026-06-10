@@ -60,8 +60,13 @@ src/routes/
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Provider keys, modes, hotkeys, behaviour, startup, look & feel
-  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/cat-lab
+  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/cat-lab/duo
+                   (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
+                   white loaf supervises, orange tabby works; paw-bump on paste)
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
+                   Bubble: HARD 2-line cap (CSS line-clamp) — BUBBLE_BAND height math
+                   depends on it; write all bubble copy to fit two lines. Idle hover
+                   ≥700ms → random quip bubble (IDLE_QUIPS / IDLE_QUIPS_DUO).
 
 src/lib/
   stats.ts                analytics derivation (time-saved, streak, gap-fill)

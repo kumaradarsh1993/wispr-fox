@@ -123,6 +123,37 @@
     <line x1="42" y1="33" x2="52" y2="32" stroke="#aaa" stroke-width="0.6"/>
     <line x1="42" y1="35" x2="52" y2="36" stroke="#aaa" stroke-width="0.6"/>
   </svg>
+{:else if skin === "duo"}
+  <!-- Khaumani & Indy — two heads: serene white (left), eager orange (right). -->
+  <svg viewBox="0 0 70 70" width={size} height={size} aria-hidden="true">
+    <!-- White cat head (back-left, calm) -->
+    <g>
+      <path d="M 14 26 L 11 12 L 24 22 Z" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1"/>
+      <path d="M 34 24 L 39 11 L 26 21 Z" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1"/>
+      <path d="M 15 23 L 14 16 L 21 21 Z" fill="#f2c6c2"/>
+      <path d="M 33 21 L 36 15 L 28 20 Z" fill="#f2c6c2"/>
+      <circle cx="24" cy="32" r="14" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1.1"/>
+      <!-- Heavy-lidded calm eyes -->
+      <path d="M 16.5 31 Q 19 33 21.5 31" fill="none" stroke="#5d4430" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M 26.5 31 Q 29 33 31.5 31" fill="none" stroke="#5d4430" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M 22.8 37 L 24 39 L 25.2 37 Z" fill="#eda4a4"/>
+    </g>
+    <!-- Orange tabby head (front-right, alert) -->
+    <g>
+      <path d="M 36 44 L 31 26 L 48 39 Z" fill="#ef9c4e" stroke="#c96f28" stroke-width="1"/>
+      <path d="M 60 44 L 65 26 L 48 39 Z" fill="#ef9c4e" stroke="#c96f28" stroke-width="1"/>
+      <path d="M 38 40 L 36 30 L 46 38 Z" fill="#f0b3a4"/>
+      <path d="M 58 40 L 60 30 L 50 38 Z" fill="#f0b3a4"/>
+      <circle cx="48" cy="50" r="15" fill="#f3a85f" stroke="#c96f28" stroke-width="1.1"/>
+      <path d="M 43 38 L 42.6 43 M 48 37 L 48 42.5 M 53 38 L 53.4 43" fill="none" stroke="#cf7427" stroke-width="1.6" stroke-linecap="round"/>
+      <ellipse cx="48" cy="56" rx="8" ry="5.5" fill="#fdf6ec"/>
+      <circle cx="42.5" cy="48.5" r="3" fill="#b97f33" stroke="#7a4d1c" stroke-width="0.6"/>
+      <circle cx="42.5" cy="48.8" r="1.5" fill="#1c1208"/>
+      <circle cx="53.5" cy="48.5" r="3" fill="#b97f33" stroke="#7a4d1c" stroke-width="0.6"/>
+      <circle cx="53.5" cy="48.8" r="1.5" fill="#1c1208"/>
+      <path d="M 46.8 53.5 L 48 55.5 L 49.2 53.5 Z" fill="#e58f86"/>
+    </g>
+  </svg>
 {/if}
 
 <style>

@@ -135,6 +135,9 @@
   // we show this text in the bubble for ~3s, overriding the state-driven
   // label. Empty string = no override.
   let toastMessage = $state("");
+  // Idle hover quip text (set by the hover-quip effect further down; declared
+  // here because the window-sizing `bubbleUp` derived reads it).
+  let hoverQuip = $state("");
   let toastKind = $state<"info" | "error">("info");
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   function showToast(msg: string, kind: "info" | "error" = "info", durationMs = 3000) {
@@ -231,23 +234,25 @@
     "real-clippy": { w: 118, h: 112, head: 110 },
     cat:           { w: 150, h: 168, head: 128 },
     "cat-lab":     { w: 150, h: 168, head: 128 },
+    duo:           { w: 198, h: 117, head: 107 }, // two cats side by side — wide, deliberately LOW
     off:           { w: 116, h: 116, head: 110 },
   };
   const SIDE_PAD = 8; // L/R breathing room around the character
   const BOTTOM_PAD = 8; // gap below the character (shadow lives at 6px)
   const TOP_MARGIN = 8; // gap above the character/bubble to the window top
   // Clear air between the top of the character's head and the bottom (tail)
-  // of the speech bubble. User feedback: the bubble was sitting right on the
-  // avatar even at rest / on first press — give it a real gap.
-  const HEAD_GAP = 16;
-  // Vertical room above the head for the bubble itself. Sized for a 4–5 line
-  // bubble (the duration-aware listening copy — e.g. "still here whenever
-  // you're ready · WhatsApp" — can run long) PLUS the HEAD_GAP, so a tall
-  // bubble never gets clipped at the top of the window.
-  const BUBBLE_BAND = 104;
-  const BUBBLE_W = 226; // min box width — wide enough that long copy wraps to
-                        // ~3 lines and the bubble reads as a roomy box (user
-                        // preference: wider rather than tall/narrow).
+  // of the speech bubble. Slim (v1.4 feedback: the bubble band made the box
+  // needlessly tall — pull the bubble toward the avatar).
+  const HEAD_GAP = 10;
+  // Vertical room above the head for the bubble itself. The bubble is now
+  // HARD-CAPPED at two lines (CSS line-clamp + smaller type + wider bubble),
+  // so the band only needs: 2 lines (~27px) + padding/border (~13px) +
+  // TOP_MARGIN-ish slack. Was 104 for a 4–5 line bubble — that head-room is
+  // exactly the vertical dead space the user flagged.
+  const BUBBLE_BAND = 62;
+  const BUBBLE_W = 226; // min box width — unchanged (the user explicitly does
+                        // NOT want a wider window; the bubble inside it gets
+                        // wider instead, see .bubble max-width).
 
   function boxFor(skin: string, talking: boolean): Size {
     const a = ART[skin] ?? ART.fox;
@@ -264,7 +269,9 @@
   // bubble's 200ms fade-in paints); shrinking waits a beat so the fade-OUT
   // finishes inside the still-tall window and quick state churn (e.g.
   // thinking→writing) never causes a shrink-grow stutter.
-  let bubbleUp = $derived(toastMessage !== "" || (skin !== "off" && displayState !== "idle"));
+  let bubbleUp = $derived(
+    toastMessage !== "" || hoverQuip !== "" || (skin !== "off" && displayState !== "idle"),
+  );
   let talking = $state(false);
   let _shrinkTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
@@ -971,23 +978,104 @@
     return () => clearInterval(t);
   });
 
+  // Duration-aware listening copy. The user's real sessions run anywhere
+  // from 20 seconds to 15+ minutes, so the tiers stretch all the way out —
+  // and every line is written to fit the bubble's 2-line cap. A minute
+  // marker rides along once past 60s so a glance tells you how long you've
+  // been going.
   function listenLabel(secs: number, app: string): string {
     const tail = app ? ` · ${app}` : "";
+    const mins = Math.floor(secs / 60);
+    const clock = mins >= 1 ? ` · ${mins}m` : "";
     if (secs < 15)  return `listening…${tail}`;
-    if (secs < 30)  return `still listening…${tail}`;
-    if (secs < 45)  return `wow, you have a lot to say${tail}`;
-    if (secs < 60)  return `how long is this going to go?${tail}`;
-    if (secs < 90)  return `still here whenever you're ready${tail}`;
-    if (secs < 120) return `okay, I'll keep waiting${tail}`;
-    return `marathon mode${tail}`;
+    if (secs < 30)  return `all ears${tail}`;
+    if (secs < 45)  return `got it, keep going${tail}`;
+    if (secs < 60)  return `you're on a roll${tail}`;
+    if (secs < 90)  return `taking it all down${clock}${tail}`;
+    if (secs < 120) return `still with you${clock}${tail}`;
+    if (secs < 180) return `essay mode${clock}${tail}`;
+    if (secs < 300) return `chapter incoming${clock}${tail}`;
+    if (secs < 420) return `deep in the zone${clock}${tail}`;
+    if (secs < 600) return `marathon mode${clock}${tail}`;
+    if (secs < 900) return `novella territory${clock}${tail}`;
+    return `legendary session${clock}${tail}`;
   }
+
+  // Small rotating pools for the quick states so the floater doesn't say
+  // the exact same thing hundreds of times a day. Picked once per pipeline
+  // run (at recording start) so the label doesn't churn mid-state.
+  const DONE_LINES = ["done!", "pasted ✓", "all yours", "shipped!", "in it goes"];
+  const THINK_FALLBACKS = ["thinking", "untangling words", "decoding you"];
+  const WRITE_FALLBACKS = ["polishing", "tidying it up", "making it shine"];
+  function pick(pool: string[]): string {
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  let runLines = $state({ done: DONE_LINES[0], think: THINK_FALLBACKS[0], write: WRITE_FALLBACKS[0] });
+  $effect(() => {
+    if (displayState === "listening") {
+      runLines = { done: pick(DONE_LINES), think: pick(THINK_FALLBACKS), write: pick(WRITE_FALLBACKS) };
+    }
+  });
 
   let labels = $derived({
     listening: listenLabel(listenElapsed, activeApp),
-    thinking: sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : "thinking",
-    writing: llmProvider ? `polishing · ${prettyProvider(llmProvider)}` : "polishing",
+    thinking: sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : runLines.think,
+    writing: llmProvider ? `polishing · ${prettyProvider(llmProvider)}` : runLines.write,
     writingIcon: "✏️",
-    pasting: "done!",
+    pasting: runLines.done,
+  });
+
+  // ── Idle hover quips ────────────────────────────────────────────────
+  // The floater spends most of its life idle; give it a little personality
+  // when the user comes looking. Hovering the resting avatar for ~700ms
+  // surfaces one random quip for a few seconds, once per hover. (Deliberate
+  // and user-initiated — no random popups over whatever you're working on.)
+  const IDLE_QUIPS = [
+    "press F8, I'm warmed up",
+    "your words, my paws",
+    "quiet day, huh?",
+    "I transcribe, therefore I am",
+    "say something nice",
+    "*stretches* …ready when you are",
+    "the mic misses you",
+    "got a thought? I'll catch it",
+  ];
+  const IDLE_QUIPS_DUO = [
+    "we work in shifts. both asleep",
+    "one of us is listening. probably",
+    "*synchronised tail flick*",
+    "the white one supervises. allegedly",
+    "feed us words",
+    "two cats, zero typos",
+    "psst — F8. we're bored",
+  ];
+  let _quipShowTimer: ReturnType<typeof setTimeout> | null = null;
+  let _quipHideTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const idleHover = hovering && displayState === "idle";
+    const pool = skin === "duo" ? IDLE_QUIPS_DUO : IDLE_QUIPS;
+    if (idleHover) {
+      if (!_quipShowTimer && !hoverQuip) {
+        _quipShowTimer = setTimeout(() => {
+          _quipShowTimer = null;
+          hoverQuip = pick(pool);
+          _quipHideTimer = setTimeout(() => {
+            _quipHideTimer = null;
+            hoverQuip = "";
+          }, 3800);
+        }, 700);
+      }
+    } else {
+      if (_quipShowTimer) {
+        clearTimeout(_quipShowTimer);
+        _quipShowTimer = null;
+      }
+      if (_quipHideTimer) {
+        clearTimeout(_quipHideTimer);
+        _quipHideTimer = null;
+      }
+      hoverQuip = "";
+    }
   });
 </script>
 
@@ -1053,7 +1141,7 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "real-clippy"}
+  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "duo" || skin === "real-clippy"}
 
     <!-- State-driven bubble — our own consistent dialog box, shown for ALL
          skins including real Clippy (user asked for the same dialog box on
@@ -1061,8 +1149,15 @@
          there's no double-bubble). Hidden while a toast is up so we don't
          stack two bubbles. -->
     {#if !toastMessage}
-      <div class="bubble" class:show={displayState !== "idle"} data-state={displayState} data-skin={skin}>
-        {#if displayState === "listening"}
+      <div
+        class="bubble"
+        class:show={displayState !== "idle" || hoverQuip !== ""}
+        data-state={displayState === "idle" && hoverQuip ? "quip" : displayState}
+        data-skin={skin}
+      >
+        {#if displayState === "idle" && hoverQuip}
+          <span class="bubble-text">{hoverQuip}</span>
+        {:else if displayState === "listening"}
           <span class="bubble-text">{labels.listening}</span>
           <span class="bubble-eq"><span></span><span></span><span></span><span></span></span>
         {:else if displayState === "thinking"}
@@ -1597,6 +1692,223 @@
         </g>
       {/if}
     </svg>
+
+  {:else if skin === "duo"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         KHAUMANI & INDY — the two-cat team (modeled on the user's real cats).
+         A serene WHITE cat loafing on a console slab (left) supervises while
+         an ORANGE tabby kitten (right) does the actual work. Wide + LOW art
+         so the floater claims minimal height.
+         States:
+           idle:      white loaf-breathes + slow blinks; orange sways, head
+                      tilts now and then; every ~16s orange leans over to
+                      bother the white one, whose ear flicks in reply
+           listening: both perk — ears up, eyes wide, orange sits tall
+           thinking:  white squints with thought-dots; orange head-tilts
+           writing:   orange types furiously; white supervises (gaze down)
+           pasting:   PAW BUMP — both raise a paw, sparkles
+         ═══════════════════════════════════════════════════════════════════ -->
+    <svg
+      class="character duo-skin"
+      viewBox="0 0 220 130"
+      xmlns="http://www.w3.org/2000/svg"
+      data-state={displayState}
+      data-mode={mode}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="duo-orange-grad" x1="0.3" y1="0" x2="0.7" y2="1">
+          <stop offset="0%" stop-color="#f5ab60"/>
+          <stop offset="100%" stop-color="#e08334"/>
+        </linearGradient>
+        <linearGradient id="duo-white-grad" x1="0.5" y1="0" x2="0.5" y2="1">
+          <stop offset="0%" stop-color="#ffffff"/>
+          <stop offset="100%" stop-color="#f1ede3"/>
+        </linearGradient>
+        <linearGradient id="duo-slab-grad" x1="0.5" y1="0" x2="0.5" y2="1">
+          <stop offset="0%" stop-color="#f4f2ec"/>
+          <stop offset="100%" stop-color="#dcd8cc"/>
+        </linearGradient>
+      </defs>
+
+      <!-- ─── Console slab (the white cat's throne, à la the PS5) ────── -->
+      <g class="duo-slab">
+        <rect x="8" y="112" width="102" height="14" rx="6" fill="url(#duo-slab-grad)" stroke="#c5c0b2" stroke-width="0.8"/>
+        <rect x="14" y="117" width="90" height="3.6" rx="1.8" fill="#2b2b2b"/>
+      </g>
+
+      <!-- ─── WHITE CAT — loafing, serene ────────────────────────────── -->
+      <g class="duo-white">
+        <g class="duo-white-body">
+          <!-- Loaf -->
+          <ellipse cx="55" cy="91" rx="39" ry="22" fill="url(#duo-white-grad)" stroke="#d8d2c4" stroke-width="1"/>
+          <!-- Haunch hint -->
+          <path d="M 24 84 Q 18 95 26 106" fill="none" stroke="#ddd7c9" stroke-width="1" stroke-linecap="round"/>
+          <!-- Tail wrapped around the front of the loaf -->
+          <g class="duo-white-tail">
+            <path d="M 90 100 Q 70 116 40 110 Q 28 107 26 100" fill="none" stroke="#f8f6f0" stroke-width="7.5" stroke-linecap="round"/>
+            <path d="M 90 100 Q 70 116 40 110 Q 28 107 26 100" fill="none" stroke="#d8d2c4" stroke-width="8.8" stroke-linecap="round" opacity="0.25"/>
+          </g>
+          <!-- Tucked front paws peeking out of the loaf -->
+          <ellipse cx="62" cy="110" rx="7" ry="3.6" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+          <ellipse cx="78" cy="110" rx="7" ry="3.6" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+        </g>
+
+        <g class="duo-white-head">
+          <!-- Ears (slim, tall — like the photo) -->
+          <g class="duo-ears duo-white-ears">
+            <path d="M 62 58 L 57 36 L 74 50 Z" fill="#fbfaf6" stroke="#d8d2c4" stroke-width="0.9"/>
+            <path d="M 63 55 L 60 42 L 71 50 Z" fill="#f2c6c2" opacity="0.8"/>
+            <g class="duo-white-ear-r">
+              <path d="M 90 56 L 95 34 L 78 48 Z" fill="#fbfaf6" stroke="#d8d2c4" stroke-width="0.9"/>
+              <path d="M 89 53 L 92 40 L 81 48 Z" fill="#f2c6c2" opacity="0.8"/>
+            </g>
+          </g>
+          <!-- Head — slim face -->
+          <circle cx="76" cy="69" r="19" fill="url(#duo-white-grad)" stroke="#d8d2c4" stroke-width="1"/>
+          <!-- Cheek shading -->
+          <ellipse cx="70" cy="63" rx="8" ry="5.5" fill="#ffffff" opacity="0.9"/>
+          <!-- Eyes — heavy-lidded calm at idle, round + awake otherwise -->
+          <g class="duo-eyes">
+            <ellipse cx={68 + eyeShiftX * 0.6} cy={67 + eyeShiftY * 0.4} rx="3.2"
+              ry={blinkOpen ? (displayState === "idle" && !hovering ? 2.4 : 4) : 0.4}
+              fill="#5d4430" stroke="#3c2c1e" stroke-width="0.6"/>
+            <circle cx={67.2 + eyeShiftX * 0.5} cy={65.8 + eyeShiftY * 0.3} r={blinkOpen ? 0.9 : 0} fill="#ffffff" opacity="0.9"/>
+            <ellipse cx={84 + eyeShiftX * 0.6} cy={67 + eyeShiftY * 0.4} rx="3.2"
+              ry={blinkOpen ? (displayState === "idle" && !hovering ? 2.4 : 4) : 0.4}
+              fill="#5d4430" stroke="#3c2c1e" stroke-width="0.6"/>
+            <circle cx={83.2 + eyeShiftX * 0.5} cy={65.8 + eyeShiftY * 0.3} r={blinkOpen ? 0.9 : 0} fill="#ffffff" opacity="0.9"/>
+          </g>
+          <!-- Nose + mouth -->
+          <path d="M 74.6 74 L 76 76.4 L 77.4 74 Z" fill="#eda4a4" stroke="#d68a8a" stroke-width="0.4"/>
+          <path d="M 76 76.4 L 76 78" fill="none" stroke="#c9c2b2" stroke-width="0.7" stroke-linecap="round"/>
+          <path d="M 72.5 78.6 Q 76 80.8 79.5 78.6" fill="none" stroke="#c9c2b2" stroke-width="0.7" stroke-linecap="round"/>
+          <!-- Whiskers -->
+          <g stroke="#cfc8b8" stroke-width="0.6" stroke-linecap="round">
+            <line x1="56" y1="71" x2="70" y2="73"/>
+            <line x1="55" y1="76" x2="70" y2="76"/>
+            <line x1="82" y1="73" x2="96" y2="71"/>
+            <line x1="82" y1="76" x2="97" y2="76"/>
+          </g>
+          <!-- Thought dots — white cat does the thinking -->
+          {#if displayState === "thinking"}
+            <g class="duo-think-dots" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="0.7">
+              <circle cx="94" cy="42" r="2.2"/>
+              <circle cx="101" cy="33" r="3.1"/>
+              <circle cx="110" cy="22" r="4.2"/>
+            </g>
+          {/if}
+        </g>
+      </g>
+
+      <!-- ─── ORANGE TABBY — upright, eager ──────────────────────────── -->
+      <g class="duo-orange">
+        <!-- Tail — long, expressive -->
+        <g class="duo-orange-tail">
+          <path d="M 186 110 C 202 104, 208 88, 200 74" fill="none" stroke="#e8913f" stroke-width="6.5" stroke-linecap="round"/>
+          <path d="M 200 74 C 198 70, 194 68, 190 70" fill="none" stroke="#cf7427" stroke-width="6" stroke-linecap="round"/>
+        </g>
+
+        <g class="duo-orange-body">
+          <!-- Body — upright pear -->
+          <ellipse cx="162" cy="99" rx="27" ry="26" fill="url(#duo-orange-grad)" stroke="#c96f28" stroke-width="1"/>
+          <!-- Side stripes -->
+          <g fill="none" stroke="#cf7427" stroke-width="2.4" stroke-linecap="round" opacity="0.8">
+            <path d="M 180 86 Q 186 92 184 100"/>
+            <path d="M 183 98 Q 188 104 185 111"/>
+            <path d="M 142 90 Q 138 97 141 105"/>
+          </g>
+          <!-- Chest patch -->
+          <ellipse cx="156" cy="106" rx="13" ry="14" fill="#fdf6ec" opacity="0.95"/>
+          <!-- Front legs / typing paws -->
+          {#if displayState === "writing"}
+            <g class="duo-paw-l">
+              <rect x="147" y="104" width="7" height="18" rx="3.5" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+              <ellipse cx="150.5" cy="122" rx="5.5" ry="3.4" fill="#fdf6ec" stroke="#c96f28" stroke-width="0.7"/>
+            </g>
+            <g class="duo-paw-r">
+              <rect x="160" y="104" width="7" height="18" rx="3.5" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+              <ellipse cx="163.5" cy="122" rx="5.5" ry="3.4" fill="#fdf6ec" stroke="#c96f28" stroke-width="0.7"/>
+            </g>
+          {:else}
+            <rect x="147" y="102" width="7" height="20" rx="3.5" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+            <rect x="160" y="102" width="7" height="20" rx="3.5" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+            <ellipse cx="150.5" cy="122" rx="5.5" ry="3.4" fill="#fdf6ec" stroke="#c96f28" stroke-width="0.7"/>
+            <ellipse cx="163.5" cy="122" rx="5.5" ry="3.4" fill="#fdf6ec" stroke="#c96f28" stroke-width="0.7"/>
+          {/if}
+        </g>
+
+        <g class="duo-orange-head">
+          <!-- Ears — big kitten ears -->
+          <g class="duo-ears duo-orange-ears">
+            <path d="M 147 46 L 141 22 L 161 38 Z" fill="#ef9c4e" stroke="#c96f28" stroke-width="0.9"/>
+            <path d="M 148 42 L 145 28 L 158 38 Z" fill="#f0b3a4" opacity="0.85"/>
+            <path d="M 179 46 L 185 22 L 165 38 Z" fill="#ef9c4e" stroke="#c96f28" stroke-width="0.9"/>
+            <path d="M 178 42 L 181 28 L 168 38 Z" fill="#f0b3a4" opacity="0.85"/>
+          </g>
+          <!-- Head -->
+          <circle cx="163" cy="58" r="21" fill="url(#duo-orange-grad)" stroke="#c96f28" stroke-width="1"/>
+          <!-- Forehead tabby stripes (the classic M) -->
+          <g fill="none" stroke="#cf7427" stroke-width="2" stroke-linecap="round" opacity="0.85">
+            <path d="M 156 41 L 155 48"/>
+            <path d="M 163 39 L 163 47"/>
+            <path d="M 170 41 L 171 48"/>
+          </g>
+          <!-- Muzzle patch -->
+          <ellipse cx="163" cy="67" rx="11.5" ry="8" fill="#fdf6ec"/>
+          <!-- Eyes — big, round, curious (kitten energy) -->
+          <g class="duo-eyes">
+            <ellipse cx={154 + eyeShiftX * 0.8} cy={56 + eyeShiftY * 0.5} rx="4"
+              ry={blinkOpen ? 4.4 : 0.5} fill="#b97f33" stroke="#7a4d1c" stroke-width="0.7"/>
+            <circle cx={154 + eyeShiftX * 0.8} cy={56.4 + eyeShiftY * 0.5} r={blinkOpen ? 2.1 : 0} fill="#1c1208"/>
+            <circle cx={152.8 + eyeShiftX * 0.6} cy={54.6 + eyeShiftY * 0.4} r={blinkOpen ? 1.1 : 0} fill="#ffffff" opacity="0.95"/>
+            <ellipse cx={172 + eyeShiftX * 0.8} cy={56 + eyeShiftY * 0.5} rx="4"
+              ry={blinkOpen ? 4.4 : 0.5} fill="#b97f33" stroke="#7a4d1c" stroke-width="0.7"/>
+            <circle cx={172 + eyeShiftX * 0.8} cy={56.4 + eyeShiftY * 0.5} r={blinkOpen ? 2.1 : 0} fill="#1c1208"/>
+            <circle cx={170.8 + eyeShiftX * 0.6} cy={54.6 + eyeShiftY * 0.4} r={blinkOpen ? 1.1 : 0} fill="#ffffff" opacity="0.95"/>
+          </g>
+          <!-- Nose + mouth -->
+          <path d="M 161.4 63.5 L 163 66 L 164.6 63.5 Z" fill="#e58f86" stroke="#c97168" stroke-width="0.4"/>
+          <path d="M 163 66 L 163 68" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+          {#if displayState === "pasting"}
+            <path d="M 158 68.5 Q 163 73 168 68.5" fill="none" stroke="#a5713a" stroke-width="1" stroke-linecap="round"/>
+          {:else}
+            <path d="M 159.5 69 Q 163 71.2 166.5 69" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+          {/if}
+          <!-- Whiskers -->
+          <g stroke="#e8d8c0" stroke-width="0.7" stroke-linecap="round">
+            <line x1="140" y1="62" x2="153" y2="64"/>
+            <line x1="139" y1="67" x2="153" y2="67"/>
+            <line x1="173" y1="64" x2="186" y2="62"/>
+            <line x1="173" y1="67" x2="187" y2="67"/>
+          </g>
+        </g>
+      </g>
+
+      <!-- ─── Paw bump — pasting celebration ─────────────────────────── -->
+      {#if displayState === "pasting"}
+        <g class="duo-bump">
+          <!-- White cat's paw reaches right, orange's reaches left -->
+          <path d="M 92 88 Q 104 82 113 79" fill="none" stroke="#fbfaf6" stroke-width="7" stroke-linecap="round"/>
+          <path d="M 92 88 Q 104 82 113 79" fill="none" stroke="#d8d2c4" stroke-width="8.2" stroke-linecap="round" opacity="0.3"/>
+          <path d="M 140 84 Q 128 81 119 79" fill="none" stroke="#f0a050" stroke-width="7" stroke-linecap="round"/>
+          <!-- Sparkles at the meeting point -->
+          <g class="duo-sparkles" fill="#e8b54a">
+            <path d="M 116 66 L 117.6 70 L 121.6 71.6 L 117.6 73.2 L 116 77.2 L 114.4 73.2 L 110.4 71.6 L 114.4 70 Z"/>
+            <path d="M 128 84 L 129 86.4 L 131.4 87.4 L 129 88.4 L 128 90.8 L 127 88.4 L 124.6 87.4 L 127 86.4 Z"/>
+            <path d="M 104 80 L 104.8 82 L 106.8 82.8 L 104.8 83.6 L 104 85.6 L 103.2 83.6 L 101.2 82.8 L 103.2 82 Z"/>
+          </g>
+        </g>
+      {/if}
+
+      <!-- ─── Phew drop ──────────────────────────────────────────────── -->
+      {#if phewActive}
+        <g class="phew-drop">
+          <path d="M 196 44 Q 194 38 196 32 Q 198 38 196 44 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
+          <text x="193" y="28" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
+        </g>
+      {/if}
+    </svg>
   {/if}
 </div>
 
@@ -2065,14 +2377,15 @@
     left: 50%;
     transform: translateX(-50%) translateY(6px) scale(0.92);
     /* Scale the bubble WITH the floater scale so Small shrinks text + box
-       together instead of overflowing. Roomy width so long duration-aware
-       listening copy reads as a wide box and wraps in fewer lines. */
-    max-width: calc(208px * var(--fscale, 1));
+       together instead of overflowing. As wide as the window allows (window
+       width is unchanged) + slightly smaller type, so copy spreads sideways
+       into at most two lines instead of stacking tall. */
+    max-width: calc(216px * var(--fscale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
-    border-radius: 14px;
-    padding: calc(6px * var(--fscale, 1)) calc(11px * var(--fscale, 1));
-    font-size: calc(11px * var(--fscale, 1));
+    border-radius: 13px;
+    padding: calc(5px * var(--fscale, 1)) calc(10px * var(--fscale, 1));
+    font-size: calc(10.5px * var(--fscale, 1));
     color: #1d1d1f;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     opacity: 0;
@@ -2084,15 +2397,20 @@
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     z-index: 5;
   }
-  /* Bubble text wraps inside the fixed-width bubble. The duration-aware
-     listening copy can get long ("how long is this going to go?") — let
-     it wrap to a second line rather than overflow the window. */
+  /* Bubble text wraps inside the fixed-width bubble — HARD-CAPPED at two
+     lines (the BUBBLE_BAND window-height math depends on this cap; anything
+     longer ellipsizes). Copy in listenLabel() is written to fit. */
   .bubble-text {
     white-space: normal;
-    line-height: 1.3;
+    line-height: 1.28;
     text-align: left;
     flex: 1 1 auto;
     min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .bubble.show {
@@ -2379,6 +2697,227 @@
   .bubble[data-skin="cat-lab"] .bubble-eq span { background: #7FFF00; }
   .bubble[data-skin="cat"] .bubble-dots span,
   .bubble[data-skin="cat-lab"] .bubble-dots span { background: #999; }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     KHAUMANI & INDY (duo) — animations
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .duo-skin {
+    pointer-events: none;
+    width: calc(198px * var(--fscale, 1) * var(--state-scale, 1));
+    height: calc(117px * var(--fscale, 1) * var(--state-scale, 1));
+    transition: width 320ms ease, height 320ms ease;
+    filter: drop-shadow(0 4px 8px rgba(80, 60, 30, 0.18));
+  }
+  /* The generic .character idle-bob rotates the whole scene — looks wrong
+     on a two-character tableau. The cats animate individually instead. */
+  .character.duo-skin,
+  .character.duo-skin[data-state="listening"],
+  .character.duo-skin[data-state="thinking"],
+  .character.duo-skin[data-state="writing"] {
+    animation: none;
+  }
+
+  /* ── Idle life ── */
+  .duo-white-body {
+    transform-origin: 55px 113px;
+    animation: duo-white-breathe 4.4s ease-in-out infinite;
+  }
+  .duo-white-head {
+    transform-origin: 76px 88px;
+    animation: duo-white-head-idle 4.4s ease-in-out infinite;
+    transition: transform 300ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  }
+  /* Right ear flicks once in a while — also answers Indy's 16s lean-over. */
+  .duo-white-ear-r {
+    transform-origin: 86px 52px;
+    animation: duo-ear-flick 16s ease-in-out infinite;
+  }
+  .duo-white-tail {
+    transform-origin: 30px 104px;
+    animation: duo-tail-curl 9s ease-in-out infinite;
+  }
+  .duo-orange-body {
+    transform-origin: 162px 124px;
+    animation: duo-orange-sway 3.6s ease-in-out infinite;
+  }
+  .duo-orange-head {
+    transform-origin: 163px 76px;
+    animation: duo-orange-curious 9s ease-in-out infinite;
+    transition: transform 280ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  }
+  /* Indy periodically leans toward Khaumani — the "bother the supervisor"
+     beat. Same 16s clock as the white ear-flick so they read as one event. */
+  .duo-orange {
+    transform-origin: 162px 124px;
+    animation: duo-bother 16s ease-in-out infinite;
+  }
+  .duo-orange-tail {
+    transform-origin: 186px 110px;
+    animation: duo-orange-tail-sway 4.2s ease-in-out infinite;
+  }
+
+  @keyframes duo-white-breathe {
+    0%, 100% { transform: scale(1, 1) translateY(0); }
+    50%      { transform: scale(1.012, 0.985) translateY(-0.6px); }
+  }
+  @keyframes duo-white-head-idle {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1.2px); }
+  }
+  @keyframes duo-ear-flick {
+    0%, 88%, 96%, 100% { transform: rotate(0deg); }
+    90%                { transform: rotate(-16deg); }
+    93%                { transform: rotate(6deg); }
+  }
+  @keyframes duo-tail-curl {
+    0%, 84%, 100% { transform: rotate(0deg); }
+    90%           { transform: rotate(-5deg) translateY(-1px); }
+  }
+  @keyframes duo-orange-sway {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(-1.4px) rotate(0.6deg); }
+  }
+  @keyframes duo-orange-curious {
+    0%, 64%, 80%, 100% { transform: rotate(0deg); }
+    70%                { transform: rotate(7deg) translateY(-1px); }
+  }
+  @keyframes duo-bother {
+    0%, 84%, 95%, 100% { transform: translateX(0) rotate(0deg); }
+    88%, 91%           { transform: translateX(-7px) rotate(-3deg); }
+  }
+  @keyframes duo-orange-tail-sway {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(-7deg); }
+  }
+
+  /* ── Listening: both perk up ── */
+  .duo-skin[data-state="listening"] .duo-ears {
+    transform-box: fill-box;
+    transform-origin: 50% 90%;
+    animation: duo-ears-perk 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .duo-skin[data-state="listening"] .duo-orange,
+  .duo-skin[data-state="listening"] .duo-white-ear-r {
+    animation: none; /* pause the idle bother/flick clocks while attentive */
+  }
+  .duo-skin[data-state="listening"] .duo-orange-body {
+    animation: duo-alert-bob 1.2s ease-in-out infinite;
+  }
+  .duo-skin[data-state="listening"] .duo-orange-head {
+    animation: duo-alert-head 1.4s ease-in-out infinite;
+  }
+  .duo-skin[data-state="listening"] .duo-white-head {
+    animation: none;
+    transform: rotate(-3deg) translateY(-1.5px);
+  }
+  @keyframes duo-ears-perk {
+    0%   { transform: scaleY(0.82) translateY(2px); }
+    60%  { transform: scaleY(1.1); }
+    100% { transform: scaleY(1) translateY(0); }
+  }
+  @keyframes duo-alert-bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-2.5px); }
+  }
+  @keyframes duo-alert-head {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    30%      { transform: translateY(-3px) rotate(-2deg); }
+    70%      { transform: translateY(-2px) rotate(2deg); }
+  }
+
+  /* ── Thinking: white squints + dots, orange tilts ── */
+  .duo-skin[data-state="thinking"] .duo-white-head {
+    animation: duo-think-tilt 2.2s ease-in-out infinite;
+  }
+  .duo-skin[data-state="thinking"] .duo-orange-head {
+    animation: duo-think-tilt-orange 2.2s ease-in-out infinite;
+  }
+  .duo-think-dots {
+    animation: duo-dots-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    transform-origin: 100px 35px;
+  }
+  @keyframes duo-think-tilt {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(4deg) translateY(-1px); }
+  }
+  @keyframes duo-think-tilt-orange {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(-6deg); }
+  }
+  @keyframes duo-dots-pop {
+    0%   { transform: scale(0); opacity: 0; }
+    60%  { transform: scale(1.12); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ── Writing: orange types, white supervises ── */
+  .duo-skin[data-state="writing"] .duo-orange-body {
+    animation: duo-write-focus 0.6s ease-in-out infinite;
+  }
+  .duo-skin[data-state="writing"] .duo-paw-l {
+    animation: duo-paw-tap 0.3s ease-in-out infinite;
+  }
+  .duo-skin[data-state="writing"] .duo-paw-r {
+    animation: duo-paw-tap 0.3s ease-in-out infinite 0.15s;
+  }
+  .duo-skin[data-state="writing"] .duo-white-head {
+    animation: none;
+    transform: rotate(7deg) translateY(1px); /* gazing down at the worker */
+  }
+  .duo-skin[data-state="writing"] .duo-orange-tail {
+    animation: duo-orange-tail-sway 0.9s ease-in-out infinite;
+  }
+  @keyframes duo-write-focus {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1px); }
+  }
+  @keyframes duo-paw-tap {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
+
+  /* ── Pasting: paw bump + sparkles ── */
+  .duo-bump {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: duo-bump-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .duo-sparkles {
+    animation: duo-sparkle-fade 900ms ease-out 200ms both;
+  }
+  .duo-skin[data-state="pasting"] .duo-white-body,
+  .duo-skin[data-state="pasting"] .duo-orange-body {
+    animation: duo-paste-bounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes duo-bump-pop {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes duo-sparkle-fade {
+    0%   { transform: translateY(0); opacity: 1; }
+    100% { transform: translateY(-7px); opacity: 0; }
+  }
+  @keyframes duo-paste-bounce {
+    0%   { transform: translateY(0) scale(1); }
+    40%  { transform: translateY(-7px) scale(1.04, 0.96); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  /* Duo bubble — same warm cream family as the fox (the duo lives in the
+     same cottage). */
+  .bubble[data-skin="duo"] {
+    background: #faf6ec;
+    color: #2b2218;
+    border-color: rgba(120, 80, 30, 0.18);
+    box-shadow: 0 4px 12px rgba(120, 80, 30, 0.18);
+  }
+  .bubble[data-skin="duo"]::after {
+    background: #faf6ec;
+    border-right-color: rgba(120, 80, 30, 0.18);
+    border-bottom-color: rgba(120, 80, 30, 0.18);
+  }
 
   /* X dismiss button was removed — double-click Clippy to open the main
      window instead. Hide via tray → Toggle Clippy. */

@@ -63,6 +63,23 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.5** — **"Khaumani & Indy" two-cat avatar** modeled on
+  the maintainer's real cats: a serene white cat loafing on a console slab
+  supervises while an orange tabby kitten does the actual work. Idle life
+  (breathing, blinks, tail sways, and every ~16s the kitten leans over to
+  bother the supervisor, who answers with an ear-flick), both perk up to
+  listen, white thinks with thought-dots while orange head-tilts, orange
+  types with alternating paws while white gazes down approvingly, and every
+  successful paste ends in a **paw bump with sparkles**. Plus a **bubble
+  diet** for every avatar: dialog text is hard-capped at two lines (wider
+  bubble, slightly smaller type), the bubble band above the head shrank from
+  104px to 62px and sits closer to the head — so both the compact AND the
+  classic full box are ~50px shorter. **Messaging overhaul**: listening
+  copy now has tiers all the way to 15+ minute sessions with a running
+  minute counter ("essay mode · 4m"), the quick states rotate through small
+  line pools instead of repeating one word forever, and hovering the idle
+  avatar for a moment surfaces a random quip ("press F8, I'm warmed up";
+  the duo gets its own set).
 - ✅ **v1.4.0-nightly.4** — **floater corner-glitch properly masked + a
   safety toggle**. Root cause of the glitch that survived nightly.2: after a
   native resize the webview re-rasterizes asynchronously, so for a few frames
