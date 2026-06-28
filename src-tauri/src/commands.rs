@@ -276,14 +276,29 @@ pub struct SecretCheck {
     pub stt: bool,
     pub llm: bool,
     pub gemini: bool,
+    pub openai_stt: bool,
+    pub openai_llm: bool,
+    pub deepgram_stt: bool,
+    pub elevenlabs_stt: bool,
+    pub any_stt: bool,
 }
 
 #[tauri::command]
 pub fn check_secrets() -> SecretCheck {
+    let stt = secrets::has(SecretKey::GroqStt);
+    let openai_stt = secrets::has(SecretKey::OpenAiStt);
+    let openai_llm = secrets::has(SecretKey::OpenAiLlm);
+    let deepgram_stt = secrets::has(SecretKey::DeepgramStt);
+    let elevenlabs_stt = secrets::has(SecretKey::ElevenLabsStt);
     SecretCheck {
-        stt: secrets::has(SecretKey::GroqStt),
+        stt,
         llm: secrets::has(SecretKey::GroqLlm),
         gemini: secrets::has(SecretKey::GeminiLlm),
+        openai_stt,
+        openai_llm,
+        deepgram_stt,
+        elevenlabs_stt,
+        any_stt: stt || openai_stt || openai_llm || deepgram_stt || elevenlabs_stt,
     }
 }
 
@@ -300,6 +315,10 @@ fn parse_secret_key(name: &str) -> Result<SecretKey, String> {
         "groq_stt" => Ok(SecretKey::GroqStt),
         "groq_llm" => Ok(SecretKey::GroqLlm),
         "gemini_llm" => Ok(SecretKey::GeminiLlm),
+        "openai_stt" => Ok(SecretKey::OpenAiStt),
+        "openai_llm" => Ok(SecretKey::OpenAiLlm),
+        "deepgram_stt" => Ok(SecretKey::DeepgramStt),
+        "elevenlabs_stt" => Ok(SecretKey::ElevenLabsStt),
         other => Err(format!("unknown secret key '{other}'")),
     }
 }
@@ -442,8 +461,8 @@ pub fn current_models(flow: State<'_, Flow>) -> CurrentModels {
     let s = flow.settings();
     CurrentModels {
         stt: s.stt_model,
-        llm_light: s.clippy_light_model,
-        llm_advanced: s.clippy_advanced_model,
+        llm_light: s.llm_model.clone(),
+        llm_advanced: s.llm_model,
     }
 }
 
@@ -588,6 +607,27 @@ fn version_is_newer(current: &str, candidate: &str) -> bool {
         let nums: Vec<u32> = head.split('.').filter_map(|s| s.parse().ok()).collect();
         (nums, tail)
     }
+    fn compare_prerelease(a: &str, b: &str) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let mut aa = a.split('.');
+        let mut bb = b.split('.');
+        loop {
+            match (aa.next(), bb.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(x), Some(y)) => {
+                    let ord = match (x.parse::<u32>(), y.parse::<u32>()) {
+                        (Ok(xn), Ok(yn)) => xn.cmp(&yn),
+                        _ => x.cmp(y),
+                    };
+                    if ord != Ordering::Equal {
+                        return ord;
+                    }
+                }
+            }
+        }
+    }
     let (cnums, ctail) = parts(current);
     let (lnums, ltail) = parts(candidate);
     let max_len = cnums.len().max(lnums.len());
@@ -606,7 +646,7 @@ fn version_is_newer(current: &str, candidate: &str) -> bool {
     match (ctail.is_empty(), ltail.is_empty()) {
         (false, true) => true,   // current is a pre-release, latest is stable → newer
         (true, false) => false,  // current is stable, latest is pre-release → not newer
-        _ => ltail > ctail,      // both same kind — lex compare (works for nightly.N)
+        _ => compare_prerelease(ltail, ctail).is_gt(),
     }
 }
 
@@ -735,6 +775,34 @@ pub async fn test_saved_gemini_key() -> Result<Vec<String>, String> {
     test_gemini_key(key).await
 }
 
+/// Test the currently-saved OpenAI key.
+#[tauri::command]
+pub async fn test_saved_openai_key() -> Result<Vec<String>, String> {
+    let key = secrets::get(SecretKey::OpenAiLlm)
+        .map_err(|e| e.to_string())?
+        .or_else(|| secrets::get(SecretKey::OpenAiStt).ok().flatten())
+        .ok_or_else(|| "No OpenAI key saved yet - paste one above first.".to_string())?;
+    test_openai_key(key).await
+}
+
+/// Test the currently-saved Deepgram key.
+#[tauri::command]
+pub async fn test_saved_deepgram_key() -> Result<Vec<String>, String> {
+    let key = secrets::get(SecretKey::DeepgramStt)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No Deepgram key saved yet - paste one above first.".to_string())?;
+    test_deepgram_key(key).await
+}
+
+/// Test the currently-saved ElevenLabs key.
+#[tauri::command]
+pub async fn test_saved_elevenlabs_key() -> Result<Vec<String>, String> {
+    let key = secrets::get(SecretKey::ElevenLabsStt)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No ElevenLabs key saved yet - paste one above first.".to_string())?;
+    test_elevenlabs_key(key).await
+}
+
 /// Test a Google Gemini API key by listing available models.
 #[tauri::command]
 pub async fn test_gemini_key(key: String) -> Result<Vec<String>, String> {
@@ -745,11 +813,12 @@ pub async fn test_gemini_key(key: String) -> Result<Vec<String>, String> {
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| e.to_string())?;
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-        urlencoding::encode(key.trim())
-    );
-    let resp = client.get(&url).send().await.map_err(|e| format!("network: {e}"))?;
+    let resp = client
+        .get("https://generativelanguage.googleapis.com/v1beta/models")
+        .header("x-goog-api-key", key.trim())
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -769,6 +838,103 @@ pub async fn test_gemini_key(key: String) -> Result<Vec<String>, String> {
         .into_iter()
         .map(|m| m.name.trim_start_matches("models/").to_string())
         .collect())
+}
+
+/// Test an OpenAI API key by listing available models.
+#[tauri::command]
+pub async fn test_openai_key(key: String) -> Result<Vec<String>, String> {
+    if key.trim().is_empty() {
+        return Err("key is empty".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.openai.com/v1/models")
+        .bearer_auth(key.trim())
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status.as_u16(), body));
+    }
+    #[derive(Deserialize)]
+    struct ModelsResponse {
+        data: Vec<ModelEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ModelEntry {
+        id: String,
+    }
+    let parsed: ModelsResponse = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
+}
+
+/// Test a Deepgram API key by listing projects.
+#[tauri::command]
+pub async fn test_deepgram_key(key: String) -> Result<Vec<String>, String> {
+    if key.trim().is_empty() {
+        return Err("key is empty".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.deepgram.com/v1/projects")
+        .header("Authorization", format!("Token {}", key.trim()))
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status.as_u16(), body));
+    }
+    #[derive(Deserialize)]
+    struct ProjectsResponse {
+        projects: Vec<ProjectEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ProjectEntry {
+        #[serde(default)]
+        project_id: String,
+        #[serde(default)]
+        name: Option<String>,
+    }
+    let parsed: ProjectsResponse = resp.json().await.map_err(|e| format!("decode: {e}"))?;
+    Ok(parsed
+        .projects
+        .into_iter()
+        .map(|p| p.name.unwrap_or(p.project_id))
+        .collect())
+}
+
+/// Test an ElevenLabs API key by fetching account metadata.
+#[tauri::command]
+pub async fn test_elevenlabs_key(key: String) -> Result<Vec<String>, String> {
+    if key.trim().is_empty() {
+        return Err("key is empty".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.elevenlabs.io/v1/user")
+        .header("xi-api-key", key.trim())
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status.as_u16(), body));
+    }
+    Ok(vec!["account reachable".to_string()])
 }
 
 /// Test a Groq API key by making a minimal authenticated request. Returns the

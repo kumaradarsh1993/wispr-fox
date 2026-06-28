@@ -8,7 +8,7 @@
     // first-launch needs onboarding for the API key.
     try {
       const secrets = await api.checkSecrets();
-      if (!secrets.stt) {
+      if (!secrets.any_stt) {
         goto("/onboarding");
         return;
       }

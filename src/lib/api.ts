@@ -82,6 +82,11 @@ export interface SecretCheck {
   stt: boolean;
   llm: boolean;
   gemini?: boolean;
+  openai_stt: boolean;
+  openai_llm: boolean;
+  deepgram_stt: boolean;
+  elevenlabs_stt: boolean;
+  any_stt: boolean;
 }
 
 export type SecretLocation = "keyring" | "file" | "none";
@@ -90,6 +95,10 @@ export interface SecretsDiagnostic {
   stt: SecretLocation;
   llm: SecretLocation;
   gemini: SecretLocation;
+  openai_stt: SecretLocation;
+  openai_llm: SecretLocation;
+  deepgram_stt: SecretLocation;
+  elevenlabs_stt: SecretLocation;
   keyring_works: boolean;
   fallback_path: string;
   fallback_exists: boolean;
@@ -114,7 +123,14 @@ export interface AppPaths {
   sounds_dir: string;
 }
 
-export type SecretKeyName = "groq_stt" | "groq_llm" | "gemini_llm";
+export type SecretKeyName =
+  | "groq_stt"
+  | "groq_llm"
+  | "gemini_llm"
+  | "openai_stt"
+  | "openai_llm"
+  | "deepgram_stt"
+  | "elevenlabs_stt";
 
 export interface DailyUsage {
   date: string;
@@ -187,8 +203,14 @@ export const api = {
     invoke<string>("add_notification_sound", { srcPath }),
   testGroqKey: (key: string) => invoke<string[]>("test_groq_key", { key }),
   testGeminiKey: (key: string) => invoke<string[]>("test_gemini_key", { key }),
+  testOpenAiKey: (key: string) => invoke<string[]>("test_openai_key", { key }),
+  testDeepgramKey: (key: string) => invoke<string[]>("test_deepgram_key", { key }),
+  testElevenLabsKey: (key: string) => invoke<string[]>("test_elevenlabs_key", { key }),
   testSavedGroqKey: () => invoke<string[]>("test_saved_groq_key"),
   testSavedGeminiKey: () => invoke<string[]>("test_saved_gemini_key"),
+  testSavedOpenAiKey: () => invoke<string[]>("test_saved_openai_key"),
+  testSavedDeepgramKey: () => invoke<string[]>("test_saved_deepgram_key"),
+  testSavedElevenLabsKey: () => invoke<string[]>("test_saved_elevenlabs_key"),
   configureCues: (start: string, stop: string, enabled: boolean) =>
     invoke<void>("configure_cues", { start, stop, enabled }),
   // macOS auto-paste permission (Accessibility). Always true off-macOS.

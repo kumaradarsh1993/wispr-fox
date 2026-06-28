@@ -67,8 +67,8 @@
   type ClippyState = "idle" | "listening" | "thinking" | "writing" | "pasting";
   type Mode = "light" | "advanced";
 
-  // `state` is the *actual* flow state from Rust (changes fast during pipeline).
-  // `displayState` is what Clippy is currently animating — it lags `state`
+  // `flowState` is the *actual* flow state from Rust (changes fast during pipeline).
+  // `displayState` is what Clippy is currently animating — it lags `flowState`
   // through a queue so each post-listening animation gets at least MIN_DWELL_MS
   // of airtime regardless of how fast the backend finishes transcribing /
   // cleaning / injecting.
@@ -84,7 +84,7 @@
     if (watchdogTimer) clearTimeout(watchdogTimer);
     watchdogTimer = setTimeout(() => {
       console.warn("[clippy] watchdog fired — forcing state back to idle");
-      state = "idle";
+      flowState = "idle";
       displayState = "idle";
       displayQueue = [];
       if (displayTimer) {
@@ -101,7 +101,7 @@
     }
   }
 
-  let state = $state<ClippyState>("idle");
+  let flowState = $state<ClippyState>("idle");
   let displayState = $state<ClippyState>("idle");
   let mode = $state<Mode>("light");
   let blinkOpen = $state(true);
@@ -180,7 +180,7 @@
 
   // Drive displayState from the actual state changes.
   $effect(() => {
-    enqueueDisplay(state);
+    enqueueDisplay(flowState);
   });
 
   // "Phew" transient — true for ~700ms right after listening ends. Used by
@@ -651,7 +651,7 @@
       console.warn("[clippy] wispr:flow_error", e.payload);
       // Force-reset all state — Rust's wrapper also emits "idle" but be
       // defensive in case events arrive out of order.
-      state = "idle";
+      flowState = "idle";
       displayState = "idle";
       displayQueue = [];
       if (displayTimer) {
@@ -664,7 +664,7 @@
     listen<string>("wispr:state", (e) => {
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
-      state = next;
+      flowState = next;
       // Clear stale provider labels at the start/end of a run so a finished
       // pipeline doesn't leave "transcribing · Groq" hanging around.
       if (next === "idle" || next === "listening") {
@@ -685,7 +685,7 @@
       }
       if (next === "pasting") {
         setTimeout(() => {
-          state = "idle";
+          flowState = "idle";
           disarmWatchdog();
         }, 800);
       }
@@ -975,8 +975,11 @@
   let sttProvider = $state("");
   let llmProvider = $state("");
   function prettyProvider(name: string): string {
+    if (name === "deepgram") return "Deepgram";
+    if (name === "elevenlabs") return "ElevenLabs";
     if (name === "groq") return "Groq";
     if (name === "gemini") return "Gemini";
+    if (name === "openai") return "OpenAI";
     return name;
   }
 
@@ -2239,7 +2242,7 @@
   <FloaterContextMenu
     x={ctxMenuX}
     y={ctxMenuY}
-    recState={state}
+    recState={flowState}
     onClose={() => (ctxMenuOpen = false)}
   />
 {/if}

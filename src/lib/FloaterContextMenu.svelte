@@ -19,7 +19,16 @@
   import { api } from "$lib/api";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
 
-  type RecState = "idle" | "recording" | "transcribing" | "cleaning" | "injecting";
+  type RecState =
+    | "idle"
+    | "recording"
+    | "transcribing"
+    | "cleaning"
+    | "injecting"
+    | "listening"
+    | "thinking"
+    | "writing"
+    | "pasting";
 
   let {
     x,
@@ -37,12 +46,14 @@
   let pane = $state<Pane>("main");
 
   const AVATAR_OPTIONS: { id: Skin; label: string; emoji: string }[] = [
-    { id: "fox",         label: "Fox",       emoji: "🦊" },
-    { id: "stylized",    label: "Paperclip", emoji: "📎" },
-    { id: "real-clippy", label: "Clippy",    emoji: "📎" },
-    { id: "cat",         label: "Desk Cat",  emoji: "🐱" },
-    { id: "cat-lab",     label: "Cat (lab)", emoji: "🧪" },
-    { id: "off",         label: "Hide",      emoji: "○"  },
+    { id: "fox",         label: "Fox",              emoji: "Fx" },
+    { id: "stylized",    label: "Paperclip",        emoji: "Pc" },
+    { id: "real-clippy", label: "Clippy",           emoji: "Cl" },
+    { id: "cat",         label: "Desk Cat",         emoji: "Ct" },
+    { id: "cat-lab",     label: "Cat (lab)",        emoji: "Lab" },
+    { id: "duo",         label: "Khaumani & Indy",  emoji: "KI" },
+    { id: "duo-hd",      label: "Khaumani & Indy+", emoji: "KI+" },
+    { id: "off",         label: "Hide",             emoji: "Off" },
   ];
 
   async function startDictation(mode: "light" | "drafting") {
@@ -143,7 +154,9 @@
   class="ctxmenu"
   style="left: {x}px; top: {y}px;"
   role="menu"
+  tabindex="-1"
   onclick={(e) => e.stopPropagation()}
+  onkeydown={(e) => e.stopPropagation()}
   oncontextmenu={(e) => e.preventDefault()}
 >
   {#if pane === "main"}
@@ -271,7 +284,7 @@
     font-weight: 600;
   }
   .ctx-glyph {
-    flex: 0 0 16px;
+    flex: 0 0 24px;
     text-align: center;
     font-size: 12px;
     opacity: 0.85;

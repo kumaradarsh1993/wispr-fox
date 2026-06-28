@@ -147,8 +147,9 @@ class SettingsStore {
         /* treat as not-yet-migrated */
       }
       const remap = (field: string, from: string, to: string) => {
-        if ((this.s as Record<string, unknown>)[field] === from) {
-          (this.s as Record<string, unknown>)[field] = to;
+        const bag = this.s as unknown as Record<string, unknown>;
+        if (bag[field] === from) {
+          bag[field] = to;
           migrated = true;
         }
       };

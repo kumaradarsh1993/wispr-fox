@@ -51,14 +51,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const tag = context.ref.replace('refs/tags/', '');
             const isPrerelease = tag.startsWith('nightly-') || /-(nightly|pre|rc|alpha|beta)\b/.test(tag);
             core.setOutput('is_prerelease', String(isPrerelease));
+            const notesPath = `docs/RELEASE_NOTES_${tag}.md`;
+            if (!fs.existsSync(notesPath)) {
+              core.setFailed(`Missing release notes: ${notesPath}`);
+              return;
+            }
+            const releaseNotes = fs.readFileSync(notesPath, 'utf8').trim();
             const channelHeader = isPrerelease
               ? '> Pre-release / nightly build. Not the latest stable.\n> Stable users: see [Releases page](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/releases) and pick the most recent "Latest" tag.\n\n'
               : '';
-            const body = channelHeader + [
+            const body = channelHeader + releaseNotes + '\n\n---\n\n' + [
               `Built from commit ${context.sha}.`,
+              'Provenance: Codex-authored build. This is the first release line after the final Claude Code checkpoint.',
               '',
               '**Pick your installer:**',
               '- **Windows:** `wispr-fox_*_x64-setup.exe` (recommended) or `*_x64_en-US.msi`',
@@ -87,7 +95,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `wispr-fox ${tag}`,
+              name: `wispr-fox ${tag} - Codex build`,
               body,
               draft: true,
               prerelease: isPrerelease,

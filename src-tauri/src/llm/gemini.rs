@@ -29,9 +29,12 @@ pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
 /// endpoint.
 pub const DEPRECATED_MODELS: &[&str] = &[
     "gemini-2.0-flash",        // deprecated 1 Jun 2026
+    "gemini-2.0-flash-001",
     "gemini-2.0-flash-lite",   // deprecated 1 Jun 2026
+    "gemini-2.0-flash-lite-001",
+    "gemini-3-flash",          // stale/speculative UI id; use preview/default instead
     "gemini-3-pro",            // speculative id that never shipped
-    "gemini-3.1-pro",          // same
+    "gemini-3.1-pro",          // stale shorthand; current preview id has "-preview"
 ];
 
 pub struct GeminiLlm {

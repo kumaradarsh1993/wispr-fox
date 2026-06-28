@@ -151,7 +151,7 @@
     // If user already has keys saved, just mark it — the welcome screen
     // surfaces a "Skip to the demo" shortcut for returning testers.
     const secrets = await api.checkSecrets();
-    if (secrets.stt || secrets.llm) {
+    if (secrets.any_stt) {
       keySaved = true;
     }
 
@@ -353,8 +353,8 @@
       </div>
 
       <p class="tip">
-        Other models — Gemini, Claude, GPT, paid Groq, Sarvam for Hindi —
-        all supported. Add them later in <strong>Settings → Providers</strong>.
+        Prefer OpenAI, Deepgram, ElevenLabs, or Gemini cleanup?
+        Add them later in <strong>Settings → Providers</strong>.
       </p>
 
       <div class="cta">

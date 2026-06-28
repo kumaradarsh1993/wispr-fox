@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod gemini;
 pub mod groq;
+pub mod openai;
 pub mod prompts;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

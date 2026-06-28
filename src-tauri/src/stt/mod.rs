@@ -10,7 +10,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod chunk;
+pub mod deepgram;
+pub mod elevenlabs;
 pub mod groq;
+pub mod openai;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcript {

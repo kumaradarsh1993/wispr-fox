@@ -63,6 +63,15 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.6** — **Codex provider expansion**: OpenAI, Deepgram,
+  and ElevenLabs are now real selectable speech-to-text providers, not disabled
+  placeholders. OpenAI is also available for cleanup/drafting. Provider settings
+  now have per-service keys, connection tests, and model pickers. This nightly
+  also keeps the remastered Khaumani & Indy+ pet work from the final Claude Code
+  checkpoint, adds it to the floater right-click avatar picker, and tightens
+  security/privacy issues found during the Codex audit (no transcript logging,
+  verified keyring migration, safer Gemini key testing, macOS floater config,
+  unused fs plugin removal, and correct double-digit nightly update checks).
 - ✅ **v1.4.0-nightly.5** — **"Khaumani & Indy" two-cat avatar** modeled on
   the maintainer's real cats: a serene white cat loafing on a console slab
   supervises while an orange tabby kitten does the actual work. Idle life

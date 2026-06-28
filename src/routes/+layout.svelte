@@ -71,11 +71,12 @@
   // Floater size presets (S/M/L). Sticky + cross-window via floaterScale.
   let scaleActive = $derived(floaterScale.activePreset());
 
-  // Percentage of daily-limit used (Groq free tier: 2000 STT, 1000 LLM per UTC day).
+  // Lightweight usage meters. Limits are conservative reference markers, not
+  // provider billing counters; exact quotas live in each provider console.
   let sttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
   let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
 
-  // Groq's daily limits reset at UTC midnight. Show that moment in the
+  // Daily usage rolls over at UTC midnight. Show that moment in the
   // user's local timezone so they don't have to do mental UTC math
   // (especially relevant for IST users who are +5:30 from UTC).
   function nextUtcMidnightLocal(): string {
@@ -347,7 +348,7 @@
         {#if !collapsed}
           <div class="footer-block">
             <div class="footer-title">Today's usage</div>
-            <div class="footer-reset" title="Groq free-tier limits reset at midnight UTC">{resetLabel}</div>
+            <div class="footer-reset" title="Local usage counters reset at midnight UTC">{resetLabel}</div>
 
             <div class="bar-row">
               <span class="bar-key">STT</span>
@@ -380,11 +381,11 @@
         {:else}
           <!-- Collapsed: stacked usage chips for STT + LLM, centered. -->
           <div class="usage-stack">
-            <div class="usage-chip {pctClass(sttPct)}" title="STT (Whisper): {usageStore.usage?.stt_count ?? 0} of 2000 today">
+            <div class="usage-chip {pctClass(sttPct)}" title="STT calls today: {usageStore.usage?.stt_count ?? 0}">
               <span class="usage-chip-key">STT</span>
               <span class="usage-chip-val">{sttPct}%</span>
             </div>
-            <div class="usage-chip {pctClass(llmPct)}" title="LLM (cleanup): {usageStore.usage?.llm_count ?? 0} of 1000 today">
+            <div class="usage-chip {pctClass(llmPct)}" title="Cleanup calls today: {usageStore.usage?.llm_count ?? 0}">
               <span class="usage-chip-key">LLM</span>
               <span class="usage-chip-val">{llmPct}%</span>
             </div>

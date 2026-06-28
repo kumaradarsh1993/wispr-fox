@@ -17,10 +17,16 @@ use crate::clippy;
 use crate::history::{AltKind, History, Status};
 use crate::hotkey::{Edge, HotkeyEvent};
 use crate::inject;
-use crate::llm::{gemini::GeminiLlm, groq::GroqLlm, ClippyMode, LlmProvider};
+use crate::llm::{gemini::GeminiLlm, groq::GroqLlm, openai::OpenAiLlm, ClippyMode, LlmProvider};
 use crate::secrets::{self, SecretKey};
 use crate::settings::{AppSettings, Mode};
-use crate::stt::{groq::GroqStt, SttProvider};
+use crate::stt::{
+    deepgram::DeepgramStt,
+    elevenlabs::ElevenLabsStt,
+    groq::GroqStt,
+    openai::OpenAiStt,
+    SttProvider,
+};
 use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
@@ -28,8 +34,11 @@ const MIN_DURATION_MS: i64 = 300;
 /// Pretty display name for a provider id (as returned by `*.name()`).
 fn pretty_provider(name: &str) -> &str {
     match name {
+        "deepgram" => "Deepgram",
+        "elevenlabs" => "ElevenLabs",
         "gemini" => "Gemini",
         "groq" => "Groq",
+        "openai" => "OpenAI",
         other => other,
     }
 }
@@ -44,7 +53,7 @@ fn user_friendly_error(raw: &str) -> String {
     let s = raw.to_ascii_lowercase();
 
     // Missing-key and local failures are stage-agnostic — handle first.
-    if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") {
+    if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") || s.contains("no openai") || s.contains("no deepgram") || s.contains("no elevenlabs") {
         return "API key missing — open Settings → Provider & Keys.".to_string();
     }
     if s.contains("recording too short") {
@@ -68,6 +77,12 @@ fn user_friendly_error(raw: &str) -> String {
     // is always Groq.
     let provider = if s.contains("gemini") {
         " (Gemini)"
+    } else if s.contains("openai") {
+        " (OpenAI)"
+    } else if s.contains("deepgram") {
+        " (Deepgram)"
+    } else if s.contains("elevenlabs") {
+        " (ElevenLabs)"
     } else if s.contains("groq") || s.contains("whisper") {
         " (Groq)"
     } else {
@@ -161,12 +176,79 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
             };
             Ok(Box::new(GeminiLlm::new(key, m)))
         }
+        "openai" => {
+            let key = secrets::get(SecretKey::OpenAiLlm)?
+                .or_else(|| secrets::get(SecretKey::OpenAiStt).ok().flatten())
+                .ok_or_else(|| anyhow!("no OpenAI API key - open Settings -> Provider & Keys"))?;
+            let m = if model.starts_with("gpt-") {
+                model
+            } else {
+                crate::llm::openai::DEFAULT_MODEL.to_string()
+            };
+            Ok(Box::new(OpenAiLlm::new(key, m)))
+        }
         _ => {
             // "groq" or anything unknown -> Groq path.
             let key = secrets::get(SecretKey::GroqLlm)?
                 .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
                 .ok_or_else(|| anyhow!("no Groq LLM key — open Settings → Provider & Keys"))?;
             Ok(Box::new(GroqLlm::new(key, model)))
+        }
+    }
+}
+
+fn selected_model_or(default_model: &str, current: &str, provider_models: &[&str]) -> String {
+    if provider_models.iter().any(|m| *m == current) {
+        current.to_string()
+    } else {
+        default_model.to_string()
+    }
+}
+
+/// Construct an STT provider client for the user-chosen `stt_provider`.
+/// Unknown/stale settings fall back to Groq to preserve existing installs.
+fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
+    match settings.stt_provider.as_str() {
+        "openai" => {
+            let key = secrets::get(SecretKey::OpenAiStt)?
+                .or_else(|| secrets::get(SecretKey::OpenAiLlm).ok().flatten())
+                .ok_or_else(|| anyhow!("no OpenAI STT key - open Settings -> Provider & Keys"))?;
+            let model = selected_model_or(
+                crate::stt::openai::DEFAULT_MODEL,
+                &settings.stt_model,
+                &["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+            );
+            Ok(Box::new(OpenAiStt::with_model(key, model)))
+        }
+        "deepgram" => {
+            let key = secrets::get(SecretKey::DeepgramStt)?
+                .ok_or_else(|| anyhow!("no Deepgram STT key - open Settings -> Provider & Keys"))?;
+            let model = if settings.stt_model.starts_with("nova-") {
+                settings.stt_model.clone()
+            } else {
+                crate::stt::deepgram::DEFAULT_MODEL.to_string()
+            };
+            Ok(Box::new(DeepgramStt::with_model(key, model)))
+        }
+        "elevenlabs" => {
+            let key = secrets::get(SecretKey::ElevenLabsStt)?
+                .ok_or_else(|| anyhow!("no ElevenLabs STT key - open Settings -> Provider & Keys"))?;
+            let model = if settings.stt_model.starts_with("scribe_") {
+                settings.stt_model.clone()
+            } else {
+                crate::stt::elevenlabs::DEFAULT_MODEL.to_string()
+            };
+            Ok(Box::new(ElevenLabsStt::with_model(key, model)))
+        }
+        _ => {
+            let key = secrets::get(SecretKey::GroqStt)?
+                .ok_or_else(|| anyhow!("no Groq STT key - open Settings -> Provider & Keys"))?;
+            let model = selected_model_or(
+                "whisper-large-v3-turbo",
+                &settings.stt_model,
+                &["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"],
+            );
+            Ok(Box::new(GroqStt::with_model(key, model)))
         }
     }
 }
@@ -473,20 +555,21 @@ impl Flow {
 
         self.history.update_status(&record_id, Status::Transcribing)?;
 
-        let stt_key = secrets::get(SecretKey::GroqStt)?
-            .ok_or_else(|| anyhow!("no Groq STT key — open Settings to add one"))?;
+        // Provider-specific key lookup happens in build_stt_provider().
         let stt_settings = self.settings();
-        let stt = GroqStt::with_model(stt_key, stt_settings.stt_model.clone());
+        let stt = build_stt_provider(&stt_settings)?;
+        let stt_name = stt.name();
         // Tell the floater which service is doing the transcription so its
         // bubble can read "transcribing · Groq" — and so a stall is clearly
         // attributable rather than a mystery spinner.
-        let _ = app.emit("wispr:stt_provider", stt.name());
+        let _ = app.emit("wispr:stt_provider", stt_name);
 
         let wav_size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
         tracing::info!(
             record_id,
             wav_bytes = wav_size,
-            "sending WAV to Whisper"
+            provider = stt_name,
+            "sending WAV to speech-to-text provider"
         );
 
         self.usage.record_stt();
@@ -501,18 +584,19 @@ impl Flow {
         let transcript = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future)
             .await
             .map_err(|_| anyhow!("Whisper STT timed out after 120s — check network or try a shorter clip"))?
-            .context("Groq Whisper request")?;
+            .with_context(|| format!("{provider} transcription request", provider = pretty_provider(stt_name)))?;
 
         tracing::info!(
             record_id,
-            text = %transcript.text,
+            chars = transcript.text.chars().count(),
             language = ?transcript.language,
             duration_secs = ?transcript.duration_seconds,
-            "Whisper response"
+            provider = stt_name,
+            "speech-to-text response"
         );
 
         self.history
-            .set_transcript(&record_id, &transcript.text, stt.name())?;
+            .set_transcript(&record_id, &transcript.text, stt_name)?;
 
         let clippy_settings = self.settings();
         let needs_clippy = match mode {
@@ -762,17 +846,16 @@ impl Flow {
         let _ = app.emit("wispr:state", "transcribing");
 
         let stt_settings = self.settings();
-        let stt_key = secrets::get(SecretKey::GroqStt)?
-            .ok_or_else(|| anyhow!("no Groq STT key — open Settings to add one"))?;
-        let stt = GroqStt::with_model(stt_key, stt_settings.stt_model.clone());
+        let stt = build_stt_provider(&stt_settings)?;
+        let stt_name = stt.name();
 
         self.usage.record_stt();
         let transcript = stt
             .transcribe(&rec.audio_path, stt_settings.language_hint.as_deref())
             .await
-            .context("Groq Whisper retry")?;
+            .with_context(|| format!("{provider} transcription retry", provider = pretty_provider(stt_name)))?;
         self.history
-            .set_transcript(record_id, &transcript.text, stt.name())?;
+            .set_transcript(record_id, &transcript.text, stt_name)?;
 
         let mode = match rec.mode {
             ClippyMode::Light => Mode::Light,
@@ -887,4 +970,3 @@ fn disarm_escape_stop(app: &AppHandle) {
         }
     }
 }
-

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* PATCHED for Vite compatibility: clippyts upstream used dynamic
    import("./agents/"+name+".js") which Vite cannot statically resolve.
    We static-import each vendored agent here and dispatch via a map.

@@ -1,15 +1,135 @@
 <script lang="ts">
-  // Providers & Models — STT/LLM provider config + API keys + per-mode
-  // model picker, prompt editor, language hint. The biggest single page
-  // in Settings; deliberately combines provider+model since you can't
-  // meaningfully pick a model without picking a provider first.
   import { onMount } from "svelte";
-  import { api, type SecretCheck, type SecretsDiagnostic } from "$lib/api";
+  import { api, type SecretCheck, type SecretKeyName, type SecretsDiagnostic } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
 
-  let secretCheck = $state<SecretCheck>({ stt: false, llm: false, gemini: false });
+  type TestResult =
+    | { kind: "idle" }
+    | { kind: "testing" }
+    | { kind: "ok"; models: string[] }
+    | { kind: "error"; msg: string };
+  type ModelOpt = { id: string; label: string; quality: string };
+
+  const EMPTY_SECRETS: SecretCheck = {
+    stt: false,
+    llm: false,
+    gemini: false,
+    openai_stt: false,
+    openai_llm: false,
+    deepgram_stt: false,
+    elevenlabs_stt: false,
+    any_stt: false,
+  };
+
+  let secretCheck = $state<SecretCheck>({ ...EMPTY_SECRETS });
   let diag = $state<SecretsDiagnostic | null>(null);
+  let saving = $state(false);
+
+  let groqStt = $state("");
+  let groqLlm = $state("");
+  let openaiStt = $state("");
+  let openaiLlm = $state("");
+  let deepgramKey = $state("");
+  let elevenlabsKey = $state("");
+  let geminiKey = $state("");
+
+  let groqTestResult = $state<TestResult>({ kind: "idle" });
+  let openaiTestResult = $state<TestResult>({ kind: "idle" });
+  let deepgramTestResult = $state<TestResult>({ kind: "idle" });
+  let elevenlabsTestResult = $state<TestResult>({ kind: "idle" });
+  let geminiTestResult = $state<TestResult>({ kind: "idle" });
+
+  const STT_MODELS: Record<string, ModelOpt[]> = {
+    groq: [
+      { id: "whisper-large-v3-turbo", label: "Whisper Turbo", quality: "Fast, strong default" },
+      { id: "whisper-large-v3", label: "Whisper Large v3", quality: "Slower, highest Whisper accuracy" },
+      { id: "distil-whisper-large-v3-en", label: "Distil-Whisper", quality: "Fastest, English only" },
+    ],
+    openai: [
+      { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", quality: "Best OpenAI STT quality" },
+      { id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", quality: "Lower cost, fast" },
+      { id: "whisper-1", label: "Whisper API", quality: "Legacy compatible fallback" },
+    ],
+    deepgram: [
+      { id: "nova-3", label: "Nova-3", quality: "Recommended Deepgram v2 batch model" },
+      { id: "nova-2", label: "Nova-2", quality: "Stable fallback" },
+    ],
+    elevenlabs: [
+      { id: "scribe_v2", label: "Scribe v2", quality: "Recommended ElevenLabs STT" },
+      { id: "scribe_v1", label: "Scribe v1", quality: "Legacy fallback" },
+    ],
+  };
+
+  const LLM_MODELS: Record<string, ModelOpt[]> = {
+    groq: [
+      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", quality: "Balanced default" },
+      { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", quality: "Fastest cleanup" },
+      { id: "llama-4-maverick", label: "Llama 4 Maverick", quality: "Higher quality, lower free quota" },
+    ],
+    gemini: [
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Current default" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast free-tier option" },
+      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Lowest latency / quota friendly" },
+      { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview", quality: "Preview, use only if your key lists it" },
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", quality: "Preview Pro, billing likely required" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", quality: "Paid tier" },
+    ],
+    openai: [
+      { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
+      { id: "gpt-5.4", label: "GPT-5.4", quality: "Higher quality" },
+      { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
+    ],
+  };
+
+  function providerLabel(provider: string): string {
+    return provider === "groq"
+      ? "Groq"
+      : provider === "openai"
+      ? "OpenAI"
+      : provider === "deepgram"
+      ? "Deepgram"
+      : provider === "elevenlabs"
+      ? "ElevenLabs"
+      : provider === "gemini"
+      ? "Google Gemini"
+      : provider;
+  }
+
+  function sttReady(provider: string): boolean {
+    return provider === "groq"
+      ? secretCheck.stt
+      : provider === "openai"
+      ? secretCheck.openai_stt || secretCheck.openai_llm
+      : provider === "deepgram"
+      ? secretCheck.deepgram_stt
+      : provider === "elevenlabs"
+      ? secretCheck.elevenlabs_stt
+      : false;
+  }
+
+  function llmReady(provider: string): boolean {
+    return provider === "groq"
+      ? secretCheck.llm || secretCheck.stt
+      : provider === "gemini"
+      ? Boolean(secretCheck.gemini)
+      : provider === "openai"
+      ? secretCheck.openai_llm || secretCheck.openai_stt
+      : false;
+  }
+
+  function sttModelsFor(provider: string): ModelOpt[] {
+    return STT_MODELS[provider] ?? STT_MODELS.groq;
+  }
+
+  function llmModelsFor(provider: string): ModelOpt[] {
+    return LLM_MODELS[provider] ?? LLM_MODELS.groq;
+  }
+
+  async function refreshSecrets() {
+    secretCheck = await api.checkSecrets();
+    await refreshDiagnostic();
+  }
 
   async function refreshDiagnostic() {
     try {
@@ -18,344 +138,297 @@
       console.warn("secrets diagnostic failed", e);
     }
   }
-  let groqStt = $state("");
-  let groqLlm = $state("");
-  let geminiKey = $state("");
-  let saving = $state(false);
 
-  type TestResult =
-    | { kind: "idle" }
-    | { kind: "testing" }
-    | { kind: "ok"; models: string[] }
-    | { kind: "error"; msg: string };
-  let testResult = $state<TestResult>({ kind: "idle" });
-  let geminiTestResult = $state<TestResult>({ kind: "idle" });
-
-  // STT models on Groq (May 2026). Sorted speed-first.
-  type ModelOpt = { id: string; label: string; quality: string };
-  const STT_MODELS: ModelOpt[] = [
-    { id: "whisper-large-v3-turbo",     label: "Whisper Turbo",    quality: "Fast • Good" },
-    { id: "whisper-large-v3",           label: "Whisper Large v3", quality: "Slower • Best accuracy" },
-    { id: "distil-whisper-large-v3-en", label: "Distil-Whisper",   quality: "Fastest • English only" },
-  ];
-  const GROQ_LLM_MODELS: ModelOpt[] = [
-    { id: "llama-3.1-8b-instant",    label: "Llama 3.1 8B",     quality: "Fast • 14,400/day free" },
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B",    quality: "Smarter • 1,000/day free" },
-    { id: "llama-4-maverick",        label: "Llama 4 Maverick", quality: "Smartest • 500/day free" },
-  ];
-  // Gemini model list — checked as of 1 June 2026.
-  //
-  // What changed since the last refresh:
-  //   • 2.0 Flash and 2.0 Flash-Lite are deprecated on 1 June 2026 → removed.
-  //   • 3.5 Flash launched at I/O on 20 May 2026, model id gemini-3.5-flash
-  //     → added at top of the list (recommended default).
-  //   • 2.5 Flash-Lite added — highest free quota (1,000 req/day, 15 RPM).
-  //   • "gemini-3-pro" entry was speculative; replaced with 2.5 Pro which
-  //     is the actual current Pro model (paid-only since Apr 2026).
-  //   • 3.5 Pro is announced for GA in June 2026 but no API model id is
-  //     published yet — will add when Google ships it.
-  const GEMINI_LLM_MODELS: ModelOpt[] = [
-    { id: "gemini-3.5-flash",      label: "Gemini 3.5 Flash",      quality: "Newest • Default since I/O 2026" },
-    { id: "gemini-2.5-flash",      label: "Gemini 2.5 Flash",      quality: "Fast • 250/day free" },
-    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Fastest • 1,000/day free (highest quota)" },
-    { id: "gemini-3-flash",        label: "Gemini 3 Flash",        quality: "Stable • Free tier" },
-    { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro",        quality: "Smartest • PAID ONLY since Apr 2026" },
-  ];
-
-  function modelsForProvider(p: string): ModelOpt[] {
-    return p === "gemini" ? GEMINI_LLM_MODELS : GROQ_LLM_MODELS;
-  }
-
-  async function changeLlmProvider(provider: string) {
-    await settings.set("llm_provider", provider as any);
-    const options = modelsForProvider(provider);
-    if (!options.find((m) => m.id === settings.s.llm_model)) {
-      await settings.set("llm_model", options[0].id as any);
+  async function saveKey(key: SecretKeyName, value: string, clear: () => void, label: string) {
+    if (!value.trim()) return;
+    saving = true;
+    try {
+      await api.saveSecret(key, value.trim());
+      clear();
+      await refreshSecrets();
+      flash(`${label} key saved`);
+    } finally {
+      saving = false;
     }
-    // Persistence is automatic (settings.set writes through to disk + Rust),
-    // but the user asked for explicit confirmation that the selection saved.
-    // Reported as "should be a save button" — better resolved with a toast
-    // than a literal save button, since auto-save is the right behaviour and
-    // the toast confirms the write succeeded.
-    flash(`Provider set to ${provider === "gemini" ? "Gemini" : "Groq"}`);
   }
 
-  async function changeLlmModel(modelId: string) {
-    await settings.set("llm_model", modelId as any);
-    const label = modelsForProvider(settings.s.llm_provider)
-      .find((m) => m.id === modelId)?.label ?? modelId;
-    flash(`Model: ${label}`);
+  async function deleteKey(name: SecretKeyName) {
+    if (!confirm(`Delete ${name}?`)) return;
+    await api.deleteSecret(name);
+    await refreshSecrets();
+    flash("Deleted");
+  }
+
+  async function runTest(
+    freshKey: string,
+    hasSaved: boolean,
+    setResult: (r: TestResult) => void,
+    testFresh: (key: string) => Promise<string[]>,
+    testSaved: () => Promise<string[]>,
+    missing: string,
+  ) {
+    setResult({ kind: "testing" });
+    try {
+      const models = freshKey.trim() ? await testFresh(freshKey.trim()) : hasSaved ? await testSaved() : null;
+      setResult(models ? { kind: "ok", models } : { kind: "error", msg: missing });
+    } catch (e) {
+      setResult({ kind: "error", msg: String(e) });
+    }
+  }
+
+  async function changeSttProvider(provider: string) {
+    await settings.set("stt_provider", provider as any);
+    const options = sttModelsFor(provider);
+    if (!options.find((m) => m.id === settings.s.stt_model)) {
+      await settings.set("stt_model", options[0].id as any);
+    }
+    flash(`STT provider: ${providerLabel(provider)}`);
   }
 
   async function changeSttModel(modelId: string) {
     await settings.set("stt_model", modelId as any);
-    const label = STT_MODELS.find((m) => m.id === modelId)?.label ?? modelId;
+    const label = sttModelsFor(settings.s.stt_provider).find((m) => m.id === modelId)?.label ?? modelId;
     flash(`STT: ${label}`);
   }
 
-  // ── API key save / delete / test ───────────────────────────────────────
-  async function saveStt() {
-    if (!groqStt.trim()) return;
-    saving = true;
-    try {
-      await api.saveSecret("groq_stt", groqStt.trim());
-      groqStt = "";
-      secretCheck = await api.checkSecrets();
-      await refreshDiagnostic();
-      flash("STT key saved");
-    } finally {
-      saving = false;
+  async function changeLlmProvider(provider: string) {
+    await settings.set("llm_provider", provider as any);
+    const options = llmModelsFor(provider);
+    if (!options.find((m) => m.id === settings.s.llm_model)) {
+      await settings.set("llm_model", options[0].id as any);
     }
+    flash(`Cleanup provider: ${providerLabel(provider)}`);
   }
 
-  async function saveLlm() {
-    if (!groqLlm.trim()) return;
-    saving = true;
-    try {
-      await api.saveSecret("groq_llm", groqLlm.trim());
-      groqLlm = "";
-      secretCheck = await api.checkSecrets();
-      await refreshDiagnostic();
-      flash("LLM key saved");
-    } finally {
-      saving = false;
-    }
+  async function changeLlmModel(modelId: string) {
+    await settings.set("llm_model", modelId as any);
+    const label = llmModelsFor(settings.s.llm_provider).find((m) => m.id === modelId)?.label ?? modelId;
+    flash(`Cleanup model: ${label}`);
   }
-
-  async function saveGemini() {
-    if (!geminiKey.trim()) return;
-    saving = true;
-    try {
-      await api.saveSecret("gemini_llm", geminiKey.trim());
-      geminiKey = "";
-      secretCheck = await api.checkSecrets();
-      await refreshDiagnostic();
-      flash("Gemini key saved");
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function deleteKey(name: "groq_stt" | "groq_llm" | "gemini_llm") {
-    if (!confirm(`Delete ${name}?`)) return;
-    await api.deleteSecret(name);
-    secretCheck = await api.checkSecrets();
-    flash("Deleted");
-  }
-
-  async function testGroqStt() {
-    // Prefer the value in the input box (fresh paste). If empty AND a key
-    // is saved, test the saved one — Rust reads it from keyring on its side.
-    const k = groqStt.trim() || groqLlm.trim();
-    testResult = { kind: "testing" };
-    try {
-      const models = k
-        ? await api.testGroqKey(k)
-        : secretCheck.stt || secretCheck.llm
-        ? await api.testSavedGroqKey()
-        : null;
-      if (models === null) {
-        testResult = { kind: "error", msg: "No saved key — paste one above and click Save first." };
-        return;
-      }
-      testResult = { kind: "ok", models };
-    } catch (e) {
-      testResult = { kind: "error", msg: String(e) };
-    }
-  }
-
-  async function testGemini() {
-    const k = geminiKey.trim();
-    geminiTestResult = { kind: "testing" };
-    try {
-      const models = k
-        ? await api.testGeminiKey(k)
-        : secretCheck.gemini
-        ? await api.testSavedGeminiKey()
-        : null;
-      if (models === null) {
-        geminiTestResult = { kind: "error", msg: "No saved Gemini key — paste one above and click Save first." };
-        return;
-      }
-      geminiTestResult = { kind: "ok", models };
-    } catch (e) {
-      geminiTestResult = { kind: "error", msg: String(e) };
-    }
-  }
-
-  onMount(async () => {
-    secretCheck = await api.checkSecrets();
-    await refreshDiagnostic();
-  });
 
   function locationLabel(loc: "keyring" | "file" | "none"): string {
     return loc === "keyring"
-      ? "OS keyring (secure)"
+      ? "OS keyring"
       : loc === "file"
-      ? "File fallback (keyring unavailable)"
+      ? "File fallback"
       : "Not saved";
   }
+
   function locationClass(loc: "keyring" | "file" | "none"): string {
     return loc === "keyring" ? "ok" : loc === "file" ? "warn" : "neutral";
   }
+
+  function anyDiagSaved(d: SecretsDiagnostic): boolean {
+    return [
+      d.stt,
+      d.llm,
+      d.gemini,
+      d.openai_stt,
+      d.openai_llm,
+      d.deepgram_stt,
+      d.elevenlabs_stt,
+    ].some((loc) => loc !== "none");
+  }
+
+  onMount(() => {
+    refreshSecrets();
+  });
 </script>
 
 <section>
   <h2>Providers & API keys</h2>
   <p class="lede">
-    wispr-fox uses cloud providers for speech-to-text and LLM cleanup.
-    Groq is the recommended default — generous free tier, no card.
-    Add Gemini if you want a second LLM option.
+    Choose who transcribes your audio and who handles cleanup. Keys are saved
+    locally in the OS keyring first, with file fallback only when the keyring fails.
   </p>
 
-  <!-- ── Groq ────────────────────────────────────────────────────────── -->
-  <div class="provider-card">
-    <div class="provider-head">
-      <div>
-        <div class="provider-name">Groq</div>
-        <div class="provider-meta">groq.com — fast inference, generous free tier</div>
+  <div class="provider-grid">
+    <div class="provider-card">
+      <div class="provider-head">
+        <div>
+          <div class="provider-name">Groq</div>
+          <div class="provider-meta">Whisper STT and Llama cleanup</div>
+        </div>
+        <a class="link-out" href="https://console.groq.com/keys" target="_blank" rel="noopener">Get key</a>
       </div>
-      <a class="link-out" href="https://console.groq.com/keys" target="_blank" rel="noopener">
-        Get an API key →
-      </a>
-    </div>
 
-    <div class="help-box">
-      <strong>Free tier as of May 2026:</strong>
-      <ul>
-        <li>STT (Whisper): <code>2,000 requests/day</code>, 25 MB/file, resets midnight UTC</li>
-        <li>LLM: <code>1,000-14,400 requests/day</code> depending on model (smaller models = higher limits)</li>
-        <li>No credit card required to start. Paid tier removes daily caps.</li>
-      </ul>
-    </div>
-
-    <div class="key-row">
-      <label>STT key (Whisper)</label>
-      <div class="input-row">
-        <input
-          type="password"
-          placeholder={secretCheck.stt ? "•••••••• (saved)" : "gsk_..."}
-          bind:value={groqStt}
-        />
-        <button class="btn-primary" onclick={saveStt} disabled={saving}>Save</button>
-        {#if secretCheck.stt}
-          <button class="btn-danger" onclick={() => deleteKey("groq_stt")}>Delete</button>
-        {/if}
+      <div class="key-row">
+        <label for="groq-stt-key">STT key</label>
+        <div class="input-row">
+          <input id="groq-stt-key" type="password" placeholder={secretCheck.stt ? "saved" : "gsk_..."} bind:value={groqStt} />
+          <button class="btn-primary" onclick={() => saveKey("groq_stt", groqStt, () => (groqStt = ""), "Groq STT")} disabled={saving}>Save</button>
+          {#if secretCheck.stt}<button class="btn-danger" onclick={() => deleteKey("groq_stt")}>Delete</button>{/if}
+        </div>
       </div>
-    </div>
 
-    <div class="key-row">
-      <label>LLM key (Clippy cleanup)</label>
-      <div class="input-row">
-        <input
-          type="password"
-          placeholder={secretCheck.llm ? "•••••••• (saved)" : "gsk_... (or reuse STT)"}
-          bind:value={groqLlm}
-        />
-        <button class="btn-primary" onclick={saveLlm} disabled={saving}>Save</button>
-        {#if secretCheck.llm}
-          <button class="btn-danger" onclick={() => deleteKey("groq_llm")}>Delete</button>
-        {/if}
+      <div class="key-row">
+        <label for="groq-cleanup-key">Cleanup key</label>
+        <div class="input-row">
+          <input id="groq-cleanup-key" type="password" placeholder={secretCheck.llm ? "saved" : "gsk_... (or reuse STT)"} bind:value={groqLlm} />
+          <button class="btn-primary" onclick={() => saveKey("groq_llm", groqLlm, () => (groqLlm = ""), "Groq cleanup")} disabled={saving}>Save</button>
+          {#if secretCheck.llm}<button class="btn-danger" onclick={() => deleteKey("groq_llm")}>Delete</button>{/if}
+        </div>
+        <p class="hint">If no cleanup key is saved, the Groq STT key is reused.</p>
       </div>
-      <p class="hint">If empty, the STT key is reused for LLM calls.</p>
-    </div>
 
-    <div class="test-block">
-      <button class="btn-secondary" onclick={testGroqStt}>Test connection</button>
-      {#if testResult.kind === "testing"}
-        <span class="test-msg testing">Testing…</span>
-      {:else if testResult.kind === "ok"}
-        <span class="test-msg ok">✓ Key works — {testResult.models.length} models accessible</span>
-      {:else if testResult.kind === "error"}
-        <span class="test-msg error">✗ {testResult.msg}</span>
-      {/if}
-    </div>
-  </div>
-
-  <!-- ── Google Gemini ───────────────────────────────────────────────── -->
-  <div class="provider-card">
-    <div class="provider-head">
-      <div>
-        <div class="provider-name">Google Gemini</div>
-        <div class="provider-meta">ai.google.dev — best free-tier LLM for cleanup + drafting</div>
-      </div>
-      <a class="link-out" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">
-        Get an API key →
-      </a>
-    </div>
-
-    <div class="help-box">
-      <strong>Free tier as of May 2026:</strong>
-      <ul>
-        <li>Gemini 2.5 Flash: <code>15 RPM, 1,500 req/day</code> — recommended for drafting mode</li>
-        <li>Pro models <em>removed from free tier April 2026</em> — billing required.</li>
-        <li>No card needed to start. Quality competitive with GPT-4o-mini.</li>
-      </ul>
-    </div>
-
-    <div class="key-row">
-      <label>API key</label>
-      <div class="input-row">
-        <input
-          type="password"
-          placeholder={secretCheck.gemini ? "•••••••• (saved)" : "AIza..."}
-          bind:value={geminiKey}
-        />
-        <button class="btn-primary" onclick={saveGemini} disabled={saving}>Save</button>
-        {#if secretCheck.gemini}
-          <button class="btn-danger" onclick={() => deleteKey("gemini_llm")}>Delete</button>
-        {/if}
+      <div class="test-block">
+        <button
+          class="btn-secondary"
+          onclick={() => runTest(groqStt || groqLlm, secretCheck.stt || secretCheck.llm, (r) => (groqTestResult = r), api.testGroqKey, api.testSavedGroqKey, "No saved Groq key.")}
+        >Test connection</button>
+        {#if groqTestResult.kind === "testing"}<span class="test-msg testing">Testing...</span>{/if}
+        {#if groqTestResult.kind === "ok"}<span class="test-msg ok">Key works - {groqTestResult.models.length} models</span>{/if}
+        {#if groqTestResult.kind === "error"}<span class="test-msg error">{groqTestResult.msg}</span>{/if}
       </div>
     </div>
 
-    <div class="test-block">
-      <button class="btn-secondary" onclick={testGemini}>Test connection</button>
-      {#if geminiTestResult.kind === "testing"}
-        <span class="test-msg testing">Testing…</span>
-      {:else if geminiTestResult.kind === "ok"}
-        <span class="test-msg ok">✓ Key works — {geminiTestResult.models.length} models accessible</span>
-      {:else if geminiTestResult.kind === "error"}
-        <span class="test-msg error">✗ {geminiTestResult.msg}</span>
-      {/if}
+    <div class="provider-card">
+      <div class="provider-head">
+        <div>
+          <div class="provider-name">OpenAI</div>
+          <div class="provider-meta">GPT transcription and cleanup</div>
+        </div>
+        <a class="link-out" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get key</a>
+      </div>
+
+      <div class="key-row">
+        <label for="openai-stt-key">STT key</label>
+        <div class="input-row">
+          <input id="openai-stt-key" type="password" placeholder={secretCheck.openai_stt ? "saved" : "sk-..."} bind:value={openaiStt} />
+          <button class="btn-primary" onclick={() => saveKey("openai_stt", openaiStt, () => (openaiStt = ""), "OpenAI STT")} disabled={saving}>Save</button>
+          {#if secretCheck.openai_stt}<button class="btn-danger" onclick={() => deleteKey("openai_stt")}>Delete</button>{/if}
+        </div>
+      </div>
+
+      <div class="key-row">
+        <label for="openai-cleanup-key">Cleanup key</label>
+        <div class="input-row">
+          <input id="openai-cleanup-key" type="password" placeholder={secretCheck.openai_llm ? "saved" : "sk-... (or reuse STT)"} bind:value={openaiLlm} />
+          <button class="btn-primary" onclick={() => saveKey("openai_llm", openaiLlm, () => (openaiLlm = ""), "OpenAI cleanup")} disabled={saving}>Save</button>
+          {#if secretCheck.openai_llm}<button class="btn-danger" onclick={() => deleteKey("openai_llm")}>Delete</button>{/if}
+        </div>
+      </div>
+
+      <div class="test-block">
+        <button
+          class="btn-secondary"
+          onclick={() => runTest(openaiStt || openaiLlm, secretCheck.openai_stt || secretCheck.openai_llm, (r) => (openaiTestResult = r), api.testOpenAiKey, api.testSavedOpenAiKey, "No saved OpenAI key.")}
+        >Test connection</button>
+        {#if openaiTestResult.kind === "testing"}<span class="test-msg testing">Testing...</span>{/if}
+        {#if openaiTestResult.kind === "ok"}<span class="test-msg ok">Key works - {openaiTestResult.models.length} models</span>{/if}
+        {#if openaiTestResult.kind === "error"}<span class="test-msg error">{openaiTestResult.msg}</span>{/if}
+      </div>
+    </div>
+
+    <div class="provider-card">
+      <div class="provider-head">
+        <div>
+          <div class="provider-name">Deepgram</div>
+          <div class="provider-meta">Nova transcription</div>
+        </div>
+        <a class="link-out" href="https://console.deepgram.com/" target="_blank" rel="noopener">Get key</a>
+      </div>
+      <div class="key-row">
+        <label for="deepgram-stt-key">STT key</label>
+        <div class="input-row">
+          <input id="deepgram-stt-key" type="password" placeholder={secretCheck.deepgram_stt ? "saved" : "Deepgram token"} bind:value={deepgramKey} />
+          <button class="btn-primary" onclick={() => saveKey("deepgram_stt", deepgramKey, () => (deepgramKey = ""), "Deepgram")} disabled={saving}>Save</button>
+          {#if secretCheck.deepgram_stt}<button class="btn-danger" onclick={() => deleteKey("deepgram_stt")}>Delete</button>{/if}
+        </div>
+      </div>
+      <div class="test-block">
+        <button
+          class="btn-secondary"
+          onclick={() => runTest(deepgramKey, secretCheck.deepgram_stt, (r) => (deepgramTestResult = r), api.testDeepgramKey, api.testSavedDeepgramKey, "No saved Deepgram key.")}
+        >Test connection</button>
+        {#if deepgramTestResult.kind === "testing"}<span class="test-msg testing">Testing...</span>{/if}
+        {#if deepgramTestResult.kind === "ok"}<span class="test-msg ok">Key works</span>{/if}
+        {#if deepgramTestResult.kind === "error"}<span class="test-msg error">{deepgramTestResult.msg}</span>{/if}
+      </div>
+    </div>
+
+    <div class="provider-card">
+      <div class="provider-head">
+        <div>
+          <div class="provider-name">ElevenLabs</div>
+          <div class="provider-meta">Scribe transcription</div>
+        </div>
+        <a class="link-out" href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener">Get key</a>
+      </div>
+      <div class="key-row">
+        <label for="elevenlabs-stt-key">STT key</label>
+        <div class="input-row">
+          <input id="elevenlabs-stt-key" type="password" placeholder={secretCheck.elevenlabs_stt ? "saved" : "xi-api-key"} bind:value={elevenlabsKey} />
+          <button class="btn-primary" onclick={() => saveKey("elevenlabs_stt", elevenlabsKey, () => (elevenlabsKey = ""), "ElevenLabs")} disabled={saving}>Save</button>
+          {#if secretCheck.elevenlabs_stt}<button class="btn-danger" onclick={() => deleteKey("elevenlabs_stt")}>Delete</button>{/if}
+        </div>
+      </div>
+      <div class="test-block">
+        <button
+          class="btn-secondary"
+          onclick={() => runTest(elevenlabsKey, secretCheck.elevenlabs_stt, (r) => (elevenlabsTestResult = r), api.testElevenLabsKey, api.testSavedElevenLabsKey, "No saved ElevenLabs key.")}
+        >Test connection</button>
+        {#if elevenlabsTestResult.kind === "testing"}<span class="test-msg testing">Testing...</span>{/if}
+        {#if elevenlabsTestResult.kind === "ok"}<span class="test-msg ok">Key works</span>{/if}
+        {#if elevenlabsTestResult.kind === "error"}<span class="test-msg error">{elevenlabsTestResult.msg}</span>{/if}
+      </div>
+    </div>
+
+    <div class="provider-card">
+      <div class="provider-head">
+        <div>
+          <div class="provider-name">Google Gemini</div>
+          <div class="provider-meta">Cleanup and drafting</div>
+        </div>
+        <a class="link-out" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get key</a>
+      </div>
+      <div class="key-row">
+        <label for="gemini-api-key">API key</label>
+        <div class="input-row">
+          <input id="gemini-api-key" type="password" placeholder={secretCheck.gemini ? "saved" : "AIza..."} bind:value={geminiKey} />
+          <button class="btn-primary" onclick={() => saveKey("gemini_llm", geminiKey, () => (geminiKey = ""), "Gemini")} disabled={saving}>Save</button>
+          {#if secretCheck.gemini}<button class="btn-danger" onclick={() => deleteKey("gemini_llm")}>Delete</button>{/if}
+        </div>
+      </div>
+      <div class="test-block">
+        <button
+          class="btn-secondary"
+          onclick={() => runTest(geminiKey, Boolean(secretCheck.gemini), (r) => (geminiTestResult = r), api.testGeminiKey, api.testSavedGeminiKey, "No saved Gemini key.")}
+        >Test connection</button>
+        {#if geminiTestResult.kind === "testing"}<span class="test-msg testing">Testing...</span>{/if}
+        {#if geminiTestResult.kind === "ok"}<span class="test-msg ok">Key works - {geminiTestResult.models.length} models</span>{/if}
+        {#if geminiTestResult.kind === "error"}<span class="test-msg error">{geminiTestResult.msg}</span>{/if}
+      </div>
     </div>
   </div>
 
   <div class="settings-card">
     <h3>Speech-to-text</h3>
-    <p class="lede">
-      Which service transcribes your audio. Groq Whisper is wired in;
-      others below are planned and selectable once their backend lands.
-    </p>
     <div class="provider-model-row">
       <div class="field-block field-half">
-        <label>Service</label>
-        <select
-          value={settings.s.stt_provider}
-          onchange={(e) => settings.set("stt_provider", (e.currentTarget as HTMLSelectElement).value as any)}
-        >
-          <option value="groq">Groq Whisper</option>
-          <option value="sarvam" disabled>Sarvam Saaras (Hindi / Indic — coming soon)</option>
-          <option value="deepgram" disabled>Deepgram Nova-3 (coming soon)</option>
-          <option value="assemblyai" disabled>AssemblyAI (coming soon)</option>
-          <option value="gemini-stt" disabled>Gemini 2.5 Flash multimodal (coming soon)</option>
+        <label for="stt-provider">Service</label>
+        <select id="stt-provider" value={settings.s.stt_provider} onchange={(e) => changeSttProvider((e.currentTarget as HTMLSelectElement).value)}>
+          {#each Object.keys(STT_MODELS) as provider}
+            <option value={provider} disabled={!sttReady(provider)}>
+              {providerLabel(provider)} {sttReady(provider) ? "" : "(add key first)"}
+            </option>
+          {/each}
         </select>
       </div>
       <div class="field-block field-half">
-        <label>Model</label>
-        <select
-          value={settings.s.stt_model}
-          onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}
-        >
-          {#each STT_MODELS as m (m.id)}
-            <option value={m.id}>{m.label} — {m.quality}</option>
+        <label for="stt-model">Model</label>
+        <select id="stt-model" value={settings.s.stt_model} onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}>
+          {#each sttModelsFor(settings.s.stt_provider) as m (m.id)}
+            <option value={m.id}>{m.label} - {m.quality}</option>
           {/each}
         </select>
       </div>
     </div>
 
     <div class="field-block">
-      <label>Language hint <span class="hint-inline">(blank = auto-detect, recommended)</span></label>
+      <label for="language-hint">Language hint <span class="hint-inline">(blank = auto-detect)</span></label>
       <input
+        id="language-hint"
         type="text"
         placeholder="auto"
         value={settings.s.language_hint ?? ""}
@@ -364,43 +437,28 @@
           settings.set("language_hint", v.length ? v : null);
         }}
       />
-      <p class="hint">ISO codes (e.g. <code>en</code>, <code>hi</code>). Leave blank if you code-switch.</p>
+      <p class="hint">Use ISO codes like <code>en</code> or <code>hi</code>. Leave blank for code-switching.</p>
     </div>
   </div>
 
   <div class="settings-card">
     <h3>LLM cleanup</h3>
-    <p class="lede">
-      Used by F9 (and F8 if you've enabled cleanup for it). Same model handles all modes;
-      only the prompt changes per mode. Saved keys persist when you switch providers.
-    </p>
     <div class="provider-model-row">
       <div class="field-block field-half">
-        <label>Service</label>
-        <select
-          value={settings.s.llm_provider}
-          onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}
-        >
-          <option value="groq" disabled={!secretCheck.llm && !secretCheck.stt}>
-            Groq {(!secretCheck.llm && !secretCheck.stt) ? "(add key first)" : ""}
-          </option>
-          <option value="gemini" disabled={!secretCheck.gemini}>
-            Google Gemini {secretCheck.gemini ? "" : "(add key first)"}
-          </option>
-          <option value="anthropic" disabled>Anthropic Claude (coming soon)</option>
-          <option value="openai" disabled>OpenAI GPT (coming soon)</option>
-          <option value="sarvam-m" disabled>Sarvam-M (Indic — coming soon)</option>
-          <option value="openrouter" disabled>OpenRouter aggregator (coming soon)</option>
+        <label for="llm-provider">Service</label>
+        <select id="llm-provider" value={settings.s.llm_provider} onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}>
+          {#each Object.keys(LLM_MODELS) as provider}
+            <option value={provider} disabled={!llmReady(provider)}>
+              {providerLabel(provider)} {llmReady(provider) ? "" : "(add key first)"}
+            </option>
+          {/each}
         </select>
       </div>
       <div class="field-block field-half">
-        <label>Model</label>
-        <select
-          value={settings.s.llm_model}
-          onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}
-        >
-          {#each modelsForProvider(settings.s.llm_provider) as m (m.id)}
-            <option value={m.id}>{m.label} — {m.quality}</option>
+        <label for="llm-model">Model</label>
+        <select id="llm-model" value={settings.s.llm_model} onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}>
+          {#each llmModelsFor(settings.s.llm_provider) as m (m.id)}
+            <option value={m.id}>{m.label} - {m.quality}</option>
           {/each}
         </select>
       </div>
@@ -408,58 +466,46 @@
   </div>
 
   <p class="tip">
-    Per-mode behaviour (cleanup toggle + custom system prompt) lives in
-    <strong>Settings → Modes</strong>. Hotkey bindings live in
-    <strong>Settings → Dictation</strong>.
+    Per-mode cleanup toggles and prompts live in <strong>Settings -> Modes</strong>.
+    Hotkey bindings live in <strong>Settings -> Dictation</strong>.
   </p>
 
-  <!-- ── Storage diagnostic ───────────────────────────────────────────── -->
   {#if diag}
     <div class="diag-card">
       <div class="diag-head">
         <h3>Key storage status</h3>
         <button class="btn-link" onclick={refreshDiagnostic}>Refresh</button>
       </div>
-      <p class="lede">
-        Where each saved key is currently stored. Keyring is preferred (encrypted by
-        the OS — Windows Credential Manager, macOS Keychain). If the keyring isn't
-        reliable on your machine, wispr-fox automatically falls back to a file at
-        the path below — your keys still work, just stored in plaintext under your
-        user profile.
-      </p>
       <ul class="diag-list">
-        <li>
-          <span class="diag-label">Groq STT</span>
-          <span class="diag-loc {locationClass(diag.stt)}">{locationLabel(diag.stt)}</span>
-        </li>
-        <li>
-          <span class="diag-label">Groq LLM</span>
-          <span class="diag-loc {locationClass(diag.llm)}">{locationLabel(diag.llm)}</span>
-        </li>
-        <li>
-          <span class="diag-label">Gemini</span>
-          <span class="diag-loc {locationClass(diag.gemini)}">{locationLabel(diag.gemini)}</span>
-        </li>
+        <li><span class="diag-label">Groq STT</span><span class="diag-loc {locationClass(diag.stt)}">{locationLabel(diag.stt)}</span></li>
+        <li><span class="diag-label">Groq cleanup</span><span class="diag-loc {locationClass(diag.llm)}">{locationLabel(diag.llm)}</span></li>
+        <li><span class="diag-label">OpenAI STT</span><span class="diag-loc {locationClass(diag.openai_stt)}">{locationLabel(diag.openai_stt)}</span></li>
+        <li><span class="diag-label">OpenAI cleanup</span><span class="diag-loc {locationClass(diag.openai_llm)}">{locationLabel(diag.openai_llm)}</span></li>
+        <li><span class="diag-label">Deepgram STT</span><span class="diag-loc {locationClass(diag.deepgram_stt)}">{locationLabel(diag.deepgram_stt)}</span></li>
+        <li><span class="diag-label">ElevenLabs STT</span><span class="diag-loc {locationClass(diag.elevenlabs_stt)}">{locationLabel(diag.elevenlabs_stt)}</span></li>
+        <li><span class="diag-label">Gemini cleanup</span><span class="diag-loc {locationClass(diag.gemini)}">{locationLabel(diag.gemini)}</span></li>
       </ul>
-      {#if !diag.keyring_works && (diag.stt !== "none" || diag.llm !== "none" || diag.gemini !== "none")}
+      {#if !diag.keyring_works && anyDiagSaved(diag)}
         <p class="diag-warn">
-          ⚠️ The OS keyring isn't accepting writes on this machine — your keys are
-          stored in the file fallback. They still work; it's just slightly less
-          secure than the keyring. Common causes: a corrupted Windows Credential
-          Manager entry (try deleting any old <code>wispr-fox</code> entries from
-          <code>Control Panel → Credential Manager</code> and saving again), or a
-          macOS app without keychain entitlement.
+          The OS keyring is not accepting verified writes, so at least one key is in file fallback.
+          The key still works, but keyring storage is preferred.
         </p>
       {/if}
-      <p class="diag-path">
-        File fallback location: <code>{diag.fallback_path}</code>
-        {diag.fallback_exists ? "(exists)" : "(empty)"}
-      </p>
+      <p class="diag-path">File fallback location: <code>{diag.fallback_path}</code> {diag.fallback_exists ? "(exists)" : "(empty)"}</p>
     </div>
   {/if}
 </section>
 
 <style>
+  .provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    gap: 16px;
+    max-width: 1040px;
+  }
+  .provider-card {
+    min-width: 0;
+  }
   .tip {
     background: var(--bg-subtle);
     border: 1px dashed var(--border);
@@ -471,7 +517,6 @@
     margin: 24px 0 0;
     max-width: 720px;
   }
-
   .diag-card {
     margin: 28px 0 0;
     padding: 16px 18px;
@@ -513,6 +558,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     padding: 6px 0;
     border-bottom: 1px dashed var(--border);
     font-size: 13px;
@@ -529,6 +575,7 @@
     padding: 3px 8px;
     border-radius: 999px;
     font-weight: 500;
+    white-space: nowrap;
   }
   .diag-loc.ok {
     background: rgba(76, 175, 80, 0.15);
@@ -551,12 +598,6 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--text);
-  }
-  .diag-warn code {
-    background: rgba(0, 0, 0, 0.07);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 11px;
   }
   .diag-path {
     margin: 6px 0 0;

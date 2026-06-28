@@ -50,6 +50,10 @@ pub enum SecretKey {
     GroqStt,
     GroqLlm,
     GeminiLlm,
+    OpenAiStt,
+    OpenAiLlm,
+    DeepgramStt,
+    ElevenLabsStt,
 }
 
 impl SecretKey {
@@ -58,6 +62,10 @@ impl SecretKey {
             SecretKey::GroqStt => "groq_stt_key",
             SecretKey::GroqLlm => "groq_llm_key",
             SecretKey::GeminiLlm => "gemini_llm_key",
+            SecretKey::OpenAiStt => "openai_stt_key",
+            SecretKey::OpenAiLlm => "openai_llm_key",
+            SecretKey::DeepgramStt => "deepgram_stt_key",
+            SecretKey::ElevenLabsStt => "elevenlabs_stt_key",
         }
     }
 }
@@ -202,7 +210,30 @@ pub fn get(key: SecretKey) -> Result<Option<String>> {
     if let Some(v) = keyring_get(key) {
         return Ok(Some(v));
     }
-    Ok(file_get(key))
+    let Some(v) = file_get(key) else {
+        return Ok(None);
+    };
+
+    // Migrate stale plaintext entries only after verified keyring readback.
+    // If this machine's keyring accepts writes but does not persist them, keep
+    // the file fallback so the saved key does not vanish on the next launch.
+    match keyring_set(key, &v) {
+        Ok(()) if keyring_get(key).as_deref() == Some(v.as_str()) => {
+            if let Err(e) = file_delete(key) {
+                tracing::warn!("couldn't clean migrated plaintext entry for {:?}: {e:#}", key);
+            }
+        }
+        Ok(()) => tracing::warn!(
+            "keyring migration write didn't persist for {:?}; keeping fallback file entry",
+            key
+        ),
+        Err(e) => tracing::debug!(
+            "keyring migration failed for {:?} ({e:#}); keeping fallback file entry",
+            key
+        ),
+    }
+
+    Ok(Some(v))
 }
 
 pub fn delete(key: SecretKey) -> Result<()> {
@@ -238,6 +269,10 @@ pub struct SecretsDiagnostic {
     pub stt: SecretLocation,
     pub llm: SecretLocation,
     pub gemini: SecretLocation,
+    pub openai_stt: SecretLocation,
+    pub openai_llm: SecretLocation,
+    pub deepgram_stt: SecretLocation,
+    pub elevenlabs_stt: SecretLocation,
     /// Whether the keyring backend appears to work on this machine at all.
     /// True if at least one secret could be read from the keyring.
     pub keyring_works: bool,
@@ -261,14 +296,30 @@ pub fn diagnostic() -> SecretsDiagnostic {
     let stt = location_of(SecretKey::GroqStt);
     let llm = location_of(SecretKey::GroqLlm);
     let gemini = location_of(SecretKey::GeminiLlm);
-    let keyring_works = matches!(stt, SecretLocation::Keyring)
-        || matches!(llm, SecretLocation::Keyring)
-        || matches!(gemini, SecretLocation::Keyring);
+    let openai_stt = location_of(SecretKey::OpenAiStt);
+    let openai_llm = location_of(SecretKey::OpenAiLlm);
+    let deepgram_stt = location_of(SecretKey::DeepgramStt);
+    let elevenlabs_stt = location_of(SecretKey::ElevenLabsStt);
+    let keyring_works = [
+        stt,
+        llm,
+        gemini,
+        openai_stt,
+        openai_llm,
+        deepgram_stt,
+        elevenlabs_stt,
+    ]
+    .iter()
+    .any(|loc| matches!(loc, SecretLocation::Keyring));
     let path = fallback_path();
     SecretsDiagnostic {
         stt,
         llm,
         gemini,
+        openai_stt,
+        openai_llm,
+        deepgram_stt,
+        elevenlabs_stt,
         keyring_works,
         fallback_exists: path.exists(),
         fallback_path: path.display().to_string(),

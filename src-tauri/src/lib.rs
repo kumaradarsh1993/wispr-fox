@@ -296,8 +296,14 @@ pub fn run() {
             commands::add_notification_sound,
             commands::test_groq_key,
             commands::test_gemini_key,
+            commands::test_openai_key,
+            commands::test_deepgram_key,
+            commands::test_elevenlabs_key,
             commands::test_saved_groq_key,
             commands::test_saved_gemini_key,
+            commands::test_saved_openai_key,
+            commands::test_saved_deepgram_key,
+            commands::test_saved_elevenlabs_key,
             commands::configure_cues,
         ])
         .build(tauri::generate_context!());
