@@ -60,6 +60,7 @@
     { id: "cat",         label: "Desk Cat" },
     { id: "cat-lab",     label: "Cat (lab)" },
     { id: "duo",         label: "Khaumani & Indy" },
+    { id: "duo-hd",      label: "Khaumani & Indy ✦" },
   ];
 
   async function pickSkin(s: Skin) {

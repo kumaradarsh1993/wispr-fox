@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Khaumani &amp; Indy ✦ — live preview</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+    padding: 40px 20px 60px;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #e9e2d4;
+    background:
+      radial-gradient(1200px 700px at 50% -10%, #3a4654 0%, #232a33 55%, #171b21 100%);
+    transition: background 280ms ease;
+  }
+  body.light {
+    color: #2b2218;
+    background:
+      radial-gradient(1200px 700px at 50% -10%, #f6efe0 0%, #e7dcc6 55%, #d8cab0 100%);
+  }
+  h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: 0.2px; }
+  .sub { font-size: 13px; opacity: 0.7; margin: -12px 0 0; text-align: center; max-width: 540px; line-height: 1.5; }
+  .frame {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 520px;
+    height: 360px;
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.05), rgba(0,0,0,0.12)),
+      repeating-conic-gradient(rgba(255,255,255,0.025) 0% 25%, transparent 0% 50%) 0 0 / 28px 28px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.35);
+  }
+  body.light .frame {
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06), 0 24px 60px rgba(120,90,50,0.18);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.35), rgba(120,90,50,0.06)),
+      repeating-conic-gradient(rgba(120,90,50,0.04) 0% 25%, transparent 0% 50%) 0 0 / 28px 28px;
+  }
+  .stage { transform: scale(var(--zoom, 1.9)); transform-origin: center; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
+  button {
+    font: inherit; font-size: 13px; cursor: pointer;
+    padding: 7px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.06); color: inherit;
+    transition: all 140ms ease;
+  }
+  body.light button { border-color: rgba(0,0,0,0.12); background: rgba(255,255,255,0.5); }
+  button:hover { transform: translateY(-1px); }
+  button.active { background: #ec7c34; border-color: #ec7c34; color: #fff; font-weight: 600; }
+  .row { display: flex; gap: 10px; align-items: center; font-size: 13px; opacity: 0.85; }
+  input[type=range] { accent-color: #ec7c34; }
+
+  /* ─────────────── duo-hd avatar styles (mirrors clippy/+page.svelte) ─────────────── */
+  .hd-skin { width: 200px; height: 130px; filter: drop-shadow(0 5px 9px rgba(80,60,30,0.2)); display: block; }
+  .hd-indy-thinkdots, .hd-sparkles { display: none; }
+  .hd-skin[data-state="thinking"] .hd-indy-thinkdots { display: block; }
+  .hd-skin[data-state="pasting"] .hd-sparkles { display: block; }
+
+  .hd-sunglow { animation: hd-sun-pulse 7s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .hd-mote-1 { animation: hd-mote-a 9s linear infinite; }
+  .hd-mote-2 { animation: hd-mote-b 11s linear infinite 1.5s; }
+  .hd-mote-3 { animation: hd-mote-a 13s linear infinite 3s; }
+  @keyframes hd-sun-pulse { 0%,100% { opacity: 0.92; } 50% { opacity: 1; } }
+  @keyframes hd-mote-a { 0% { transform: translate(0,0); opacity: 0; } 20% { opacity: 0.7; } 100% { transform: translate(-13px,22px); opacity: 0; } }
+  @keyframes hd-mote-b { 0% { transform: translate(0,0); opacity: 0; } 25% { opacity: 0.6; } 100% { transform: translate(10px,26px); opacity: 0; } }
+
+  .hd-khao-body { transform-origin: 74px 134px; animation: hd-khao-breathe 4.6s ease-in-out infinite; }
+  .hd-khao-tail { transform-origin: 34px 120px; animation: hd-khao-tail 8s ease-in-out infinite; }
+  .hd-khao-head { transform-origin: 79px 104px; animation: hd-khao-react 22s ease-in-out infinite; }
+  .hd-khao-ear-r { transform-origin: 96px 62px; animation: hd-khao-ear 22s ease-in-out infinite; }
+  .hd-khao-lids { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-khao-loveblink 22s ease-in-out infinite; }
+  @keyframes hd-khao-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.012,0.985) translateY(-0.5px); } }
+  @keyframes hd-khao-tail { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-3deg); } }
+  @keyframes hd-khao-react { 0%,57%,78%,100% { transform: rotate(0deg) translateY(0); } 61% { transform: rotate(5deg); } 70% { transform: rotate(6deg) translateY(-1px); } }
+  @keyframes hd-khao-ear { 0%,63%,69%,90%,95%,100% { transform: rotate(0deg); } 66% { transform: rotate(-15deg); } 67.5% { transform: rotate(5deg); } 92% { transform: rotate(-11deg); } 93.5% { transform: rotate(4deg); } }
+  @keyframes hd-khao-loveblink { 0%,64%,72%,100% { transform: scaleY(0.05); } 66.5%,69.5% { transform: scaleY(1); } }
+
+  .hd-indy-jumper { animation: hd-pounce 22s ease-in-out infinite; }
+  .hd-indy-squashbox { transform-origin: 168px 136px; animation: hd-squash 22s ease-in-out infinite; }
+  .hd-indy-castshadow { transform-box: fill-box; transform-origin: center; animation: hd-indy-shadow 22s ease-in-out infinite; }
+  .hd-indy-body { transform-origin: 168px 136px; animation: hd-indy-breathe 3.4s ease-in-out infinite; }
+  .hd-indy-head { transform-origin: 170px 94px; animation: hd-indy-head-idle 9s ease-in-out infinite; transition: transform 260ms cubic-bezier(0.34,1.4,0.64,1); }
+  .hd-indy-tail { transform-origin: 196px 122px; animation: hd-indy-tail 4s ease-in-out infinite; }
+  @keyframes hd-pounce {
+    0%,52% { transform: translate(0,0); }
+    55% { transform: translate(3px,4px); }
+    58% { transform: translate(-22px,-12px); }
+    61% { transform: translate(-44px,-7px); }
+    64% { transform: translate(-54px,2px); }
+    66%,76% { transform: translate(-54px,-1px); }
+    79% { transform: translate(-26px,-10px); }
+    82% { transform: translate(-2px,2px); }
+    84%,100% { transform: translate(0,0); }
+  }
+  @keyframes hd-squash {
+    0%,53%,67%,78%,84%,100% { transform: scale(1,1); }
+    55% { transform: scale(1.1,0.86); }
+    58% { transform: scale(0.9,1.16); }
+    61% { transform: scale(0.92,1.12); }
+    64% { transform: scale(1.12,0.84); }
+    79% { transform: scale(0.9,1.14); }
+    82% { transform: scale(1.1,0.88); }
+  }
+  @keyframes hd-indy-shadow {
+    0%,53%,67%,76%,84%,100% { transform: translateX(0) scale(1); }
+    58% { transform: translateX(-22px) scale(0.74); }
+    64% { transform: translateX(-54px) scale(0.92); }
+    66% { transform: translateX(-54px) scale(1); }
+    79% { transform: translateX(-26px) scale(0.8); }
+    82% { transform: translateX(-2px) scale(1); }
+  }
+  @keyframes hd-indy-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.014,0.984) translateY(-0.5px); } }
+  @keyframes hd-indy-head-idle { 0%,60%,82%,100% { transform: rotate(0deg); } 71% { transform: rotate(-7deg) translateY(-1px); } }
+  @keyframes hd-indy-tail { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-8deg); } }
+
+  .hd-skin[data-state="listening"] .hd-indy-jumper,
+  .hd-skin[data-state="listening"] .hd-indy-squashbox,
+  .hd-skin[data-state="listening"] .hd-indy-castshadow,
+  .hd-skin[data-state="listening"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="listening"] .hd-khao-head { animation: none; transform: translateY(-2px) rotate(-2deg); }
+  .hd-skin[data-state="listening"] .hd-khao-lids,
+  .hd-skin[data-state="thinking"] .hd-khao-lids,
+  .hd-skin[data-state="writing"] .hd-khao-lids,
+  .hd-skin[data-state="pasting"] .hd-khao-lids { animation: none; transform: scaleY(0.05); }
+  .hd-skin[data-state="listening"] .hd-khao-ear-l,
+  .hd-skin[data-state="listening"] .hd-khao-ear-r,
+  .hd-skin[data-state="listening"] .hd-indy-ear-l,
+  .hd-skin[data-state="listening"] .hd-indy-ear-r { transform-box: fill-box; transform-origin: 50% 100%; animation: hd-perk 0.4s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .hd-skin[data-state="listening"] .hd-indy-body { animation: hd-alert-bob 1.2s ease-in-out infinite; }
+  .hd-skin[data-state="listening"] .hd-indy-head { animation: hd-alert-head 1.4s ease-in-out infinite; }
+  .hd-skin[data-state="listening"] .hd-indy-tail { animation: hd-indy-tail 1.6s ease-in-out infinite; }
+  @keyframes hd-perk { 0% { transform: scaleY(0.82) translateY(2px); } 60% { transform: scaleY(1.1); } 100% { transform: scaleY(1); } }
+  @keyframes hd-alert-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+  @keyframes hd-alert-head { 0%,100% { transform: translateY(0) rotate(0deg); } 30% { transform: translateY(-3px) rotate(-2deg); } 70% { transform: translateY(-2px) rotate(2deg); } }
+
+  .hd-skin[data-state="thinking"] .hd-indy-jumper,
+  .hd-skin[data-state="thinking"] .hd-indy-squashbox,
+  .hd-skin[data-state="thinking"] .hd-indy-castshadow,
+  .hd-skin[data-state="thinking"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="thinking"] .hd-indy-head { animation: hd-think-tilt 2.2s ease-in-out infinite; }
+  .hd-skin[data-state="thinking"] .hd-khao-head { animation: none; transform: rotate(4deg); }
+  .hd-indy-thinkdots { animation: hd-dots-pop 420ms cubic-bezier(0.34,1.56,0.64,1) both; transform-origin: 200px 40px; }
+  @keyframes hd-think-tilt { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-7deg); } }
+  @keyframes hd-dots-pop { 0% { transform: scale(0); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+
+  .hd-skin[data-state="writing"] .hd-indy-jumper,
+  .hd-skin[data-state="writing"] .hd-indy-squashbox,
+  .hd-skin[data-state="writing"] .hd-indy-castshadow { animation: none; }
+  .hd-skin[data-state="writing"] .hd-indy-body { animation: hd-write-focus 0.6s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-paw-l { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-paw-tap 0.28s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-paw-r { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-paw-tap 0.28s ease-in-out infinite 0.14s; }
+  .hd-skin[data-state="writing"] .hd-indy-tail { animation: hd-indy-tail 0.85s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-head { animation: none; transform: rotate(-3deg) translateY(1px); }
+  .hd-skin[data-state="writing"] .hd-khao-head { animation: none; transform: rotate(7deg) translateY(1px); }
+  @keyframes hd-write-focus { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+  @keyframes hd-paw-tap { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+  .hd-skin[data-state="pasting"] .hd-indy-squashbox,
+  .hd-skin[data-state="pasting"] .hd-indy-castshadow,
+  .hd-skin[data-state="pasting"] .hd-khao-head,
+  .hd-skin[data-state="pasting"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="pasting"] .hd-indy-jumper { animation: hd-boop 0.62s ease-out both; }
+  .hd-skin[data-state="pasting"] .hd-khao-body { animation: hd-paste-hop 0.55s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .hd-skin[data-state="pasting"] .hd-indy-body { animation: hd-paste-hop 0.55s cubic-bezier(0.34,1.56,0.64,1) both 0.06s; }
+  .hd-sparkles { animation: hd-sparkle 900ms ease-out 150ms both; }
+  @keyframes hd-boop { 0% { transform: translate(0,0); } 45% { transform: translate(-30px,1px); } 100% { transform: translate(0,0); } }
+  @keyframes hd-paste-hop { 0% { transform: translateY(0) scale(1); } 40% { transform: translateY(-8px) scale(1.04,0.96); } 100% { transform: translateY(0) scale(1); } }
+  @keyframes hd-sparkle { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(-8px) scale(1.1); opacity: 0; } }
+
+  /* simple blink for the preview (the app drives this from real pipeline state) */
+  .blink .hd-khao-eyes, .blink .hd-indy-eyes { animation: hd-blink 180ms ease-in-out; }
+  @keyframes hd-blink { 50% { transform: scaleY(0.1); } }
+  .hd-khao-eyes { transform-box: fill-box; transform-origin: center; }
+  .hd-indy-eyes { transform-box: fill-box; transform-origin: center; }
+</style>
+</head>
+<body class="">
+  <h1>Khaumani &amp; Indy ✦ — the remastered duo</h1>
+  <p class="sub">A fresh, higher-fidelity take driven by a single 22-second scene-director timeline — the cats rest, then Indy pounces over to Khaumani, she answers with a slow blink, he hops back and grooms. Click a state to see the pipeline reactions.</p>
+
+  <div class="frame">
+    <div class="stage">
+      <svg class="hd-skin" data-state="idle" viewBox="0 0 240 156" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <radialGradient id="hd-sun" cx="0.46" cy="0.4" r="0.62">
+            <stop offset="0%" stop-color="#ffe6b6" stop-opacity="0.62"/>
+            <stop offset="58%" stop-color="#ffd99c" stop-opacity="0.18"/>
+            <stop offset="100%" stop-color="#ffd99c" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="hd-ledge" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ecca94"/><stop offset="20%" stop-color="#d3a96d"/><stop offset="100%" stop-color="#a87c47"/>
+          </linearGradient>
+          <linearGradient id="hd-cushion" x1="0.5" y1="0" x2="0.5" y2="1">
+            <stop offset="0%" stop-color="#e3b3a4"/><stop offset="100%" stop-color="#c98e7d"/>
+          </linearGradient>
+          <linearGradient id="hd-khao-fur" x1="0.5" y1="0" x2="0.5" y2="1">
+            <stop offset="0%" stop-color="#ffffff"/><stop offset="64%" stop-color="#f4efe6"/><stop offset="100%" stop-color="#e2dccb"/>
+          </linearGradient>
+          <radialGradient id="hd-khao-belly" cx="0.5" cy="0.38" r="0.62">
+            <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="hd-indy-fur" x1="0.38" y1="0" x2="0.62" y2="1">
+            <stop offset="0%" stop-color="#f9b96e"/><stop offset="58%" stop-color="#ef9846"/><stop offset="100%" stop-color="#d87d2f"/>
+          </linearGradient>
+          <radialGradient id="hd-eye-green" cx="0.5" cy="0.38" r="0.62">
+            <stop offset="0%" stop-color="#c4e493"/><stop offset="52%" stop-color="#8eb95f"/><stop offset="100%" stop-color="#5d8a3c"/>
+          </radialGradient>
+          <radialGradient id="hd-eye-amber" cx="0.5" cy="0.38" r="0.62">
+            <stop offset="0%" stop-color="#ffd57e"/><stop offset="52%" stop-color="#dc9c40"/><stop offset="100%" stop-color="#a4661f"/>
+          </radialGradient>
+          <filter id="hd-soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6"/></filter>
+        </defs>
+
+        <ellipse class="hd-sunglow" cx="110" cy="62" rx="120" ry="78" fill="url(#hd-sun)"/>
+        <g class="hd-motes" fill="#fff4d8">
+          <circle class="hd-mote-1" cx="150" cy="40" r="1.5" opacity="0.7"/>
+          <circle class="hd-mote-2" cx="92" cy="30" r="1.1" opacity="0.6"/>
+          <circle class="hd-mote-3" cx="186" cy="54" r="1.3" opacity="0.5"/>
+        </g>
+
+        <g class="hd-ledge">
+          <rect x="0" y="130" width="240" height="22" rx="4" fill="url(#hd-ledge)"/>
+          <rect x="0" y="130" width="240" height="3.2" rx="1.6" fill="#f3dcae" opacity="0.85"/>
+          <rect x="0" y="139" width="240" height="1.2" fill="#8c6536" opacity="0.4"/>
+        </g>
+        <g class="hd-cushion">
+          <ellipse cx="74" cy="131" rx="52" ry="9" fill="url(#hd-cushion)"/>
+          <ellipse cx="74" cy="129.5" rx="48" ry="6.4" fill="#e9c3b6" opacity="0.6"/>
+          <path d="M 30 131 Q 74 124 118 131" fill="none" stroke="#b87e6d" stroke-width="0.8" opacity="0.5"/>
+        </g>
+        <ellipse cx="76" cy="135" rx="48" ry="6.6" fill="#5a4326" opacity="0.18" filter="url(#hd-soft)"/>
+        <ellipse class="hd-indy-castshadow" cx="168" cy="137" rx="28" ry="5.4" fill="#5a4326" opacity="0.2" filter="url(#hd-soft)"/>
+
+        <g class="hd-khao">
+          <g class="hd-khao-tail">
+            <path d="M 116 120 Q 92 140 52 134 Q 36 131 32 122" fill="none" stroke="#ece6d8" stroke-width="9" stroke-linecap="round"/>
+            <path d="M 116 120 Q 92 140 52 134 Q 36 131 32 122" fill="none" stroke="#d7d0bf" stroke-width="10.4" stroke-linecap="round" opacity="0.22"/>
+            <path d="M 36 122 Q 33 118 34 113" fill="none" stroke="#cfc8b6" stroke-width="3.4" stroke-linecap="round" opacity="0.5"/>
+          </g>
+          <g class="hd-khao-body">
+            <ellipse cx="74" cy="112" rx="46" ry="24" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="1"/>
+            <path d="M 30 106 Q 40 92 74 90 Q 108 92 118 106" fill="none" stroke="#ded8c8" stroke-width="2.4" opacity="0.6"/>
+            <ellipse cx="70" cy="116" rx="30" ry="13" fill="url(#hd-khao-belly)"/>
+            <g fill="#ffffff" opacity="0.9">
+              <path d="M 58 128 l 3 6 l 3 -6 z"/><path d="M 66 129 l 2.6 5.4 l 2.6 -5.4 z"/>
+              <path d="M 74 129 l 2.6 5.4 l 2.6 -5.4 z"/><path d="M 82 128 l 3 6 l 3 -6 z"/>
+            </g>
+            <ellipse cx="64" cy="132" rx="8" ry="4" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+            <ellipse cx="84" cy="132" rx="8" ry="4" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+            <path d="M 64 130.5 l 0 3 M 67 130.5 l 0 3" stroke="#e7e1d2" stroke-width="0.5"/>
+            <path d="M 84 130.5 l 0 3 M 87 130.5 l 0 3" stroke="#e7e1d2" stroke-width="0.5"/>
+          </g>
+          <g class="hd-khao-head">
+            <g class="hd-khao-ear-l">
+              <path d="M 64 70 L 58 44 L 79 62 Z" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="0.9"/>
+              <path d="M 65 66 L 61 50 L 76 62 Z" fill="#f3c9c5" opacity="0.85"/>
+            </g>
+            <g class="hd-khao-ear-r">
+              <path d="M 94 68 L 100 42 L 79 60 Z" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="0.9"/>
+              <path d="M 93 64 L 97 48 L 82 60 Z" fill="#f3c9c5" opacity="0.85"/>
+            </g>
+            <circle cx="79" cy="84" r="22" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="1"/>
+            <g fill="#ffffff" opacity="0.8">
+              <path d="M 58 86 l -5 -2.4 l 4.4 -3 z"/><path d="M 59 92 l -5 0.6 l 4 -3.6 z"/>
+              <path d="M 100 86 l 5 -2.4 l -4.4 -3 z"/><path d="M 99 92 l 5 0.6 l -4 -3.6 z"/>
+            </g>
+            <ellipse cx="71" cy="78" rx="9" ry="6" fill="#ffffff" opacity="0.7"/>
+            <g class="hd-khao-eyes">
+              <ellipse cx="70" cy="84" rx="4.2" ry="3" fill="url(#hd-eye-green)" stroke="#4d7030" stroke-width="0.6"/>
+              <ellipse cx="70" cy="84" rx="0.85" ry="2.76" fill="#241a10"/>
+              <circle cx="68.4" cy="82" r="1.1" fill="#ffffff" opacity="0.95"/>
+              <circle cx="71.4" cy="85.4" r="0.55" fill="#ffffff" opacity="0.7"/>
+              <ellipse cx="88" cy="84" rx="4.2" ry="3" fill="url(#hd-eye-green)" stroke="#4d7030" stroke-width="0.6"/>
+              <ellipse cx="88" cy="84" rx="0.85" ry="2.76" fill="#241a10"/>
+              <circle cx="86.4" cy="82" r="1.1" fill="#ffffff" opacity="0.95"/>
+              <circle cx="89.4" cy="85.4" r="0.55" fill="#ffffff" opacity="0.7"/>
+            </g>
+            <g class="hd-khao-lids" fill="url(#hd-khao-fur)">
+              <rect x="65.4" y="78.4" width="9.2" height="6" rx="3"/>
+              <rect x="83.4" y="78.4" width="9.2" height="6" rx="3"/>
+            </g>
+            <path d="M 76.6 90 L 79 92.6 L 81.4 90 Z" fill="#efa6a6" stroke="#d68a8a" stroke-width="0.4"/>
+            <path d="M 79 92.6 L 79 94.6" fill="none" stroke="#cbc4b3" stroke-width="0.7" stroke-linecap="round"/>
+            <path d="M 74.8 95.4 Q 79 98 83.2 95.4" fill="none" stroke="#cbc4b3" stroke-width="0.7" stroke-linecap="round"/>
+            <g stroke="#d2cbba" stroke-width="0.6" stroke-linecap="round" fill="none">
+              <path d="M 56 87 Q 64 87.6 71 89"/><path d="M 55 92 Q 64 92 71 92.4"/>
+              <path d="M 87 89 Q 94 87.6 102 87"/><path d="M 87 92.4 Q 94 92 103 92"/>
+            </g>
+          </g>
+        </g>
+
+        <g class="hd-indy-jumper">
+          <g class="hd-indy-squashbox">
+            <g class="hd-indy-tail">
+              <path d="M 190 122 C 210 116 216 96 206 80" fill="none" stroke="#e8913f" stroke-width="7" stroke-linecap="round"/>
+              <g stroke="#c9701f" stroke-width="2" stroke-linecap="round" opacity="0.75">
+                <path d="M 197 118 q 3 -1 5 -3"/><path d="M 203 108 q 3 -1 4 -3.4"/><path d="M 206 96 q 3 -0.6 3.6 -3"/>
+              </g>
+              <path d="M 206 80 C 204 76 200 75 197 78" fill="none" stroke="#cf7427" stroke-width="6.4" stroke-linecap="round"/>
+            </g>
+            <g class="hd-indy-body">
+              <ellipse cx="168" cy="108" rx="27" ry="28" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="1"/>
+              <g fill="none" stroke="#c9701f" stroke-width="2.6" stroke-linecap="round" opacity="0.8">
+                <path d="M 186 90 Q 192 99 189 110"/><path d="M 190 104 Q 194 112 190 121"/>
+                <path d="M 147 94 Q 142 102 146 112"/><path d="M 150 110 Q 146 118 150 124"/>
+              </g>
+              <ellipse cx="161" cy="116" rx="15" ry="16" fill="#fdf3e2" opacity="0.96"/>
+              <g fill="#fdf3e2" opacity="0.95">
+                <path d="M 154 130 l 3 6 l 3 -6 z"/><path d="M 162 131 l 2.6 5.6 l 2.6 -5.6 z"/><path d="M 170 130 l 3 6 l 3 -6 z"/>
+              </g>
+              <g class="hd-indy-paw-l">
+                <rect x="153" y="116" width="8" height="20" rx="4" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+                <ellipse cx="157" cy="136" rx="6" ry="3.6" fill="#fdf3e2" stroke="#c96f28" stroke-width="0.7"/>
+              </g>
+              <g class="hd-indy-paw-r">
+                <rect x="167" y="116" width="8" height="20" rx="4" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+                <ellipse cx="171" cy="136" rx="6" ry="3.6" fill="#fdf3e2" stroke="#c96f28" stroke-width="0.7"/>
+              </g>
+            </g>
+            <g class="hd-indy-head">
+              <g class="hd-indy-ear-l">
+                <path d="M 150 56 L 143 28 L 167 48 Z" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="0.9"/>
+                <path d="M 151 52 L 147 34 L 162 48 Z" fill="#eeb3a1" opacity="0.9"/>
+              </g>
+              <g class="hd-indy-ear-r">
+                <path d="M 190 56 L 197 28 L 173 48 Z" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="0.9"/>
+                <path d="M 189 52 L 193 34 L 178 48 Z" fill="#eeb3a1" opacity="0.9"/>
+              </g>
+              <circle cx="170" cy="74" r="23" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="1"/>
+              <g fill="none" stroke="#c9701f" stroke-width="2.1" stroke-linecap="round" opacity="0.88">
+                <path d="M 162 54 L 161 63"/><path d="M 170 52 L 170 62"/><path d="M 178 54 L 179 63"/>
+              </g>
+              <g fill="none" stroke="#c9701f" stroke-width="1.8" stroke-linecap="round" opacity="0.7">
+                <path d="M 150 74 q -4 1 -6 3"/><path d="M 190 74 q 4 1 6 3"/>
+              </g>
+              <ellipse cx="170" cy="84" rx="13" ry="9" fill="#fdf3e2"/>
+              <g class="hd-indy-eyes">
+                <ellipse cx="160" cy="72" rx="4.6" ry="5.2" fill="url(#hd-eye-amber)" stroke="#7a4d1c" stroke-width="0.7"/>
+                <circle cx="160" cy="72.4" r="2.2" fill="#1c1208"/>
+                <circle cx="158.4" cy="70" r="1.3" fill="#ffffff" opacity="0.95"/>
+                <circle cx="161.6" cy="74" r="0.6" fill="#ffffff" opacity="0.7"/>
+                <ellipse cx="180" cy="72" rx="4.6" ry="5.2" fill="url(#hd-eye-amber)" stroke="#7a4d1c" stroke-width="0.7"/>
+                <circle cx="180" cy="72.4" r="2.2" fill="#1c1208"/>
+                <circle cx="178.4" cy="70" r="1.3" fill="#ffffff" opacity="0.95"/>
+                <circle cx="181.6" cy="74" r="0.6" fill="#ffffff" opacity="0.7"/>
+              </g>
+              <path d="M 167.8 80 L 170 82.8 L 172.2 80 Z" fill="#e58f86" stroke="#c97168" stroke-width="0.4"/>
+              <path d="M 170 82.8 L 170 85" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+              <path d="M 166 86 Q 170 88.6 174 86" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+              <g stroke="#f0e2cc" stroke-width="0.7" stroke-linecap="round" fill="none">
+                <path d="M 146 78 Q 154 78.6 160 80"/><path d="M 145 83 Q 154 83 160 83.4"/>
+                <path d="M 180 80 Q 187 78.6 194 78"/><path d="M 180 83.4 Q 187 83 195 83"/>
+              </g>
+              <g class="hd-indy-thinkdots" fill="#fff7e6" stroke="#d8a85a" stroke-width="0.7">
+                <circle cx="194" cy="50" r="2.2"/><circle cx="202" cy="40" r="3.1"/><circle cx="212" cy="28" r="4.2"/>
+              </g>
+            </g>
+          </g>
+        </g>
+
+        <g class="hd-sparkles" fill="#eec25a">
+          <path d="M 120 70 L 122 75 L 127 77 L 122 79 L 120 84 L 118 79 L 113 77 L 118 75 Z"/>
+          <path d="M 134 88 L 135.2 91 L 138.2 92.2 L 135.2 93.4 L 134 96.4 L 132.8 93.4 L 129.8 92.2 L 132.8 91 Z"/>
+          <path d="M 108 86 L 109 88.4 L 111.4 89.4 L 109 90.4 L 108 92.8 L 107 90.4 L 104.6 89.4 L 107 88.4 Z"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="controls" id="states">
+    <button data-st="idle" class="active">Idle (scene loop)</button>
+    <button data-st="listening">Listening</button>
+    <button data-st="thinking">Thinking</button>
+    <button data-st="writing">Writing</button>
+    <button data-st="pasting">Pasting</button>
+  </div>
+  <div class="controls">
+    <div class="row">Zoom <input id="zoom" type="range" min="1" max="3" step="0.1" value="1.9"></div>
+    <button id="bg">Toggle light desktop</button>
+  </div>
+
+<script>
+  const svg = document.querySelector('.hd-skin');
+  const stage = document.querySelector('.stage');
+  // state buttons
+  document.getElementById('states').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll('#states button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    svg.setAttribute('data-state', b.dataset.st);
+  });
+  // zoom
+  document.getElementById('zoom').addEventListener('input', (e) => {
+    stage.style.setProperty('--zoom', e.target.value);
+  });
+  // light/dark desktop
+  document.getElementById('bg').addEventListener('click', () => document.body.classList.toggle('light'));
+  // ambient blink while idle/hovering states
+  setInterval(() => {
+    const st = svg.getAttribute('data-state');
+    if (st === 'idle' || st === 'listening' || st === 'thinking') {
+      svg.classList.add('blink');
+      setTimeout(() => svg.classList.remove('blink'), 200);
+    }
+  }, 3600);
+</script>
+</body>
+</html>

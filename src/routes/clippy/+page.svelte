@@ -235,6 +235,7 @@
     cat:           { w: 150, h: 168, head: 128 },
     "cat-lab":     { w: 150, h: 168, head: 128 },
     duo:           { w: 198, h: 117, head: 107 }, // two cats side by side — wide, deliberately LOW
+    "duo-hd":      { w: 200, h: 130, head: 120 }, // remastered duo — a touch taller for the pounce headroom
     off:           { w: 116, h: 116, head: 110 },
   };
   const SIDE_PAD = 8; // L/R breathing room around the character
@@ -948,6 +949,18 @@
   );
   let eyeShiftY = $derived(hovering ? hoverShiftY : 0);
 
+  // ── duo-hd eye geometry ─────────────────────────────────────────────
+  // Eye openness + pupil width for the remastered duo, hoisted out of the
+  // markup because Svelte's {@const} can't live directly inside an SVG <g>.
+  // Khaumani: heavy-lidded + slit pupils when calm, rounder/wider when
+  // engaged. Indy (kitten): big round eyes that dilate when excited.
+  let hdKhOpen = $derived(blinkOpen ? (displayState === "idle" && !hovering ? 3 : 5) : 0.5);
+  let hdKhPup = $derived(displayState === "idle" || displayState === "writing" ? 0.85 : 1.7);
+  let hdInOpen = $derived(blinkOpen ? 5.2 : 0.6);
+  let hdInPup = $derived(
+    displayState === "listening" || displayState === "pasting" || hovering ? 2.9 : 2.2,
+  );
+
   // Labels driving the bubble text. The themed-per-skin map collapsed back
   // to a single set when the "chippy" skin was retired — kept as a derived
   // so future skin-specific overrides have a single place to land.
@@ -1053,7 +1066,7 @@
   let _quipHideTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const idleHover = hovering && displayState === "idle";
-    const pool = skin === "duo" ? IDLE_QUIPS_DUO : IDLE_QUIPS;
+    const pool = skin === "duo" || skin === "duo-hd" ? IDLE_QUIPS_DUO : IDLE_QUIPS;
     if (idleHover) {
       if (!_quipShowTimer && !hoverQuip) {
         _quipShowTimer = setTimeout(() => {
@@ -1141,7 +1154,7 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "duo" || skin === "real-clippy"}
+  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "duo" || skin === "duo-hd" || skin === "real-clippy"}
 
     <!-- State-driven bubble — our own consistent dialog box, shown for ALL
          skins including real Clippy (user asked for the same dialog box on
@@ -1906,6 +1919,316 @@
         <g class="phew-drop">
           <path d="M 196 44 Q 194 38 196 32 Q 198 38 196 44 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
           <text x="193" y="28" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
+        </g>
+      {/if}
+    </svg>
+  {:else if skin === "duo-hd"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         KHAUMANI & INDY ✦ — the REMASTERED duo. A from-scratch, higher-
+         fidelity take on the user's two real cats, driven by a single SCENE-
+         DIRECTOR timeline (one 22s master clock) so the cats genuinely move
+         around instead of wiggling in place:
+
+           idle/scene loop (22s):
+             ~0–52%   both rest — Khaumani loafs & breathes, Indy sits and
+                      sways, tails flick, slow ambient blinks, dust motes drift
+             ~55–66%  INDY POUNCES — crouch (squash) → leap left toward Khaumani
+                      (stretch in air) → land beside her (squash). A real arc.
+             ~62–74%  KHAUMANI reacts — turns her head toward Indy and gives a
+                      slow "cat-love" blink; ear flick on the landing
+             ~76–84%  Indy hops back to its spot and settles
+             ~84–100% groom + rest, loop
+           listening: both snap alert — ears perk, Indy sits bolt upright with
+                      an attentive bob, Khaumani lifts her head, pupils dilate
+           thinking:  Indy head-tilts with a thought-dot trail; Khaumani watches
+           writing:   Indy bats at the air (playful "typing"), tail lashing;
+                      Khaumani supervises, gaze down
+           pasting:   happy double-hop + nose-BOOP between them + sparkles
+
+         High-fidelity details vs the original "duo": gradient fur volume with
+         belly/back shading, fur tufts on cheeks & chest, mackerel tabby
+         striping + ringed tail on Indy, slit-pupil green eyes (Khaumani) and
+         big round amber eyes (Indy) with dual catchlights, blurred contact
+         shadows, and a warm sunbeam ledge they sit on.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <svg
+      class="character hd-skin"
+      viewBox="0 0 240 156"
+      xmlns="http://www.w3.org/2000/svg"
+      data-state={displayState}
+      data-mode={mode}
+      aria-hidden="true"
+    >
+      <defs>
+        <radialGradient id="hd-sun" cx="0.46" cy="0.4" r="0.62">
+          <stop offset="0%" stop-color="#ffe6b6" stop-opacity="0.62"/>
+          <stop offset="58%" stop-color="#ffd99c" stop-opacity="0.18"/>
+          <stop offset="100%" stop-color="#ffd99c" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="hd-ledge" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ecca94"/>
+          <stop offset="20%" stop-color="#d3a96d"/>
+          <stop offset="100%" stop-color="#a87c47"/>
+        </linearGradient>
+        <linearGradient id="hd-cushion" x1="0.5" y1="0" x2="0.5" y2="1">
+          <stop offset="0%" stop-color="#e3b3a4"/>
+          <stop offset="100%" stop-color="#c98e7d"/>
+        </linearGradient>
+        <linearGradient id="hd-khao-fur" x1="0.5" y1="0" x2="0.5" y2="1">
+          <stop offset="0%" stop-color="#ffffff"/>
+          <stop offset="64%" stop-color="#f4efe6"/>
+          <stop offset="100%" stop-color="#e2dccb"/>
+        </linearGradient>
+        <radialGradient id="hd-khao-belly" cx="0.5" cy="0.38" r="0.62">
+          <stop offset="0%" stop-color="#ffffff"/>
+          <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="hd-indy-fur" x1="0.38" y1="0" x2="0.62" y2="1">
+          <stop offset="0%" stop-color="#f9b96e"/>
+          <stop offset="58%" stop-color="#ef9846"/>
+          <stop offset="100%" stop-color="#d87d2f"/>
+        </linearGradient>
+        <radialGradient id="hd-eye-green" cx="0.5" cy="0.38" r="0.62">
+          <stop offset="0%" stop-color="#c4e493"/>
+          <stop offset="52%" stop-color="#8eb95f"/>
+          <stop offset="100%" stop-color="#5d8a3c"/>
+        </radialGradient>
+        <radialGradient id="hd-eye-amber" cx="0.5" cy="0.38" r="0.62">
+          <stop offset="0%" stop-color="#ffd57e"/>
+          <stop offset="52%" stop-color="#dc9c40"/>
+          <stop offset="100%" stop-color="#a4661f"/>
+        </radialGradient>
+        <filter id="hd-soft" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="2.6"/>
+        </filter>
+      </defs>
+
+      <!-- ─── Backdrop: warm sun glow + drifting motes ─────────────────── -->
+      <ellipse class="hd-sunglow" cx="110" cy="62" rx="120" ry="78" fill="url(#hd-sun)"/>
+      <g class="hd-motes" fill="#fff4d8">
+        <circle class="hd-mote hd-mote-1" cx="150" cy="40" r="1.5" opacity="0.7"/>
+        <circle class="hd-mote hd-mote-2" cx="92" cy="30" r="1.1" opacity="0.6"/>
+        <circle class="hd-mote hd-mote-3" cx="186" cy="54" r="1.3" opacity="0.5"/>
+      </g>
+
+      <!-- ─── Windowsill ledge they sit on ────────────────────────────── -->
+      <g class="hd-ledge">
+        <rect x="0" y="130" width="240" height="22" rx="4" fill="url(#hd-ledge)"/>
+        <rect x="0" y="130" width="240" height="3.2" rx="1.6" fill="#f3dcae" opacity="0.85"/>
+        <rect x="0" y="139" width="240" height="1.2" fill="#8c6536" opacity="0.4"/>
+      </g>
+
+      <!-- ─── Cushion under Khaumani ──────────────────────────────────── -->
+      <g class="hd-cushion">
+        <ellipse cx="74" cy="131" rx="52" ry="9" fill="url(#hd-cushion)"/>
+        <ellipse cx="74" cy="129.5" rx="48" ry="6.4" fill="#e9c3b6" opacity="0.6"/>
+        <path d="M 30 131 Q 74 124 118 131" fill="none" stroke="#b87e6d" stroke-width="0.8" opacity="0.5"/>
+      </g>
+
+      <!-- contact shadows -->
+      <ellipse cx="76" cy="135" rx="48" ry="6.6" fill="#5a4326" opacity="0.18" filter="url(#hd-soft)"/>
+      <ellipse class="hd-indy-castshadow" cx="168" cy="137" rx="28" ry="5.4" fill="#5a4326" opacity="0.2" filter="url(#hd-soft)"/>
+
+      <!-- ═══ KHAUMANI — serene white cat, loafing (left) ═══ -->
+      <g class="hd-khao">
+        <!-- Tail wrapped around the front of the loaf -->
+        <g class="hd-khao-tail">
+          <path d="M 116 120 Q 92 140 52 134 Q 36 131 32 122"
+                fill="none" stroke="#ece6d8" stroke-width="9" stroke-linecap="round"/>
+          <path d="M 116 120 Q 92 140 52 134 Q 36 131 32 122"
+                fill="none" stroke="#d7d0bf" stroke-width="10.4" stroke-linecap="round" opacity="0.22"/>
+          <path d="M 36 122 Q 33 118 34 113" fill="none" stroke="#cfc8b6" stroke-width="3.4" stroke-linecap="round" opacity="0.5"/>
+        </g>
+
+        <g class="hd-khao-body">
+          <!-- Loaf -->
+          <ellipse cx="74" cy="112" rx="46" ry="24" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="1"/>
+          <!-- Back shadow + belly light -->
+          <path d="M 30 106 Q 40 92 74 90 Q 108 92 118 106" fill="none" stroke="#ded8c8" stroke-width="2.4" opacity="0.6"/>
+          <ellipse cx="70" cy="116" rx="30" ry="13" fill="url(#hd-khao-belly)"/>
+          <!-- Chest fur tufts -->
+          <g fill="#ffffff" opacity="0.9">
+            <path d="M 58 128 l 3 6 l 3 -6 z"/>
+            <path d="M 66 129 l 2.6 5.4 l 2.6 -5.4 z"/>
+            <path d="M 74 129 l 2.6 5.4 l 2.6 -5.4 z"/>
+            <path d="M 82 128 l 3 6 l 3 -6 z"/>
+          </g>
+          <!-- Tucked front paws -->
+          <ellipse cx="64" cy="132" rx="8" ry="4" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+          <ellipse cx="84" cy="132" rx="8" ry="4" fill="#ffffff" stroke="#ddd7c9" stroke-width="0.7"/>
+          <path d="M 64 130.5 l 0 3 M 67 130.5 l 0 3" stroke="#e7e1d2" stroke-width="0.5"/>
+          <path d="M 84 130.5 l 0 3 M 87 130.5 l 0 3" stroke="#e7e1d2" stroke-width="0.5"/>
+        </g>
+
+        <g class="hd-khao-head">
+          <!-- Ears -->
+          <g class="hd-khao-ear-l">
+            <path d="M 64 70 L 58 44 L 79 62 Z" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="0.9"/>
+            <path d="M 65 66 L 61 50 L 76 62 Z" fill="#f3c9c5" opacity="0.85"/>
+          </g>
+          <g class="hd-khao-ear-r">
+            <path d="M 94 68 L 100 42 L 79 60 Z" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="0.9"/>
+            <path d="M 93 64 L 97 48 L 82 60 Z" fill="#f3c9c5" opacity="0.85"/>
+          </g>
+          <!-- Head -->
+          <circle cx="79" cy="84" r="22" fill="url(#hd-khao-fur)" stroke="#d9d3c4" stroke-width="1"/>
+          <!-- Cheek fur tufts -->
+          <g fill="#ffffff" opacity="0.8">
+            <path d="M 58 86 l -5 -2.4 l 4.4 -3 z"/>
+            <path d="M 59 92 l -5 0.6 l 4 -3.6 z"/>
+            <path d="M 100 86 l 5 -2.4 l -4.4 -3 z"/>
+            <path d="M 99 92 l 5 0.6 l -4 -3.6 z"/>
+          </g>
+          <ellipse cx="71" cy="78" rx="9" ry="6" fill="#ffffff" opacity="0.7"/>
+          <!-- Eyes — calm green, slit pupils (heavy-lidded at rest) -->
+          <g class="hd-khao-eyes">
+            <ellipse cx={70 + eyeShiftX * 0.5} cy={84 + eyeShiftY * 0.4} rx="4.2" ry={hdKhOpen} fill="url(#hd-eye-green)" stroke="#4d7030" stroke-width="0.6"/>
+            <ellipse cx={70 + eyeShiftX * 0.7} cy={84 + eyeShiftY * 0.5} rx={hdKhPup} ry={hdKhOpen * 0.92} fill="#241a10"/>
+            <circle cx={68.4 + eyeShiftX * 0.6} cy={82 + eyeShiftY * 0.3} r={hdKhOpen > 1 ? 1.1 : 0} fill="#ffffff" opacity="0.95"/>
+            <circle cx={71.4 + eyeShiftX * 0.6} cy={85.4 + eyeShiftY * 0.3} r={hdKhOpen > 1 ? 0.55 : 0} fill="#ffffff" opacity="0.7"/>
+            <ellipse cx={88 + eyeShiftX * 0.5} cy={84 + eyeShiftY * 0.4} rx="4.2" ry={hdKhOpen} fill="url(#hd-eye-green)" stroke="#4d7030" stroke-width="0.6"/>
+            <ellipse cx={88 + eyeShiftX * 0.7} cy={84 + eyeShiftY * 0.5} rx={hdKhPup} ry={hdKhOpen * 0.92} fill="#241a10"/>
+            <circle cx={86.4 + eyeShiftX * 0.6} cy={82 + eyeShiftY * 0.3} r={hdKhOpen > 1 ? 1.1 : 0} fill="#ffffff" opacity="0.95"/>
+            <circle cx={89.4 + eyeShiftX * 0.6} cy={85.4 + eyeShiftY * 0.3} r={hdKhOpen > 1 ? 0.55 : 0} fill="#ffffff" opacity="0.7"/>
+          </g>
+          <!-- Slow "cat-love" blink lids (driven by scene timeline) -->
+          <g class="hd-khao-lids" fill="url(#hd-khao-fur)">
+            <rect class="hd-lid" x="65.4" y="78.4" width="9.2" height="6" rx="3"/>
+            <rect class="hd-lid" x="83.4" y="78.4" width="9.2" height="6" rx="3"/>
+          </g>
+          <!-- Nose + mouth -->
+          <path d="M 76.6 90 L 79 92.6 L 81.4 90 Z" fill="#efa6a6" stroke="#d68a8a" stroke-width="0.4"/>
+          <path d="M 79 92.6 L 79 94.6" fill="none" stroke="#cbc4b3" stroke-width="0.7" stroke-linecap="round"/>
+          <path d="M 74.8 95.4 Q 79 98 83.2 95.4" fill="none" stroke="#cbc4b3" stroke-width="0.7" stroke-linecap="round"/>
+          <!-- Whiskers -->
+          <g stroke="#d2cbba" stroke-width="0.6" stroke-linecap="round" fill="none">
+            <path d="M 56 87 Q 64 87.6 71 89"/>
+            <path d="M 55 92 Q 64 92 71 92.4"/>
+            <path d="M 87 89 Q 94 87.6 102 87"/>
+            <path d="M 87 92.4 Q 94 92 103 92"/>
+          </g>
+        </g>
+      </g>
+
+      <!-- ═══ INDY — eager orange tabby kitten (right), the one that pounces ═══ -->
+      <g class="hd-indy-jumper">
+        <g class="hd-indy-squashbox">
+          <!-- Tail — long, ringed, expressive (behind body) -->
+          <g class="hd-indy-tail">
+            <path d="M 190 122 C 210 116 216 96 206 80" fill="none" stroke="#e8913f" stroke-width="7" stroke-linecap="round"/>
+            <g stroke="#c9701f" stroke-width="2" stroke-linecap="round" opacity="0.75">
+              <path d="M 197 118 q 3 -1 5 -3"/>
+              <path d="M 203 108 q 3 -1 4 -3.4"/>
+              <path d="M 206 96 q 3 -0.6 3.6 -3"/>
+            </g>
+            <path d="M 206 80 C 204 76 200 75 197 78" fill="none" stroke="#cf7427" stroke-width="6.4" stroke-linecap="round"/>
+          </g>
+
+          <g class="hd-indy-body">
+            <!-- Body — upright pear -->
+            <ellipse cx="168" cy="108" rx="27" ry="28" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="1"/>
+            <!-- Mackerel side stripes -->
+            <g fill="none" stroke="#c9701f" stroke-width="2.6" stroke-linecap="round" opacity="0.8">
+              <path d="M 186 90 Q 192 99 189 110"/>
+              <path d="M 190 104 Q 194 112 190 121"/>
+              <path d="M 147 94 Q 142 102 146 112"/>
+              <path d="M 150 110 Q 146 118 150 124"/>
+            </g>
+            <!-- Chest/belly cream + fluff -->
+            <ellipse cx="161" cy="116" rx="15" ry="16" fill="#fdf3e2" opacity="0.96"/>
+            <g fill="#fdf3e2" opacity="0.95">
+              <path d="M 154 130 l 3 6 l 3 -6 z"/>
+              <path d="M 162 131 l 2.6 5.6 l 2.6 -5.6 z"/>
+              <path d="M 170 130 l 3 6 l 3 -6 z"/>
+            </g>
+            <!-- Front legs / paws (typing-capable) -->
+            <g class="hd-indy-paw-l">
+              <rect x="153" y="116" width="8" height="20" rx="4" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+              <ellipse cx="157" cy="136" rx="6" ry="3.6" fill="#fdf3e2" stroke="#c96f28" stroke-width="0.7"/>
+            </g>
+            <g class="hd-indy-paw-r">
+              <rect x="167" y="116" width="8" height="20" rx="4" fill="#f0a050" stroke="#c96f28" stroke-width="0.7"/>
+              <ellipse cx="171" cy="136" rx="6" ry="3.6" fill="#fdf3e2" stroke="#c96f28" stroke-width="0.7"/>
+            </g>
+          </g>
+
+          <g class="hd-indy-head">
+            <!-- Big kitten ears -->
+            <g class="hd-indy-ear-l">
+              <path d="M 150 56 L 143 28 L 167 48 Z" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="0.9"/>
+              <path d="M 151 52 L 147 34 L 162 48 Z" fill="#eeb3a1" opacity="0.9"/>
+            </g>
+            <g class="hd-indy-ear-r">
+              <path d="M 190 56 L 197 28 L 173 48 Z" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="0.9"/>
+              <path d="M 189 52 L 193 34 L 178 48 Z" fill="#eeb3a1" opacity="0.9"/>
+            </g>
+            <!-- Head -->
+            <circle cx="170" cy="74" r="23" fill="url(#hd-indy-fur)" stroke="#c96f28" stroke-width="1"/>
+            <!-- Forehead tabby "M" -->
+            <g fill="none" stroke="#c9701f" stroke-width="2.1" stroke-linecap="round" opacity="0.88">
+              <path d="M 162 54 L 161 63"/>
+              <path d="M 170 52 L 170 62"/>
+              <path d="M 178 54 L 179 63"/>
+            </g>
+            <!-- Cheek stripes -->
+            <g fill="none" stroke="#c9701f" stroke-width="1.8" stroke-linecap="round" opacity="0.7">
+              <path d="M 150 74 q -4 1 -6 3"/>
+              <path d="M 190 74 q 4 1 6 3"/>
+            </g>
+            <!-- Muzzle cream -->
+            <ellipse cx="170" cy="84" rx="13" ry="9" fill="#fdf3e2"/>
+            <!-- Eyes — big, round, amber (kitten energy), dual catchlights -->
+            <g class="hd-indy-eyes">
+              <ellipse cx={160 + eyeShiftX * 0.8} cy={72 + eyeShiftY * 0.5} rx="4.6" ry={hdInOpen} fill="url(#hd-eye-amber)" stroke="#7a4d1c" stroke-width="0.7"/>
+              <circle cx={160 + eyeShiftX} cy={72.4 + eyeShiftY * 0.6} r={hdInOpen > 1 ? hdInPup : 0} fill="#1c1208"/>
+              <circle cx={158.4 + eyeShiftX * 0.8} cy={70 + eyeShiftY * 0.4} r={hdInOpen > 1 ? 1.3 : 0} fill="#ffffff" opacity="0.95"/>
+              <circle cx={161.6 + eyeShiftX * 0.8} cy={74 + eyeShiftY * 0.4} r={hdInOpen > 1 ? 0.6 : 0} fill="#ffffff" opacity="0.7"/>
+              <ellipse cx={180 + eyeShiftX * 0.8} cy={72 + eyeShiftY * 0.5} rx="4.6" ry={hdInOpen} fill="url(#hd-eye-amber)" stroke="#7a4d1c" stroke-width="0.7"/>
+              <circle cx={180 + eyeShiftX} cy={72.4 + eyeShiftY * 0.6} r={hdInOpen > 1 ? hdInPup : 0} fill="#1c1208"/>
+              <circle cx={178.4 + eyeShiftX * 0.8} cy={70 + eyeShiftY * 0.4} r={hdInOpen > 1 ? 1.3 : 0} fill="#ffffff" opacity="0.95"/>
+              <circle cx={181.6 + eyeShiftX * 0.8} cy={74 + eyeShiftY * 0.4} r={hdInOpen > 1 ? 0.6 : 0} fill="#ffffff" opacity="0.7"/>
+            </g>
+            <!-- Nose + mouth -->
+            <path d="M 167.8 80 L 170 82.8 L 172.2 80 Z" fill="#e58f86" stroke="#c97168" stroke-width="0.4"/>
+            <path d="M 170 82.8 L 170 85" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+            {#if displayState === "pasting"}
+              <path d="M 164 85.4 Q 170 91 176 85.4" fill="none" stroke="#a5713a" stroke-width="1.1" stroke-linecap="round"/>
+            {:else}
+              <path d="M 166 86 Q 170 88.6 174 86" fill="none" stroke="#b98a55" stroke-width="0.7" stroke-linecap="round"/>
+            {/if}
+            <!-- Whiskers -->
+            <g stroke="#f0e2cc" stroke-width="0.7" stroke-linecap="round" fill="none">
+              <path d="M 146 78 Q 154 78.6 160 80"/>
+              <path d="M 145 83 Q 154 83 160 83.4"/>
+              <path d="M 180 80 Q 187 78.6 194 78"/>
+              <path d="M 180 83.4 Q 187 83 195 83"/>
+            </g>
+            <!-- Thought-dot trail (thinking) -->
+            {#if displayState === "thinking"}
+              <g class="hd-indy-thinkdots" fill="#fff7e6" stroke="#d8a85a" stroke-width="0.7">
+                <circle cx="194" cy="50" r="2.2"/>
+                <circle cx="202" cy="40" r="3.1"/>
+                <circle cx="212" cy="28" r="4.2"/>
+              </g>
+            {/if}
+          </g>
+        </g>
+      </g>
+
+      <!-- ─── Pasting celebration: sparkles between the two ──────────────── -->
+      {#if displayState === "pasting"}
+        <g class="hd-sparkles" fill="#eec25a">
+          <path d="M 120 70 L 122 75 L 127 77 L 122 79 L 120 84 L 118 79 L 113 77 L 118 75 Z"/>
+          <path d="M 134 88 L 135.2 91 L 138.2 92.2 L 135.2 93.4 L 134 96.4 L 132.8 93.4 L 129.8 92.2 L 132.8 91 Z"/>
+          <path d="M 108 86 L 109 88.4 L 111.4 89.4 L 109 90.4 L 108 92.8 L 107 90.4 L 104.6 89.4 L 107 88.4 Z"/>
+        </g>
+      {/if}
+
+      <!-- ─── Phew drop ──────────────────────────────────────────────────── -->
+      {#if phewActive}
+        <g class="phew-drop">
+          <path d="M 214 50 Q 212 44 214 38 Q 216 44 214 50 Z" fill="#7cb6ff" stroke="#1d1d1f" stroke-width="0.8"/>
+          <text x="210" y="34" font-size="6" fill="#1d1d1f" font-family="ui-sans-serif, sans-serif">phew</text>
         </g>
       {/if}
     </svg>
@@ -2907,17 +3230,180 @@
 
   /* Duo bubble — same warm cream family as the fox (the duo lives in the
      same cottage). */
-  .bubble[data-skin="duo"] {
+  .bubble[data-skin="duo"],
+  .bubble[data-skin="duo-hd"] {
     background: #faf6ec;
     color: #2b2218;
     border-color: rgba(120, 80, 30, 0.18);
     box-shadow: 0 4px 12px rgba(120, 80, 30, 0.18);
   }
-  .bubble[data-skin="duo"]::after {
+  .bubble[data-skin="duo"]::after,
+  .bubble[data-skin="duo-hd"]::after {
     background: #faf6ec;
     border-right-color: rgba(120, 80, 30, 0.18);
     border-bottom-color: rgba(120, 80, 30, 0.18);
   }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     KHAUMANI & INDY ✦ (duo-hd) — the remastered duo. SCENE-DIRECTOR model:
+     one 22s master clock (.hd-* idle animations all share it) choreographs a
+     looping vignette — rest → Indy pounces left toward Khaumani → she reacts
+     with a slow blink → Indy hops back → groom → rest. Pipeline states
+     ([data-state]) pause the scene clock and take over with their own beats.
+     All motion is transforms only (GPU-cheap). Origins are in user units to
+     match the rest of this file's convention.
+     ═══════════════════════════════════════════════════════════════════════ */
+  .hd-skin {
+    pointer-events: none;
+    width: calc(200px * var(--fscale, 1) * var(--state-scale, 1));
+    height: calc(130px * var(--fscale, 1) * var(--state-scale, 1));
+    transition: width 320ms ease, height 320ms ease;
+    filter: drop-shadow(0 5px 9px rgba(80, 60, 30, 0.2));
+  }
+  /* The generic whole-body idle-bob looks wrong on a two-cat tableau. */
+  .character.hd-skin,
+  .character.hd-skin[data-state="listening"],
+  .character.hd-skin[data-state="thinking"],
+  .character.hd-skin[data-state="writing"] {
+    animation: none;
+  }
+
+  /* ── Ambient backdrop ── */
+  .hd-sunglow { animation: hd-sun-pulse 7s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .hd-mote-1 { animation: hd-mote-a 9s linear infinite; }
+  .hd-mote-2 { animation: hd-mote-b 11s linear infinite 1.5s; }
+  .hd-mote-3 { animation: hd-mote-a 13s linear infinite 3s; }
+  @keyframes hd-sun-pulse { 0%, 100% { opacity: 0.92; } 50% { opacity: 1; } }
+  @keyframes hd-mote-a { 0% { transform: translate(0,0); opacity: 0; } 20% { opacity: 0.7; } 100% { transform: translate(-13px, 22px); opacity: 0; } }
+  @keyframes hd-mote-b { 0% { transform: translate(0,0); opacity: 0; } 25% { opacity: 0.6; } 100% { transform: translate(10px, 26px); opacity: 0; } }
+
+  /* ── Khaumani idle life ── */
+  .hd-khao-body { transform-origin: 74px 134px; animation: hd-khao-breathe 4.6s ease-in-out infinite; }
+  .hd-khao-tail { transform-origin: 34px 120px; animation: hd-khao-tail 8s ease-in-out infinite; }
+  .hd-khao-head { transform-origin: 79px 104px; animation: hd-khao-react 22s ease-in-out infinite; }
+  .hd-khao-ear-r { transform-origin: 96px 62px; animation: hd-khao-ear 22s ease-in-out infinite; }
+  .hd-khao-lids { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-khao-loveblink 22s ease-in-out infinite; }
+  @keyframes hd-khao-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.012, 0.985) translateY(-0.5px); } }
+  @keyframes hd-khao-tail { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-3deg); } }
+  @keyframes hd-khao-react {
+    0%, 57%, 78%, 100% { transform: rotate(0deg) translateY(0); }
+    61% { transform: rotate(5deg); }
+    70% { transform: rotate(6deg) translateY(-1px); }
+  }
+  @keyframes hd-khao-ear {
+    0%, 63%, 69%, 90%, 95%, 100% { transform: rotate(0deg); }
+    66% { transform: rotate(-15deg); }
+    67.5% { transform: rotate(5deg); }
+    92% { transform: rotate(-11deg); }
+    93.5% { transform: rotate(4deg); }
+  }
+  @keyframes hd-khao-loveblink {
+    0%, 64%, 72%, 100% { transform: scaleY(0.05); }
+    66.5%, 69.5% { transform: scaleY(1); }
+  }
+
+  /* ── Indy idle life + the POUNCE (scene clock) ── */
+  .hd-indy-jumper { animation: hd-pounce 22s ease-in-out infinite; }
+  .hd-indy-squashbox { transform-origin: 168px 136px; animation: hd-squash 22s ease-in-out infinite; }
+  .hd-indy-castshadow { transform-box: fill-box; transform-origin: center; animation: hd-indy-shadow 22s ease-in-out infinite; }
+  .hd-indy-body { transform-origin: 168px 136px; animation: hd-indy-breathe 3.4s ease-in-out infinite; }
+  .hd-indy-head { transform-origin: 170px 94px; animation: hd-indy-head-idle 9s ease-in-out infinite; transition: transform 260ms cubic-bezier(0.34, 1.4, 0.64, 1); }
+  .hd-indy-tail { transform-origin: 196px 122px; animation: hd-indy-tail 4s ease-in-out infinite; }
+  @keyframes hd-pounce {
+    0%, 52% { transform: translate(0, 0); }
+    55% { transform: translate(3px, 4px); }
+    58% { transform: translate(-22px, -12px); }
+    61% { transform: translate(-44px, -7px); }
+    64% { transform: translate(-54px, 2px); }
+    66%, 76% { transform: translate(-54px, -1px); }
+    79% { transform: translate(-26px, -10px); }
+    82% { transform: translate(-2px, 2px); }
+    84%, 100% { transform: translate(0, 0); }
+  }
+  @keyframes hd-squash {
+    0%, 53%, 67%, 78%, 84%, 100% { transform: scale(1, 1); }
+    55% { transform: scale(1.1, 0.86); }
+    58% { transform: scale(0.9, 1.16); }
+    61% { transform: scale(0.92, 1.12); }
+    64% { transform: scale(1.12, 0.84); }
+    79% { transform: scale(0.9, 1.14); }
+    82% { transform: scale(1.1, 0.88); }
+  }
+  @keyframes hd-indy-shadow {
+    0%, 53%, 67%, 76%, 84%, 100% { transform: translateX(0) scale(1); }
+    58% { transform: translateX(-22px) scale(0.74); }
+    64% { transform: translateX(-54px) scale(0.92); }
+    66% { transform: translateX(-54px) scale(1); }
+    79% { transform: translateX(-26px) scale(0.8); }
+    82% { transform: translateX(-2px) scale(1); }
+  }
+  @keyframes hd-indy-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.014, 0.984) translateY(-0.5px); } }
+  @keyframes hd-indy-head-idle {
+    0%, 60%, 82%, 100% { transform: rotate(0deg); }
+    71% { transform: rotate(-7deg) translateY(-1px); }
+  }
+  @keyframes hd-indy-tail { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-8deg); } }
+
+  /* ── Listening: both snap alert ── */
+  .hd-skin[data-state="listening"] .hd-indy-jumper,
+  .hd-skin[data-state="listening"] .hd-indy-squashbox,
+  .hd-skin[data-state="listening"] .hd-indy-castshadow,
+  .hd-skin[data-state="listening"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="listening"] .hd-khao-head { animation: none; transform: translateY(-2px) rotate(-2deg); }
+  .hd-skin[data-state="listening"] .hd-khao-lids,
+  .hd-skin[data-state="thinking"] .hd-khao-lids,
+  .hd-skin[data-state="writing"] .hd-khao-lids,
+  .hd-skin[data-state="pasting"] .hd-khao-lids { animation: none; transform: scaleY(0.05); }
+  .hd-skin[data-state="listening"] .hd-khao-ear-l,
+  .hd-skin[data-state="listening"] .hd-khao-ear-r,
+  .hd-skin[data-state="listening"] .hd-indy-ear-l,
+  .hd-skin[data-state="listening"] .hd-indy-ear-r {
+    transform-box: fill-box; transform-origin: 50% 100%;
+    animation: hd-perk 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .hd-skin[data-state="listening"] .hd-indy-body { animation: hd-alert-bob 1.2s ease-in-out infinite; }
+  .hd-skin[data-state="listening"] .hd-indy-head { animation: hd-alert-head 1.4s ease-in-out infinite; }
+  .hd-skin[data-state="listening"] .hd-indy-tail { animation: hd-indy-tail 1.6s ease-in-out infinite; }
+  @keyframes hd-perk { 0% { transform: scaleY(0.82) translateY(2px); } 60% { transform: scaleY(1.1); } 100% { transform: scaleY(1); } }
+  @keyframes hd-alert-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+  @keyframes hd-alert-head { 0%, 100% { transform: translateY(0) rotate(0deg); } 30% { transform: translateY(-3px) rotate(-2deg); } 70% { transform: translateY(-2px) rotate(2deg); } }
+
+  /* ── Thinking: Indy head-tilts, Khaumani watches ── */
+  .hd-skin[data-state="thinking"] .hd-indy-jumper,
+  .hd-skin[data-state="thinking"] .hd-indy-squashbox,
+  .hd-skin[data-state="thinking"] .hd-indy-castshadow,
+  .hd-skin[data-state="thinking"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="thinking"] .hd-indy-head { animation: hd-think-tilt 2.2s ease-in-out infinite; }
+  .hd-skin[data-state="thinking"] .hd-khao-head { animation: none; transform: rotate(4deg); }
+  .hd-indy-thinkdots { animation: hd-dots-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; transform-origin: 200px 40px; }
+  @keyframes hd-think-tilt { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-7deg); } }
+  @keyframes hd-dots-pop { 0% { transform: scale(0); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+
+  /* ── Writing: Indy bats at the air, Khaumani supervises ── */
+  .hd-skin[data-state="writing"] .hd-indy-jumper,
+  .hd-skin[data-state="writing"] .hd-indy-squashbox,
+  .hd-skin[data-state="writing"] .hd-indy-castshadow { animation: none; }
+  .hd-skin[data-state="writing"] .hd-indy-body { animation: hd-write-focus 0.6s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-paw-l { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-paw-tap 0.28s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-paw-r { transform-box: fill-box; transform-origin: 50% 0%; animation: hd-paw-tap 0.28s ease-in-out infinite 0.14s; }
+  .hd-skin[data-state="writing"] .hd-indy-tail { animation: hd-indy-tail 0.85s ease-in-out infinite; }
+  .hd-skin[data-state="writing"] .hd-indy-head { animation: none; transform: rotate(-3deg) translateY(1px); }
+  .hd-skin[data-state="writing"] .hd-khao-head { animation: none; transform: rotate(7deg) translateY(1px); }
+  @keyframes hd-write-focus { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+  @keyframes hd-paw-tap { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+  /* ── Pasting: happy double-hop + nose-boop + sparkles ── */
+  .hd-skin[data-state="pasting"] .hd-indy-squashbox,
+  .hd-skin[data-state="pasting"] .hd-indy-castshadow,
+  .hd-skin[data-state="pasting"] .hd-khao-head,
+  .hd-skin[data-state="pasting"] .hd-khao-ear-r { animation: none; }
+  .hd-skin[data-state="pasting"] .hd-indy-jumper { animation: hd-boop 0.62s ease-out both; }
+  .hd-skin[data-state="pasting"] .hd-khao-body { animation: hd-paste-hop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  .hd-skin[data-state="pasting"] .hd-indy-body { animation: hd-paste-hop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both 0.06s; }
+  .hd-sparkles { animation: hd-sparkle 900ms ease-out 150ms both; }
+  @keyframes hd-boop { 0% { transform: translate(0, 0); } 45% { transform: translate(-30px, 1px); } 100% { transform: translate(0, 0); } }
+  @keyframes hd-paste-hop { 0% { transform: translateY(0) scale(1); } 40% { transform: translateY(-8px) scale(1.04, 0.96); } 100% { transform: translateY(0) scale(1); } }
+  @keyframes hd-sparkle { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(-8px) scale(1.1); opacity: 0; } }
 
   /* X dismiss button was removed — double-click Clippy to open the main
      window instead. Hide via tray → Toggle Clippy. */

@@ -15,6 +15,7 @@
     { id: "cat",         label: "Desk Cat",  desc: "Sleepy charcoal cat with green slit-pupil eyes — curls up idle, perks up to help, typing paws" },
     { id: "cat-lab",     label: "Cat (lab)", desc: "Experimental charcoal cat — thin white edge highlights, lighter belly + paws, defined neck, mouth and tail for legibility over dark wallpapers" },
     { id: "duo",         label: "Khaumani & Indy", desc: "The two-cat team — a serene white cat loafing on the console supervises while an orange tabby kitten does the actual typing. Paw bump on every successful paste" },
+    { id: "duo-hd",      label: "Khaumani & Indy ✦", desc: "The remastered duo, drawn fresh with richer fur, tabby striping and slit-pupil eyes — and far livelier: the cats stretch, pounce, trade a slow-blink and groom on a looping scene timeline, on a warm sunlit ledge. Perks up to listen; happy double-hop on every paste" },
   ];
 
   const THEME_OPTIONS = [
