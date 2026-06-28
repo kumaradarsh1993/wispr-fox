@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://kumaradarsh1993.github.io/wispr-fox/">Interactive website</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/kumaradarsh1993/wispr-fox/releases/latest">
     <img alt="Latest stable" src="https://img.shields.io/github/v/release/kumaradarsh1993/wispr-fox?display_name=tag&label=stable&color=22c55e" />
   </a>
