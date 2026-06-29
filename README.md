@@ -18,7 +18,7 @@
     <img alt="Latest stable" src="https://img.shields.io/github/v/release/kumaradarsh1993/wispr-fox?display_name=tag&label=stable&color=22c55e" />
   </a>
   <a href="https://github.com/kumaradarsh1993/wispr-fox/releases">
-    <img alt="Latest nightly" src="https://img.shields.io/github/v/release/kumaradarsh1993/wispr-fox?display_name=tag&include_prereleases&label=nightly&color=eab308" />
+    <img alt="Latest beta" src="https://img.shields.io/github/v/release/kumaradarsh1993/wispr-fox?display_name=tag&include_prereleases&label=beta&color=eab308" />
   </a>
   <a href="LICENSE">
     <img alt="MIT licensed" src="https://img.shields.io/badge/license-MIT-blue" />
@@ -33,10 +33,11 @@
 
 ## ⬇️ Download
 
-| Platform | 🟢 Stable (recommended) | 🟡 Nightly (newest features) |
+| Platform | 🟢 Stable (recommended) | 🟡 Beta builds (newer, less tested) |
 |---|---|---|
-| 🪟 **Windows** | [**wispr-fox setup.exe**](https://github.com/kumaradarsh1993/wispr-fox/releases/latest/download/wispr-fox_1.2.0_x64-setup.exe) | [Browse nightly builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
-| 🍎 **macOS** (Apple Silicon) | [**wispr-fox.dmg**](https://github.com/kumaradarsh1993/wispr-fox/releases/latest/download/wispr-fox_1.2.0_aarch64.dmg) | [Browse nightly builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🪟 **Windows** | [**wispr-fox setup.exe**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.3.0/wispr-fox_1.3.0_x64-setup.exe) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🍎 **macOS** (Apple Silicon) | [**wispr-fox.dmg**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.3.0/wispr-fox_1.3.0_aarch64.dmg) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🐧 **Linux** | [**wispr-fox AppImage**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.3.0/wispr-fox_1.3.0_amd64.AppImage) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
 
 Run the installer. The app walks you through a 2-minute onboarding on first launch.
 
