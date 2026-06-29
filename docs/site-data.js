@@ -1,9 +1,11 @@
 window.PRODUCT_SITE = {
   name: "wispr-fox",
   mark: "WF",
-  kicker: "Free desktop dictation with your own AI key",
-  headline: "Talk anywhere on your desktop. Get clean text where you need it.",
-  subhead: "wispr-fox turns a hotkey into quick dictation for emails, notes, chats, and documents. Record, transcribe, clean up, and paste without signing into another closed dictation service.",
+  product: "dictation",
+  kicker: "Free, open-source desktop dictation",
+  headline: "Press a key. Talk. Get text where your cursor already is.",
+  subhead: "wispr-fox is for people who write more than they want to type. Hold a hotkey, speak naturally, and send a raw transcript, cleaned note, or polished draft into Gmail, Slack, docs, forms, or wherever you were already working.",
+  insight: "The user promise is simple: high-quality speech-to-text without a monthly dictation subscription, without an account, and without moving your writing into someone else's editor.",
   repoUrl: "https://github.com/kumaradarsh1993/wispr-fox",
   scene: "dictation",
   theme: {
@@ -12,6 +14,10 @@ window.PRODUCT_SITE = {
     accent: "#2357d8",
     accent2: "#0d8f7b",
     accent3: "#d85257"
+  },
+  assets: {
+    avatar: "images/fox-recording.png",
+    logo: "images/fox-logo.png"
   },
   downloads: [
     {
@@ -31,7 +37,7 @@ window.PRODUCT_SITE = {
     },
     {
       label: "Beta builds",
-      note: "Advanced releases",
+      note: "Newer, less tested",
       href: "https://github.com/kumaradarsh1993/wispr-fox/releases"
     }
   ],
@@ -39,53 +45,79 @@ window.PRODUCT_SITE = {
     { label: "View source", href: "https://github.com/kumaradarsh1993/wispr-fox" },
     { label: "All releases", href: "https://github.com/kumaradarsh1993/wispr-fox/releases" }
   ],
-  stage: {
-    title: "Dictation console",
-    status: "Stable download ready",
-    rail: [["Hotkey", "Record"], ["Clean", "Rewrite"], ["Paste", "Anywhere"]],
-    surfaceTitle: "Voice to text",
-    tiles: ["wave", "text", "mode", "history", "provider", "paste"],
-    note: "Built for the everyday moments where typing is slower than thinking out loud."
+  proof: [
+    "Raw transcript, cleanup, and drafting hotkeys",
+    "Bring your own Groq or Gemini key",
+    "Fox, Paperclip, real Clippy, and cat avatars",
+    "No telemetry, account, or hosted app login"
+  ],
+  hero: {
+    title: "Hold to dictate",
+    status: "Ready in any app",
+    apps: ["Mail", "Slack", "Docs", "Browser", "Terminal"],
+    modes: [
+      ["F8", "Raw transcript"],
+      ["F9", "Draft from a brief"],
+      ["Shift+F8", "Clean punctuation"]
+    ],
+    transcript: [
+      "can you turn this into a crisp project update",
+      "Keep my tone. Fix grammar. Add bullets.",
+      "Paste it into the active window."
+    ],
+    output: "Here is the short version: the landing page should explain the product first, then show exactly how to download and use it."
   },
-  storyTitle: "Desktop dictation without the ceremony",
-  storyIntro: "Keep your hands on the keyboard. Trigger dictation, say the thing, and send the cleaned text into the app you were already using.",
-  chapters: [
+  storyTitle: "The actual flow",
+  storyIntro: "The page should feel like the app: quick, practical, slightly playful, and built around the moment where speaking is faster than typing.",
+  beats: [
     {
-      title: "Press the hotkey",
-      body: "Start recording from anywhere on the desktop. You do not need to move your workflow into a new editor."
+      title: "Start from the app you are already using",
+      body: "Hold F8 on Windows or Control-Option-D on Mac. The avatar wakes up, the waveform starts, and you speak without opening a separate editor.",
+      tag: "Hotkey",
+      visual: "listen"
     },
     {
-      title: "Choose the output",
-      body: "Use raw transcription for speed, cleanup for readable prose, or drafting when you want the app to shape the text."
+      title: "Pick the amount of AI help",
+      body: "Use raw transcription for speed, one-shot cleanup for punctuation and paragraphing, or drafting when you want a message shaped from a rough brief.",
+      tag: "Modes",
+      visual: "modes"
     },
     {
-      title: "Paste into the right place",
-      body: "The result lands where you need it: messages, notes, documents, forms, and other everyday writing surfaces."
+      title: "Send the text back to your cursor",
+      body: "The result lands in the active text field: email, chat, notes, docs, forms, tickets, or any regular writing surface.",
+      tag: "Paste",
+      visual: "paste"
+    },
+    {
+      title: "Make the assistant feel yours",
+      body: "Pick the avatar style: Fox, Paperclip, original Clippy, Desk Cat, or the cat variants. It is useful, but it is allowed to have charm.",
+      tag: "Avatar",
+      visual: "avatar"
     }
   ],
-  downloadTitle: "Download the stable build",
-  downloadIntro: "Stable is the right default. Beta releases are for newer features and advanced testing before promotion.",
+  downloadTitle: "Start with the stable build",
+  downloadIntro: "Most people should install the stable release first. Beta builds are where provider, usage, and avatar experiments appear before they are promoted.",
   panels: [
     {
-      title: "Stable",
-      body: "Recommended for daily dictation and normal writing workflows."
+      title: "Free speech-to-text",
+      body: "Groq's free tier can cover normal daily dictation for many users. Heavy use still stays under your own provider account, not a wispr-fox subscription."
     },
     {
-      title: "Beta",
-      body: "Useful when you want the newest improvements and can tolerate early-release rough edges."
+      title: "Private by design",
+      body: "No hosted wispr-fox account. API keys stay in your OS keychain or encrypted local fallback. Audio is sent only when you choose to dictate."
     },
     {
-      title: "Bring your own key",
-      body: "Use supported providers such as Groq or Gemini from your own account instead of depending on a hosted app login."
+      title: "Personality without lock-in",
+      body: "The avatar is part of the product feel, but the app remains open source and practical: hotkeys, models, prompts, history, and settings are inspectable."
     }
   ],
-  setupTitle: "Get speaking",
-  setupIntro: "A short setup, then the app can sit quietly until the hotkey is pressed.",
+  setupTitle: "Two-minute setup",
+  setupIntro: "Install the app, paste a provider key, choose your hotkeys and avatar, then keep writing wherever you already work.",
   setup: [
-    { title: "Install wispr-fox", body: "Use the stable build for your operating system." },
-    { title: "Add an AI provider key", body: "Open settings and enter your Groq or Gemini key." },
-    { title: "Pick a hotkey", body: "Choose a trigger that is easy to remember and does not conflict with your other apps." },
-    { title: "Speak and paste", body: "Record, let the app process, and send the text into your active app." }
+    { title: "Install wispr-fox", body: "Use the stable download for your operating system." },
+    { title: "Add a provider key", body: "Start with Groq for Whisper transcription; add Gemini if you want cleanup or drafting options." },
+    { title: "Pick hotkeys and avatar", body: "Defaults work, but Settings lets you adjust dictation modes and choose Fox, Paperclip, Clippy, or Cat." },
+    { title: "Speak into any text field", body: "Hold the hotkey, talk, release, and let wispr-fox paste the result back where your cursor is." }
   ],
   footer: "Open-source desktop dictation for fast writing without lock-in."
 };
