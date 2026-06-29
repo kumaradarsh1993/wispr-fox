@@ -16,7 +16,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{LlmError, LlmProvider};
+use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,13 +28,13 @@ pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
 /// `DEFAULT_MODEL` so transcription doesn't fail with a 404 on a tombstoned
 /// endpoint.
 pub const DEPRECATED_MODELS: &[&str] = &[
-    "gemini-2.0-flash",        // deprecated 1 Jun 2026
+    "gemini-2.0-flash", // deprecated 1 Jun 2026
     "gemini-2.0-flash-001",
-    "gemini-2.0-flash-lite",   // deprecated 1 Jun 2026
+    "gemini-2.0-flash-lite", // deprecated 1 Jun 2026
     "gemini-2.0-flash-lite-001",
-    "gemini-3-flash",          // stale/speculative UI id; use preview/default instead
-    "gemini-3-pro",            // speculative id that never shipped
-    "gemini-3.1-pro",          // stale shorthand; current preview id has "-preview"
+    "gemini-3-flash", // stale/speculative UI id; use preview/default instead
+    "gemini-3-pro",   // speculative id that never shipped
+    "gemini-3.1-pro", // stale shorthand; current preview id has "-preview"
 ];
 
 pub struct GeminiLlm {
@@ -50,7 +50,11 @@ impl GeminiLlm {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("reqwest client construction is infallible with default config");
-        Self { client, api_key, model }
+        Self {
+            client,
+            api_key,
+            model,
+        }
     }
 }
 
@@ -87,6 +91,18 @@ struct GenerateContentResponse {
     candidates: Option<Vec<Candidate>>,
     #[serde(rename = "promptFeedback")]
     prompt_feedback: Option<PromptFeedback>,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<GeminiUsageMetadata>,
+}
+
+#[derive(Deserialize)]
+struct GeminiUsageMetadata {
+    #[serde(rename = "promptTokenCount")]
+    prompt_token_count: Option<u64>,
+    #[serde(rename = "candidatesTokenCount")]
+    candidates_token_count: Option<u64>,
+    #[serde(rename = "totalTokenCount")]
+    total_token_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -123,7 +139,7 @@ impl LlmProvider for GeminiLlm {
         system: &str,
         user: &str,
         temperature: f32,
-    ) -> Result<String, LlmError> {
+    ) -> Result<LlmOutput, LlmError> {
         let body = GenerateContentRequest {
             contents: vec![Content {
                 role: Some("user"),
@@ -143,7 +159,10 @@ impl LlmProvider for GeminiLlm {
             },
         };
 
-        let url = format!("{ENDPOINT_BASE}/{model}:generateContent", model = self.model);
+        let url = format!(
+            "{ENDPOINT_BASE}/{model}:generateContent",
+            model = self.model
+        );
 
         let resp = self
             .client
@@ -157,11 +176,16 @@ impl LlmProvider for GeminiLlm {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status: status.as_u16(), body });
+            return Err(LlmError::Http {
+                status: status.as_u16(),
+                body,
+            });
         }
 
-        let parsed: GenerateContentResponse =
-            resp.json().await.map_err(|e| LlmError::Decode(e.to_string()))?;
+        let parsed: GenerateContentResponse = resp
+            .json()
+            .await
+            .map_err(|e| LlmError::Decode(e.to_string()))?;
 
         // Safety blocks return a candidate with no content + a blockReason.
         if let Some(pf) = parsed.prompt_feedback {
@@ -169,6 +193,17 @@ impl LlmProvider for GeminiLlm {
                 return Err(LlmError::Decode(format!("gemini blocked: {reason}")));
             }
         }
+
+        let usage = parsed.usage_metadata.map(|u| {
+            let input_tokens = u.prompt_token_count.unwrap_or(0);
+            let output_tokens = u.candidates_token_count.unwrap_or(0);
+            let total_tokens = u.total_token_count.unwrap_or(input_tokens + output_tokens);
+            TokenUsage {
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            }
+        });
 
         let text = parsed
             .candidates
@@ -182,6 +217,6 @@ impl LlmProvider for GeminiLlm {
         if text.is_empty() {
             return Err(LlmError::Decode("empty response from gemini".into()));
         }
-        Ok(text)
+        Ok(LlmOutput { text, usage })
     }
 }

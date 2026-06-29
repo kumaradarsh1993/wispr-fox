@@ -13,7 +13,6 @@
     { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
     { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
     { id: "cat",         label: "Desk Cat",  desc: "Sleepy charcoal cat with green slit-pupil eyes — curls up idle, perks up to help, typing paws" },
-    { id: "cat-lab",     label: "Cat (lab)", desc: "Experimental charcoal cat — thin white edge highlights, lighter belly + paws, defined neck, mouth and tail for legibility over dark wallpapers" },
     { id: "duo",         label: "Khaumani & Indy", desc: "The two-cat team — a serene white cat loafing on the console supervises while an orange tabby kitten does the actual typing. Paw bump on every successful paste" },
   ];
 

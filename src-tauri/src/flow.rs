@@ -21,11 +21,7 @@ use crate::llm::{gemini::GeminiLlm, groq::GroqLlm, openai::OpenAiLlm, ClippyMode
 use crate::secrets::{self, SecretKey};
 use crate::settings::{AppSettings, Mode};
 use crate::stt::{
-    deepgram::DeepgramStt,
-    elevenlabs::ElevenLabsStt,
-    groq::GroqStt,
-    openai::OpenAiStt,
-    SttProvider,
+    deepgram::DeepgramStt, elevenlabs::ElevenLabsStt, groq::GroqStt, openai::OpenAiStt, SttProvider,
 };
 use crate::usage::UsageTracker;
 
@@ -53,7 +49,13 @@ fn user_friendly_error(raw: &str) -> String {
     let s = raw.to_ascii_lowercase();
 
     // Missing-key and local failures are stage-agnostic — handle first.
-    if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") || s.contains("no openai") || s.contains("no deepgram") || s.contains("no elevenlabs") {
+    if s.contains("no groq stt key")
+        || s.contains("no groq llm key")
+        || s.contains("no gemini api key")
+        || s.contains("no openai")
+        || s.contains("no deepgram")
+        || s.contains("no elevenlabs")
+    {
         return "API key missing - open Settings -> Providers & API keys.".to_string();
     }
     if s.contains("recording too short") {
@@ -90,18 +92,34 @@ fn user_friendly_error(raw: &str) -> String {
     };
 
     // Short reason phrase.
-    let reason = if s.contains("401") || s.contains("unauthorized") || s.contains("403") || s.contains("forbidden") {
+    let reason = if s.contains("401")
+        || s.contains("unauthorized")
+        || s.contains("403")
+        || s.contains("forbidden")
+    {
         "API key rejected — check Settings"
     } else if s.contains("429") || s.contains("rate limit") {
         "rate limit — wait a minute"
     } else if s.contains("timed out") || s.contains("timeout") {
         "took too long — check your connection"
-    } else if s.contains("dns") || s.contains("no such host") || s.contains("connect") || s.contains("network") {
+    } else if s.contains("dns")
+        || s.contains("no such host")
+        || s.contains("connect")
+        || s.contains("network")
+    {
         "network issue — check your connection"
-    } else if s.contains("500") || s.contains("502") || s.contains("503") || s.contains("504") || s.contains("upstream") {
+    } else if s.contains("500")
+        || s.contains("502")
+        || s.contains("503")
+        || s.contains("504")
+        || s.contains("upstream")
+    {
         "server hiccup — retry from History"
     } else {
-        return format!("Something went wrong — {}", raw.lines().next().unwrap_or(raw));
+        return format!(
+            "Something went wrong — {}",
+            raw.lines().next().unwrap_or(raw)
+        );
     };
 
     if stage.is_empty() {
@@ -155,8 +173,9 @@ fn mode_to_str(m: Mode) -> &'static str {
 fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmProvider>> {
     match provider_id {
         "gemini" => {
-            let key = secrets::get(SecretKey::GeminiLlm)?
-                .ok_or_else(|| anyhow!("no Gemini API key - open Settings -> Providers & API keys"))?;
+            let key = secrets::get(SecretKey::GeminiLlm)?.ok_or_else(|| {
+                anyhow!("no Gemini API key - open Settings -> Providers & API keys")
+            })?;
             // If user has gemini selected but no model set, fall back to default.
             // Also auto-migrate model ids that Google has retired so saved
             // settings from older builds don't suddenly 404 against the API.
@@ -179,7 +198,9 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
         "openai" => {
             let key = secrets::get(SecretKey::OpenAiLlm)?
                 .or_else(|| secrets::get(SecretKey::OpenAiStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no OpenAI API key - open Settings -> Providers & API keys"))?;
+                .ok_or_else(|| {
+                    anyhow!("no OpenAI API key - open Settings -> Providers & API keys")
+                })?;
             let m = if model.starts_with("gpt-") {
                 model
             } else {
@@ -191,7 +212,9 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
             // "groq" or anything unknown -> Groq path.
             let key = secrets::get(SecretKey::GroqLlm)?
                 .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no Groq LLM key - open Settings -> Providers & API keys"))?;
+                .ok_or_else(|| {
+                    anyhow!("no Groq LLM key - open Settings -> Providers & API keys")
+                })?;
             Ok(Box::new(GroqLlm::new(key, model)))
         }
     }
@@ -212,7 +235,9 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
         "openai" => {
             let key = secrets::get(SecretKey::OpenAiStt)?
                 .or_else(|| secrets::get(SecretKey::OpenAiLlm).ok().flatten())
-                .ok_or_else(|| anyhow!("no OpenAI STT key - open Settings -> Providers & API keys"))?;
+                .ok_or_else(|| {
+                    anyhow!("no OpenAI STT key - open Settings -> Providers & API keys")
+                })?;
             let model = selected_model_or(
                 crate::stt::openai::DEFAULT_MODEL,
                 &settings.stt_model,
@@ -221,8 +246,9 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
             Ok(Box::new(OpenAiStt::with_model(key, model)))
         }
         "deepgram" => {
-            let key = secrets::get(SecretKey::DeepgramStt)?
-                .ok_or_else(|| anyhow!("no Deepgram STT key - open Settings -> Providers & API keys"))?;
+            let key = secrets::get(SecretKey::DeepgramStt)?.ok_or_else(|| {
+                anyhow!("no Deepgram STT key - open Settings -> Providers & API keys")
+            })?;
             let model = if settings.stt_model.starts_with("nova-") {
                 settings.stt_model.clone()
             } else {
@@ -231,8 +257,9 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
             Ok(Box::new(DeepgramStt::with_model(key, model)))
         }
         "elevenlabs" => {
-            let key = secrets::get(SecretKey::ElevenLabsStt)?
-                .ok_or_else(|| anyhow!("no ElevenLabs STT key - open Settings -> Providers & API keys"))?;
+            let key = secrets::get(SecretKey::ElevenLabsStt)?.ok_or_else(|| {
+                anyhow!("no ElevenLabs STT key - open Settings -> Providers & API keys")
+            })?;
             let model = if settings.stt_model.starts_with("scribe_") {
                 settings.stt_model.clone()
             } else {
@@ -241,12 +268,17 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
             Ok(Box::new(ElevenLabsStt::with_model(key, model)))
         }
         _ => {
-            let key = secrets::get(SecretKey::GroqStt)?
-                .ok_or_else(|| anyhow!("no Groq STT key - open Settings -> Providers & API keys"))?;
+            let key = secrets::get(SecretKey::GroqStt)?.ok_or_else(|| {
+                anyhow!("no Groq STT key - open Settings -> Providers & API keys")
+            })?;
             let model = selected_model_or(
                 "whisper-large-v3-turbo",
                 &settings.stt_model,
-                &["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"],
+                &[
+                    "whisper-large-v3-turbo",
+                    "whisper-large-v3",
+                    "distil-whisper-large-v3-en",
+                ],
             );
             Ok(Box::new(GroqStt::with_model(key, model)))
         }
@@ -380,7 +412,10 @@ impl Flow {
                         tracing::error!("finish_recording (sticky stop) failed: {e:#}");
                         let _ = app.emit("wispr:flow_error", e.to_string());
                     }
-                } else if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
+                } else if let Err(e) = this
+                    .start_recording_async(&app, evt.mode, evt.force_clean)
+                    .await
+                {
                     let raw = e.to_string();
                     if raw.contains("recording already in progress") {
                         // Race / late dispatch — another task won. Don't
@@ -411,7 +446,10 @@ impl Flow {
                         tracing::trace!("ignoring Down: recording already active");
                         return;
                     }
-                    if let Err(e) = this.start_recording_async(&app, evt.mode, evt.force_clean).await {
+                    if let Err(e) = this
+                        .start_recording_async(&app, evt.mode, evt.force_clean)
+                        .await
+                    {
                         let raw = e.to_string();
                         if raw.contains("recording already in progress") {
                             // Race-condition belt-and-suspenders: another
@@ -441,7 +479,12 @@ impl Flow {
         });
     }
 
-    async fn start_recording_async(&self, app: &AppHandle, mode: Mode, force_clean: bool) -> Result<()> {
+    async fn start_recording_async(
+        &self,
+        app: &AppHandle,
+        mode: Mode,
+        force_clean: bool,
+    ) -> Result<()> {
         {
             let state = self.state.lock();
             if state.active.is_some() {
@@ -451,10 +494,7 @@ impl Flow {
 
         let date = Utc::now().format("%Y-%m-%d").to_string();
         let id_seed = uuid::Uuid::new_v4().to_string();
-        let path = self
-            .audio_dir
-            .join(date)
-            .join(format!("{id_seed}.wav"));
+        let path = self.audio_dir.join(date).join(format!("{id_seed}.wav"));
 
         // Snapshot where the user is talking BEFORE we start the audio
         // stream. We capture now (not on hotkey-up) because F10 release can
@@ -530,7 +570,13 @@ impl Flow {
     }
 
     async fn do_pipeline(&self, app: &AppHandle, in_flight: InFlight) -> Result<()> {
-        let InFlight { mode, record_id, audio_path: _, captured_focus, force_clean } = in_flight;
+        let InFlight {
+            mode,
+            record_id,
+            audio_path: _,
+            captured_focus,
+            force_clean,
+        } = in_flight;
 
         let _ = app.emit("wispr:state", "transcribing");
 
@@ -546,14 +592,14 @@ impl Flow {
 
         if duration_ms < MIN_DURATION_MS {
             tracing::info!(record_id, duration_ms, "discarding too-short recording");
-            self.history
-                .set_error(&record_id, "recording too short")?;
+            self.history.set_error(&record_id, "recording too short")?;
             let _ = std::fs::remove_file(&path);
             // wrapper emits idle for us; just return cleanly
             return Ok(());
         }
 
-        self.history.update_status(&record_id, Status::Transcribing)?;
+        self.history
+            .update_status(&record_id, Status::Transcribing)?;
 
         // Provider-specific key lookup happens in build_stt_provider().
         let stt_settings = self.settings();
@@ -564,7 +610,10 @@ impl Flow {
         // attributable rather than a mystery spinner.
         let _ = app.emit("wispr:stt_provider", stt_name);
 
-        let wav_size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+        let wav_size = tokio::fs::metadata(&path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
         tracing::info!(
             record_id,
             wav_bytes = wav_size,
@@ -582,8 +631,15 @@ impl Flow {
         let stt_future = stt.transcribe(&path, stt_settings.language_hint.as_deref());
         let transcript = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future)
             .await
-            .map_err(|_| anyhow!("Whisper STT timed out after 120s — check network or try a shorter clip"))?
-            .with_context(|| format!("{provider} transcription request", provider = pretty_provider(stt_name)))?;
+            .map_err(|_| {
+                anyhow!("Whisper STT timed out after 120s — check network or try a shorter clip")
+            })?
+            .with_context(|| {
+                format!(
+                    "{provider} transcription request",
+                    provider = pretty_provider(stt_name)
+                )
+            })?;
 
         tracing::info!(
             record_id,
@@ -595,6 +651,7 @@ impl Flow {
         );
         self.usage.record_stt(
             stt_name,
+            &stt_settings.stt_model,
             transcript
                 .duration_seconds
                 .unwrap_or_else(|| (duration_ms.max(0) as f64) / 1000.0),
@@ -612,7 +669,10 @@ impl Flow {
             Mode::Drafting => clippy_settings.auto_clean_in_drafting,
         };
         if force_clean {
-            tracing::info!(record_id, "force-clean override active (Shift+F8 invocation)");
+            tracing::info!(
+                record_id,
+                "force-clean override active (Shift+F8 invocation)"
+            );
         }
 
         let final_text = if needs_clippy {
@@ -626,13 +686,12 @@ impl Flow {
             let model = clippy_settings.llm_model.clone();
             let _ = mode; // mode is used downstream in clippy::clean for prompt selection
 
-            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
+            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model.clone())?;
             // Surface which LLM is doing cleanup so the floater reads
             // "polishing · Gemini" / "polishing · Groq". This is the single
             // most-requested bit of visibility: when cleanup is slow or fails,
             // the user wants to know whether it's the Groq or the Gemini call.
             let _ = app.emit("wispr:llm_provider", llm.name());
-            self.usage.record_llm();
             let custom = custom_prompt_for(&clippy_settings, mode);
             // App-context hint: ONLY for Drafting (the mode that's allowed to
             // reshape register/structure). When the user opts out via the
@@ -649,7 +708,16 @@ impl Flow {
             } else {
                 None
             };
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), app_hint, llm.as_ref()).await;
+            let cleaned = clippy::clean(
+                &transcript.text,
+                ClippyMode::from(mode),
+                custom.as_deref(),
+                app_hint,
+                llm.as_ref(),
+            )
+            .await;
+            self.usage
+                .record_llm(llm.name(), &model, cleaned.usage.as_ref());
             // Cleanup couldn't run (timeout, auth, rate limit, upstream) but
             // we still have the raw transcript to paste. Previously this was
             // SILENT — the user just saw a slow result and never knew the LLM
@@ -670,7 +738,11 @@ impl Flow {
             // Drafting mode (F9) writes to `drafted_text`; everything else
             // (Light cleanup, Advanced cleanup) writes to `cleaned_text`.
             // This lets the history UI show both versions independently.
-            let alt = if matches!(mode, Mode::Drafting) { AltKind::Drafted } else { AltKind::Cleaned };
+            let alt = if matches!(mode, Mode::Drafting) {
+                AltKind::Drafted
+            } else {
+                AltKind::Cleaned
+            };
             self.history.set_alt(
                 &record_id,
                 alt,
@@ -722,12 +794,18 @@ impl Flow {
         let inj_settings = self.settings();
         let (current_fg, current_ctrl, current_pid) = inject::focus::current_foreground_state();
         let cap_ref = captured_focus.as_ref();
-        let same_fg = cap_ref.map(|c| c.foreground_hwnd() == current_fg && current_fg != 0).unwrap_or(false);
-        let same_ctrl = cap_ref.map(|c| c.focused_ctrl() == current_ctrl).unwrap_or(false);
-        let same_process = cap_ref.map(|c| c.pid() == current_pid && current_pid != 0).unwrap_or(false);
+        let same_fg = cap_ref
+            .map(|c| c.foreground_hwnd() == current_fg && current_fg != 0)
+            .unwrap_or(false);
+        let same_ctrl = cap_ref
+            .map(|c| c.focused_ctrl() == current_ctrl)
+            .unwrap_or(false);
+        let same_process = cap_ref
+            .map(|c| c.pid() == current_pid && current_pid != 0)
+            .unwrap_or(false);
         let nothing_changed = same_fg && same_ctrl;
-        let should_restore_focus = !nothing_changed
-            && (same_process || inj_settings.pull_back_on_navigation);
+        let should_restore_focus =
+            !nothing_changed && (same_process || inj_settings.pull_back_on_navigation);
 
         if let (Some(cap), true) = (cap_ref, should_restore_focus) {
             if let Err(e) = inject::focus::restore(cap) {
@@ -755,7 +833,8 @@ impl Flow {
                 }
                 Err(e) => {
                     tracing::warn!("silent clipboard set failed: {e:#}");
-                    self.history.set_error(&record_id, &format!("clipboard: {e}"))?;
+                    self.history
+                        .set_error(&record_id, &format!("clipboard: {e}"))?;
                 }
             }
         } else {
@@ -771,7 +850,8 @@ impl Flow {
                 }
                 Err(e) => {
                     tracing::warn!("injection failed: {e:#}");
-                    self.history.set_error(&record_id, &format!("injection: {e}"))?;
+                    self.history
+                        .set_error(&record_id, &format!("injection: {e}"))?;
                 }
             }
         }
@@ -811,14 +891,22 @@ impl Flow {
 
         let provider_id = settings.llm_provider.clone();
         let model = settings.llm_model.clone();
-        let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
-        self.usage.record_llm();
+        let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model.clone())?;
 
         let custom = custom_prompt_for(&settings, mode);
         // On-demand "generate cleaned/drafted version" from History has no
         // app-context — the original target window is long gone. Skip the
         // hint and let the LLM pick register from the brief's content.
-        let cleaned = clippy::clean(transcript, ClippyMode::from(mode), custom.as_deref(), None, llm.as_ref()).await;
+        let cleaned = clippy::clean(
+            transcript,
+            ClippyMode::from(mode),
+            custom.as_deref(),
+            None,
+            llm.as_ref(),
+        )
+        .await;
+        self.usage
+            .record_llm(llm.name(), &model, cleaned.usage.as_ref());
 
         self.history.set_alt(
             record_id,
@@ -847,7 +935,8 @@ impl Flow {
 
         self.history.bump_retry(record_id)?;
         // Clear any previous error so the row stops showing as failed.
-        self.history.update_status(record_id, Status::Transcribing)?;
+        self.history
+            .update_status(record_id, Status::Transcribing)?;
         let _ = app.emit("wispr:state", "transcribing");
 
         let stt_settings = self.settings();
@@ -857,9 +946,15 @@ impl Flow {
         let transcript = stt
             .transcribe(&rec.audio_path, stt_settings.language_hint.as_deref())
             .await
-            .with_context(|| format!("{provider} transcription retry", provider = pretty_provider(stt_name)))?;
+            .with_context(|| {
+                format!(
+                    "{provider} transcription retry",
+                    provider = pretty_provider(stt_name)
+                )
+            })?;
         self.usage.record_stt(
             stt_name,
+            &stt_settings.stt_model,
             transcript
                 .duration_seconds
                 .unwrap_or_else(|| (rec.duration_ms.max(0) as f64) / 1000.0),
@@ -884,15 +979,27 @@ impl Flow {
             // Retry path: same single global provider + model.
             let provider_id = stt_settings.llm_provider.clone();
             let model = stt_settings.llm_model.clone();
-            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model)?;
-            self.usage.record_llm();
+            let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model.clone())?;
             let custom = custom_prompt_for(&stt_settings, mode);
             // Retry path has no captured focus context (it ran possibly
             // hours ago into a different app), so skip the app-context
             // hint here. The user can always trigger a fresh F9 if they
             // want app-adapted output.
-            let cleaned = clippy::clean(&transcript.text, ClippyMode::from(mode), custom.as_deref(), None, llm.as_ref()).await;
-            let alt = if matches!(mode, Mode::Drafting) { AltKind::Drafted } else { AltKind::Cleaned };
+            let cleaned = clippy::clean(
+                &transcript.text,
+                ClippyMode::from(mode),
+                custom.as_deref(),
+                None,
+                llm.as_ref(),
+            )
+            .await;
+            self.usage
+                .record_llm(llm.name(), &model, cleaned.usage.as_ref());
+            let alt = if matches!(mode, Mode::Drafting) {
+                AltKind::Drafted
+            } else {
+                AltKind::Cleaned
+            };
             self.history.set_alt(
                 record_id,
                 alt,
@@ -925,8 +1032,8 @@ impl Flow {
 // during recording so we don't steal it from focused apps the rest of the
 // time (closing dialogs, exiting autocomplete, leaving fullscreen, etc.).
 
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use std::str::FromStr;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 fn arm_escape_stop(app: &AppHandle, flow: &Flow) {
     let Ok(esc) = Shortcut::from_str("Escape") else {
@@ -942,29 +1049,31 @@ fn arm_escape_stop(app: &AppHandle, flow: &Flow) {
     let flow_clone = flow.clone();
     let app_clone = app.clone();
     let esc_match = esc.clone();
-    let result = app.global_shortcut().on_shortcut(esc, move |_a, fired, event| {
-        if fired != &esc_match {
-            return;
-        }
-        // Only react on key-down. Escape's key-up is not interesting.
-        if event.state() != ShortcutState::Pressed {
-            return;
-        }
-        // Only stop if recording is actually active. If it's not (e.g. user
-        // hit Escape after recording already ended but before our unregister
-        // ran), do nothing — emitting a stop would be harmless but we'd
-        // rather no-op cleanly.
-        if flow_clone.state.lock().active.is_none() {
-            return;
-        }
-        let app2 = app_clone.clone();
-        let flow2 = flow_clone.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = flow2.finish_recording_async(&app2).await {
-                tracing::warn!("escape-stop: finish_recording failed: {e:#}");
+    let result = app
+        .global_shortcut()
+        .on_shortcut(esc, move |_a, fired, event| {
+            if fired != &esc_match {
+                return;
             }
+            // Only react on key-down. Escape's key-up is not interesting.
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            // Only stop if recording is actually active. If it's not (e.g. user
+            // hit Escape after recording already ended but before our unregister
+            // ran), do nothing — emitting a stop would be harmless but we'd
+            // rather no-op cleanly.
+            if flow_clone.state.lock().active.is_none() {
+                return;
+            }
+            let app2 = app_clone.clone();
+            let flow2 = flow_clone.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = flow2.finish_recording_async(&app2).await {
+                    tracing::warn!("escape-stop: finish_recording failed: {e:#}");
+                }
+            });
         });
-    });
     if let Err(e) = result {
         tracing::debug!("escape-stop register failed (non-fatal): {e:#}");
     }

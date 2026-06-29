@@ -8,12 +8,13 @@
 
 use std::time::Duration;
 
-use crate::llm::{prompts, ClippyMode, LlmError, LlmProvider};
+use crate::llm::{prompts, ClippyMode, LlmError, LlmProvider, TokenUsage};
 
 pub struct CleanedTranscript {
     pub text: String,
     pub used_clippy: bool,
     pub note: Option<&'static str>,
+    pub usage: Option<TokenUsage>,
 }
 
 const TIMEOUT: Duration = Duration::from_secs(8);
@@ -41,7 +42,12 @@ pub async fn clean(
 ) -> CleanedTranscript {
     let raw_trimmed = raw.trim();
     if raw_trimmed.is_empty() {
-        return CleanedTranscript { text: String::new(), used_clippy: false, note: None };
+        return CleanedTranscript {
+            text: String::new(),
+            used_clippy: false,
+            note: None,
+            usage: None,
+        };
     }
 
     let (default_system, user, temperature) = match mode {
@@ -50,16 +56,8 @@ pub async fn clean(
             prompts::light_user_message(raw_trimmed),
             0.2,
         ),
-        ClippyMode::Advanced => (
-            prompts::ADVANCED_SYSTEM,
-            raw_trimmed.to_owned(),
-            0.4,
-        ),
-        ClippyMode::Drafting => (
-            prompts::DRAFTING_SYSTEM,
-            raw_trimmed.to_owned(),
-            0.5,
-        ),
+        ClippyMode::Advanced => (prompts::ADVANCED_SYSTEM, raw_trimmed.to_owned(), 0.4),
+        ClippyMode::Drafting => (prompts::DRAFTING_SYSTEM, raw_trimmed.to_owned(), 0.5),
     };
     let base_system = system_override
         .filter(|s| !s.trim().is_empty())
@@ -81,30 +79,41 @@ pub async fn clean(
 
     match result {
         Ok(Ok(out)) => {
-            let cleaned = out.trim().to_owned();
-            if matches!(mode, ClippyMode::Light) && length_drift(raw_trimmed, &cleaned) > LIGHT_MAX_DRIFT {
+            let cleaned = out.text.trim().to_owned();
+            if matches!(mode, ClippyMode::Light)
+                && length_drift(raw_trimmed, &cleaned) > LIGHT_MAX_DRIFT
+            {
                 return CleanedTranscript {
                     text: raw_trimmed.to_owned(),
                     used_clippy: false,
                     note: Some("light_length_drift"),
+                    usage: out.usage,
                 };
             }
-            CleanedTranscript { text: cleaned, used_clippy: true, note: None }
+            CleanedTranscript {
+                text: cleaned,
+                used_clippy: true,
+                note: None,
+                usage: out.usage,
+            }
         }
         Ok(Err(LlmError::Http { status, .. })) => CleanedTranscript {
             text: raw_trimmed.to_owned(),
             used_clippy: false,
             note: Some(http_status_note(status)),
+            usage: None,
         },
         Ok(Err(_)) => CleanedTranscript {
             text: raw_trimmed.to_owned(),
             used_clippy: false,
             note: Some("clippy_failed"),
+            usage: None,
         },
         Err(_) => CleanedTranscript {
             text: raw_trimmed.to_owned(),
             used_clippy: false,
             note: Some("clippy_timeout"),
+            usage: None,
         },
     }
 }

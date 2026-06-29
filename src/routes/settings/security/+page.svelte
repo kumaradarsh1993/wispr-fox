@@ -147,8 +147,12 @@
     </div>
   {/if}
 
-  <div class="settings-card audit-card">
-    <h3>Key event log</h3>
+  <details class="settings-card audit-card">
+    <summary>
+      <span>Key event log</span>
+      <em>{events.length === 0 ? "No events" : `${events.length} recent events`}</em>
+    </summary>
+    <p class="audit-intro">Diagnostic storage events only. API key values are never shown here.</p>
     {#if events.length === 0}
       <p class="empty-log">No key-storage events yet.</p>
     {:else}
@@ -173,7 +177,7 @@
         {/each}
       </div>
     {/if}
-  </div>
+  </details>
 </section>
 
 <style>
@@ -193,8 +197,7 @@
     margin-bottom: 10px;
   }
 
-  .security-head h3,
-  .audit-card h3 {
+  .security-head h3 {
     margin-top: 0;
   }
 
@@ -290,10 +293,62 @@
 
   .audit-card {
     max-width: 980px;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .audit-card > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .audit-card > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .audit-card > summary::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 6px solid var(--text-secondary);
+    transform-origin: 3px 4px;
+    transition: transform 120ms ease;
+  }
+
+  .audit-card[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
+  .audit-card > summary em {
+    margin-left: auto;
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .audit-card[open] > summary {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .audit-intro {
+    margin: 12px 16px;
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
   .empty-log {
-    margin: 0;
+    margin: 12px 16px 16px;
     font-size: 12px;
     color: var(--text-secondary);
   }
@@ -302,6 +357,7 @@
     display: grid;
     gap: 0;
     overflow-x: auto;
+    padding: 0 16px 16px;
   }
 
   .audit-row {

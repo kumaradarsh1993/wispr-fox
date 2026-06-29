@@ -8,7 +8,7 @@
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
   import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
-  import { api, type SecretCheck } from "$lib/api";
+  import { api, type ModelUsage, type SecretCheck } from "$lib/api";
   import SkinIcon from "$lib/SkinIcon.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
   import {
@@ -24,8 +24,16 @@
   let { children } = $props();
 
   let collapsed = $state(false);
+  let sidebarWidth = $state(248);
   let appVersion = $state<string>("");
   let flowBusy = $state(false);
+  let resizingSidebar = $state(false);
+  let appApiPromise: Promise<typeof import("@tauri-apps/api/app")> | null = null;
+
+  function loadAppApi() {
+    appApiPromise ??= import("@tauri-apps/api/app");
+    return appApiPromise;
+  }
 
   // macOS auto-paste needs Accessibility permission (CGEvent injection + the
   // Cmd+V fallback both require it). `accessibility_ok` returns true on
@@ -59,6 +67,10 @@
     if (typeof document !== "undefined") {
       document.body.setAttribute("data-theme", t);
     }
+    const nativeTheme = t === "dark" ? "dark" : t === "light" || t === "retro" ? "light" : null;
+    loadAppApi()
+      .then(({ setTheme }) => setTheme(nativeTheme))
+      .catch((e) => console.warn("native theme sync failed", e));
   });
 
   type SkinOption = { id: Skin; label: string };
@@ -68,7 +80,6 @@
     { id: "stylized",    label: "Paperclip" },
     { id: "real-clippy", label: "Clippy" },
     { id: "cat",         label: "Desk Cat" },
-    { id: "cat-lab",     label: "Cat (lab)" },
     { id: "duo",         label: "Khaumani & Indy" },
   ];
 
@@ -119,18 +130,60 @@
   // Avatar size presets (S/M/L). Sticky + cross-window via floaterScale.
   let scaleActive = $derived(floaterScale.activePreset());
 
-  // Lightweight usage meters. Deepgram shows an estimated spend against the
-  // current free credit; other providers stay on conservative call counters.
+  // Lightweight usage meters. Deepgram shows cumulative estimated spend
+  // against the current free credit; model buckets show today's audio/tokens.
+  function usageFor(stage: "stt" | "llm", provider: string, model: string): ModelUsage | null {
+    const rows = usageStore.usage?.model_usage ?? [];
+    const exact = rows.find((r) => r.stage === stage && r.provider === provider && r.model === model);
+    if (exact) return exact;
+    return rows.find((r) => r.stage === stage && r.provider === provider) ?? null;
+  }
+
+  function formatAudio(seconds = 0): string {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const minutes = seconds / 60;
+    if (minutes < 10) return `${minutes.toFixed(1)}m`;
+    return `${Math.round(minutes)}m`;
+  }
+
+  function formatTokens(tokens = 0): string {
+    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens >= 10_000_000 ? 0 : 1)}M`;
+    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 10_000 ? 0 : 1)}k`;
+    return String(tokens);
+  }
+
+  function formatCalls(calls = 0): string {
+    return calls === 1 ? "1 call" : `${calls} calls`;
+  }
+
+  let currentSttUsage = $derived(usageFor("stt", settings.s.stt_provider, settings.s.stt_model));
+  let currentLlmUsage = $derived(usageFor("llm", settings.s.llm_provider, settings.s.llm_model));
   let deepgramSpend = $derived(usageStore.usage?.deepgram_estimated_usd ?? 0);
   let deepgramCredit = $derived(usageStore.usage?.deepgram_free_credit_usd ?? DEEPGRAM_FREE_CREDIT_USD);
   let deepgramPct = $derived(Math.min(100, Math.round((deepgramSpend / deepgramCredit) * 100)));
   let countSttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
-  let sttPct = $derived(settings.s.stt_provider === "deepgram" ? deepgramPct : countSttPct);
-  let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
+  let sttAudioPct = $derived(Math.min(100, Math.round(((currentSttUsage?.audio_seconds ?? 0) / 3600) * 100)));
+  let sttPct = $derived(settings.s.stt_provider === "deepgram" ? deepgramPct : sttAudioPct || countSttPct);
+  let llmTokenPct = $derived(Math.min(100, Math.round(((currentLlmUsage?.total_tokens ?? 0) / 200_000) * 100)));
+  let llmCallPct = $derived(Math.min(100, Math.round(((currentLlmUsage?.calls ?? usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
+  let llmPct = $derived(llmTokenPct || llmCallPct);
   let sttUsageLabel = $derived(
     settings.s.stt_provider === "deepgram"
       ? `$${deepgramSpend.toFixed(2)}/$${Math.round(deepgramCredit)}`
-      : `${usageStore.usage?.stt_count ?? 0}/2000`,
+      : currentSttUsage?.audio_seconds
+        ? formatAudio(currentSttUsage.audio_seconds)
+        : formatCalls(currentSttUsage?.calls ?? usageStore.usage?.stt_count ?? 0),
+  );
+  let llmUsageLabel = $derived(
+    (currentLlmUsage?.total_tokens ?? 0) > 0
+      ? `${formatTokens(currentLlmUsage?.total_tokens ?? 0)} tok`
+      : formatCalls(currentLlmUsage?.calls ?? usageStore.usage?.llm_count ?? 0),
+  );
+  let sttUsageTitle = $derived(
+    `${settings.s.stt_provider} / ${settings.s.stt_model}: ${formatCalls(currentSttUsage?.calls ?? 0)}, ${formatAudio(currentSttUsage?.audio_seconds ?? 0)} today`
+  );
+  let llmUsageTitle = $derived(
+    `${settings.s.llm_provider} / ${settings.s.llm_model}: ${formatCalls(currentLlmUsage?.calls ?? 0)}, ${formatTokens(currentLlmUsage?.total_tokens ?? 0)} tokens today`
   );
 
   // Daily usage rolls over at UTC midnight. Show that moment in the
@@ -164,6 +217,8 @@
   onMount(() => {
     const saved = localStorage.getItem("wispr.sidebar.collapsed");
     if (saved === "1") collapsed = true;
+    const savedWidth = Number(localStorage.getItem("wispr.sidebar.width"));
+    if (Number.isFinite(savedWidth)) sidebarWidth = clampSidebarWidth(savedWidth);
     usageStore.subscribe();
     skinStore.subscribe();
     floaterScale.subscribe();
@@ -191,7 +246,7 @@
     // which build they're testing without having to check Settings → About.
     (async () => {
       try {
-        const { getVersion } = await import("@tauri-apps/api/app");
+        const { getVersion } = await loadAppApi();
         appVersion = await getVersion();
       } catch (e) {
         console.warn("getVersion failed", e);
@@ -228,6 +283,48 @@
     localStorage.setItem("wispr.sidebar.collapsed", collapsed ? "1" : "0");
   }
 
+  function clampSidebarWidth(width: number): number {
+    return Math.min(360, Math.max(236, Math.round(width)));
+  }
+
+  function setSidebarWidth(width: number) {
+    sidebarWidth = clampSidebarWidth(width);
+    localStorage.setItem("wispr.sidebar.width", String(sidebarWidth));
+  }
+
+  function startSidebarResize(e: PointerEvent) {
+    e.preventDefault();
+    collapsed = false;
+    localStorage.setItem("wispr.sidebar.collapsed", "0");
+    resizingSidebar = true;
+    setSidebarWidth(e.clientX);
+    const onMove = (ev: PointerEvent) => setSidebarWidth(ev.clientX);
+    const onUp = () => {
+      resizingSidebar = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  function resizeSidebarWithKeyboard(e: KeyboardEvent) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleSidebar();
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setSidebarWidth(sidebarWidth - 12);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      collapsed = false;
+      localStorage.setItem("wispr.sidebar.collapsed", "0");
+      setSidebarWidth(sidebarWidth + 12);
+    }
+  }
+
   // Hide chrome on /onboarding (full-bleed) and /clippy (floating window).
   let hideChrome = $derived(
     page.url?.pathname?.startsWith("/onboarding") ||
@@ -258,24 +355,14 @@
     return path.startsWith(href);
   }
 
-  function shortModel(name: string | undefined): string {
-    if (!name) return "—";
-    // "llama-3.3-70b-versatile" → "llama 3.3 70b"
-    // "whisper-large-v3-turbo" → "whisper turbo"
-    if (name.startsWith("whisper-large-v3-turbo")) return "whisper turbo";
-    if (name.startsWith("whisper-large-v3")) return "whisper v3";
-    if (name.startsWith("distil-whisper")) return "distil-whisper";
-    if (name.startsWith("llama-3.3-70b")) return "llama 70b";
-    if (name.startsWith("llama-3.1-8b")) return "llama 8b";
-    return name.replace(/-/g, " ");
-  }
+  let sidebarStyle = $derived(collapsed ? "" : `width: ${sidebarWidth}px;`);
 </script>
 
 {#if hideChrome}
   {@render children?.()}
 {:else}
   <div class="app-shell">
-    <aside class="sidebar" class:collapsed>
+    <aside class="sidebar" class:collapsed class:resizing={resizingSidebar} style={sidebarStyle}>
       <div class="sidebar-top">
         <!-- Universal sidebar-toggle icon (à la Claude/ChatGPT) — clearer
              affordance than the paperclip emoji previously used. -->
@@ -483,14 +570,37 @@
             {/if}
           {/if}
         </div>
+
+        <!-- Replay onboarding stays with scrollable sidebar extras so usage
+             remains a compact bottom anchor. -->
+        {#if !collapsed}
+          <a class="replay-onboarding" href="/onboarding" data-sveltekit-preload-data="off">
+            ↻ Replay onboarding
+          </a>
+        {/if}
+
+        {#if !collapsed}
+          <div class="sidebar-fox" aria-hidden="true">
+            <img src="/fox/fox-hero.png" alt="" />
+          </div>
+        {/if}
       </div>
+
+      <button
+        type="button"
+        class="sidebar-resizer"
+        aria-label="Resize sidebar"
+        onpointerdown={startSidebarResize}
+        onkeydown={resizeSidebarWithKeyboard}
+        ondblclick={toggleSidebar}
+      ></button>
 
       <div class="sidebar-bottom">
         {#if !collapsed}
           <div class="footer-block">
-            <div class="footer-title">{settings.s.stt_provider === "deepgram" ? "Usage" : "Today's usage"}</div>
-            <div class="footer-reset" title="Local call counters reset at midnight UTC">
-              {settings.s.stt_provider === "deepgram" ? "Deepgram credit is cumulative" : resetLabel}
+            <div class="footer-title">Usage today</div>
+            <div class="footer-reset" title="Model buckets reset at midnight UTC. Deepgram credit spend stays cumulative.">
+              {resetLabel}
             </div>
 
             <div class="bar-row">
@@ -501,8 +611,8 @@
               <span
                 class="bar-val"
                 title={settings.s.stt_provider === "deepgram"
-                  ? `Estimated Deepgram credit used at $${(usageStore.usage?.deepgram_rate_usd_per_min ?? 0.0092).toFixed(4)}/min`
-                  : "STT calls today"}
+                  ? `${sttUsageTitle}. Deepgram estimate: $${deepgramSpend.toFixed(2)} used at $${(usageStore.usage?.deepgram_rate_usd_per_min ?? 0.0092).toFixed(4)}/min`
+                  : sttUsageTitle}
               >{sttUsageLabel}</span>
             </div>
 
@@ -511,18 +621,18 @@
               <div class="bar-track">
                 <div class="bar-fill {pctClass(llmPct)}" style="width: {llmPct}%"></div>
               </div>
-              <span class="bar-val">{usageStore.usage?.llm_count ?? 0}/1000</span>
+              <span class="bar-val" title={llmUsageTitle}>{llmUsageLabel}</span>
             </div>
           </div>
 
         {:else}
           <!-- Collapsed: stacked usage chips for STT + LLM, centered. -->
           <div class="usage-stack">
-            <div class="usage-chip {pctClass(sttPct)}" title="STT calls today: {usageStore.usage?.stt_count ?? 0}">
+            <div class="usage-chip {pctClass(sttPct)}" title={sttUsageTitle}>
               <span class="usage-chip-key">STT</span>
               <span class="usage-chip-val">{sttPct}%</span>
             </div>
-            <div class="usage-chip {pctClass(llmPct)}" title="Cleanup calls today: {usageStore.usage?.llm_count ?? 0}">
+            <div class="usage-chip {pctClass(llmPct)}" title={llmUsageTitle}>
               <span class="usage-chip-key">LLM</span>
               <span class="usage-chip-val">{llmPct}%</span>
             </div>
@@ -588,9 +698,10 @@
   }
 
   .sidebar {
+    position: relative;
     display: flex;
     flex-direction: column;
-    width: 200px;
+    width: 248px;
     background: var(--bg-sidebar);
     border-right: 1px solid var(--border);
     transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1),
@@ -604,6 +715,41 @@
     width: 56px;
   }
 
+  .sidebar.resizing {
+    user-select: none;
+  }
+
+  .sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 20;
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .sidebar-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 2px;
+    width: 1px;
+    height: 100%;
+    background: transparent;
+    transition: background 120ms ease, box-shadow 120ms ease;
+  }
+
+  .sidebar-resizer:hover::after,
+  .sidebar-resizer:focus-visible::after,
+  .sidebar.resizing .sidebar-resizer::after {
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-fade);
+  }
+
   .sidebar-top {
     flex: 1;
     display: flex;
@@ -613,7 +759,7 @@
     min-height: 0;
     /* When window is short, sidebar-top's content can't fit in the
        space sidebar-bottom leaves. Without this overflow rule it would
-       visually bleed into sidebar-bottom (FLOATER picker rendering
+       visually bleed into sidebar-bottom (avatar picker rendering
        behind / on top of TODAY'S USAGE — reported in v1.0.0-nightly.3).
        overflow-y: auto turns the excess into a scrollable region with
        a thin matching scrollbar. */
@@ -640,9 +786,14 @@
     flex-shrink: 0;
   }
 
+  .sidebar-bottom .replay-onboarding,
+  .sidebar-bottom .sidebar-fox {
+    display: none;
+  }
+
   /* Sidebar mascot — watercolor fox sitting in tall grass. Sits centred
-     at the very bottom of the sidebar, below usage + active-models
-     blocks. The hero illustration is intentionally roomy (130×130) to
+     at the very bottom of the sidebar, below the usage block. The hero
+     illustration is intentionally roomy (130×130) to
      feel like a real character, not a tiny icon. */
   .replay-onboarding {
     display: block;
@@ -856,7 +1007,7 @@
     color: var(--text-primary);
   }
 
-  /* Floater section — icon-only grid (same in both light + dark themes). */
+  /* Avatar section — icon-only grid (same in both light + dark themes). */
   .section {
     margin-top: 14px;
     border-top: 1px solid var(--border-subtle);
@@ -916,8 +1067,8 @@
 
   .model-selects {
     display: grid;
-    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
   }
 
   .model-selects select {
@@ -978,7 +1129,7 @@
     align-items: center;
   }
 
-  /* Floater size presets (S / M / L) */
+  /* Avatar size presets (S / M / L) */
   .scale-row {
     display: flex;
     align-items: center;
@@ -1070,7 +1221,7 @@
   /* Progress bars for usage */
   .bar-row {
     display: grid;
-    grid-template-columns: 26px 1fr auto;
+    grid-template-columns: 26px minmax(0, 1fr) max-content;
     align-items: center;
     gap: 6px;
     font-size: 10px;
@@ -1103,6 +1254,11 @@
     font-variant-numeric: tabular-nums;
     color: var(--text-primary);
     font-size: 10px;
+    max-width: 76px;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Collapsed usage — stacked chips, centered in the narrow sidebar. */
@@ -1212,12 +1368,12 @@
      Tighten the sidebar and drop the hero fox so things don't overlap.
      The "Replay onboarding" link also gets a smaller hit area. */
   @media (max-width: 720px) {
-    .sidebar { width: 172px; }
+    .sidebar:not(.collapsed) { width: min(216px, 34vw) !important; }
     .sidebar-fox { width: 100px; height: 100px; }
   }
   @media (max-width: 560px) {
     .sidebar-fox { display: none; }
-    .sidebar { width: 156px; }
+    .sidebar:not(.collapsed) { width: min(216px, 42vw) !important; }
   }
 
   /* Short windows — the hero fox is the biggest non-essential thing

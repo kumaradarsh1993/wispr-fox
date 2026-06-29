@@ -22,8 +22,7 @@
         "decorations": true,
         "resizable": true,
         "visible": false,
-        "center": true,
-        "theme": "Light"
+        "center": true
       },
       {
         "label": "clippy",

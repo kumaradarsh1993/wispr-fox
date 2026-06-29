@@ -9,10 +9,7 @@
 //   "stylized"    — hand-built SVG paperclip (dark outline, transparent body)
 //   "real-clippy" — Microsoft Clippy via clippyts
 //   "cat"         — SVG charcoal desk cat (green eyes, slit pupils)
-//   "cat-lab"     — experimental refined charcoal cat (thin edge highlights,
-//                   lighter belly/paws, defined neck + mouth + tail). Lives
-//                   side-by-side with "cat" while we iterate on legibility
-//                   over dark wallpapers. Same animations + bubble theme.
+//   "cat-lab"     — retired pre-stable cat experiment; saved values migrate to "cat".
 //   "duo"         — Khaumani & Indy, the two-cat team (v1.4): a serene white
 //                   cat loafing on a console slab + an orange tabby kitten
 //                   doing the actual work. Modeled on the user's real cats.
@@ -30,7 +27,7 @@ export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat" | "cat-lab
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "cat-lab", "duo"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "duo"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
@@ -40,6 +37,8 @@ function readInitial(): Skin {
   if (raw === "beige") return "stylized";
   // Migrate retired "duck" → "fox" (closest "cute mascot" cousin).
   if (raw === "duck") return "fox";
+  // Migrate retired "cat-lab" → "cat" (same character family, cleaner picker).
+  if (raw === "cat-lab") return "cat";
   // Retire the remastered two-cat experiment back to the cleaner original duo.
   if (raw === "duo-hd") return "duo";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
@@ -62,6 +61,7 @@ class SkinStore {
       // Migrate stale "beige" / "duck" emissions from older windows still running.
       if ((v as string) === "beige") v = "stylized";
       if ((v as string) === "duck") v = "fox";
+      if ((v as string) === "cat-lab") v = "cat";
       if ((v as string) === "duo-hd") v = "duo";
       if (VALID_SKINS.includes(v)) {
         this.current = v;
@@ -74,6 +74,8 @@ class SkinStore {
 
   /** Set the skin and broadcast — call from the sidebar picker. */
   async set(s: Skin) {
+    if ((s as string) === "cat-lab") s = "cat";
+    if ((s as string) === "duo-hd") s = "duo";
     this.current = s;
     try {
       localStorage.setItem(STORAGE_KEY, s);

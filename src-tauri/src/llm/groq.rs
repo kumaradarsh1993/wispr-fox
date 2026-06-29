@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{LlmError, LlmProvider};
+use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT: &str = "https://api.groq.com/openai/v1/chat/completions";
 const TIMEOUT: Duration = Duration::from_secs(8);
@@ -26,7 +26,11 @@ impl GroqLlm {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("reqwest client construction is infallible with default config");
-        Self { client, api_key, model }
+        Self {
+            client,
+            api_key,
+            model,
+        }
     }
 }
 
@@ -46,6 +50,14 @@ struct ChatMessage<'a> {
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+    usage: Option<ChatUsage>,
+}
+
+#[derive(Deserialize)]
+struct ChatUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -69,12 +81,18 @@ impl LlmProvider for GroqLlm {
         system: &str,
         user: &str,
         temperature: f32,
-    ) -> Result<String, LlmError> {
+    ) -> Result<LlmOutput, LlmError> {
         let body = ChatRequest {
             model: &self.model,
             messages: vec![
-                ChatMessage { role: "system", content: system },
-                ChatMessage { role: "user", content: user },
+                ChatMessage {
+                    role: "system",
+                    content: system,
+                },
+                ChatMessage {
+                    role: "user",
+                    content: user,
+                },
             ],
             temperature,
         };
@@ -91,7 +109,10 @@ impl LlmProvider for GroqLlm {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status: status.as_u16(), body });
+            return Err(LlmError::Http {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let parsed: ChatResponse = resp
@@ -106,6 +127,17 @@ impl LlmProvider for GroqLlm {
             .map(|c| c.message.content)
             .unwrap_or_default();
 
-        Ok(text)
+        let usage = parsed.usage.map(|u| {
+            let input_tokens = u.prompt_tokens.unwrap_or(0);
+            let output_tokens = u.completion_tokens.unwrap_or(0);
+            let total_tokens = u.total_tokens.unwrap_or(input_tokens + output_tokens);
+            TokenUsage {
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            }
+        });
+
+        Ok(LlmOutput { text, usage })
     }
 }

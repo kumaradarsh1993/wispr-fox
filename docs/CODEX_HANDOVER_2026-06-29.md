@@ -167,3 +167,77 @@ Hey, so two things. We need to do a UI cleanup on this one, especially within se
 - If the retired `duo-hd` code becomes distracting, prune it in a dedicated
   avatar-code cleanup pass. This checkpoint intentionally only removed it from
   user-selectable surfaces and added migration.
+
+## Settings/sidebar polish checkpoint - Codex v1.4.0-nightly.9
+
+The next user prompt asked for follow-up settings polish, visible usage
+improvements, native titlebar theme sync, and a first look at Codex-style pet
+assets:
+
+```text
+Hey, good job in the cleanup and the settings, etc., etc. Few minor changes from a settings point of view. One, the, under security key event log, let's just put it under some sort of expandable or so. We don't need to see this properly. But by the way, I'm just pasting key event log for you to decipher what's happening with the app. After this, then under general, I think rest of the things seem to be pretty fine. Yeah, I think that's fine. Under avatar, let's just get rid of cat lab. And yeah, by the way, all these assets that have been created were created by Claude, who is not a bad at doing illustrations and infographics. And because you have access to much better models for image generation, would you rather take a shot at doing some interesting illustrations? In fact, you might remember I told you that Claude, sorry, not Claude, Codex, which is technically you, has this whole pet feature. Your files would already have it. See how, I mean, you might have, want to go back to your app files and your installation files and see how what sort of assets have been created, what sort of harness has been created to host those assets, etc., etc. Because I really, really like that implementation. You can ask me for additional, you know, sort of permissions to go through my C drive installation for your directory, which is Codex, and then figure out, you know, what sort of assets are kept hosted, what harness, and all the detailing around it. We want to implement something very similar here. So two things, right? One is within my existing SDK, create a new avatar, cat and foxes, fine. I hope you have access to image gen models as a part of it. If not, then maybe just do whatever you can to sort of create those. But yeah, what is required is I want to see what kind of quality you bring to these avatars. Secondly, if you can reverse engineer whatever is done under Codex, under pet, I don't think that's like something very secret, right? It should be ethical to just see what has been done, the quality of assets. In fact, you can actually copy of the assets from there. Again, this is more of a pet project that we have. Lastly, the top bar, the whisper box with the minimize, maximize, close button, etc., etc. That color is still not changing with the overall theme. It's not syncing up. It should not be the same, it should be complementary of sorts, right? Imagine how you would typically have a color code for it. Then left-hand panel, I think we can have a thing where I can drag to expand and collapse using that left-hand bar. Because right now the model space has become too congested. The deepgram, Nova 3, both like over the text, the arrows sort of coincide. So you can make it wider and make it adjustable. And deepgram credit is cumulative thing, speech-to-text LLM. I think we should have some sort of a, you know, sort of overall usage thing, tokens. I'm not sure if Deepgram returns how many tokens have been used and what's the cost per token, etc., etc. Same thing for Grok and all. But if they do, then just ask for it and keep a track of it. Imagine it very similar to how we track words and length, etc., etc. That similar way we are using, we are tracking usage by model for both STT and LLM on a day-wise basis. So a log of that is kept. These are the few things that we need to work with. All right, cool.
+```
+
+### What Codex changed for nightly.9
+
+- Made Settings -> Security's key event log a collapsed disclosure by default.
+  It still shows a recent-event count in the summary and never shows secret
+  values.
+- Removed `cat-lab` from selectable Avatar surfaces (sidebar, Settings ->
+  Avatar, and the floater context menu). Saved `cat-lab` values migrate back to
+  `cat`. The old implementation remains in `/clippy` only as inert legacy code.
+- Removed the fixed `"theme": "Light"` from the Tauri main window and added
+  frontend native theme sync via Tauri's app `setTheme` API. `dark` maps to
+  native dark, `light`/`retro` map to native light, and `auto` follows system.
+- Made the sidebar drag-resizable, with a wider default and a wider minimum so
+  model dropdown text and native select arrows no longer collide. Keyboard
+  arrows resize the sidebar when the resize handle is focused.
+- Moved the decorative sidebar fox/replay-onboarding extras into the scrollable
+  sidebar area and kept the anchored bottom block limited to usage meters. This
+  fixed the 720px-tall viewport overlap where the LLM picker could sit under
+  the bottom usage block.
+- Reworked `usage.json` into a backward-compatible `UsageFile { today, days }`
+  shape with per-day `model_usage` buckets. Each bucket records stage (`stt` or
+  `llm`), provider, model, call count, STT audio seconds, LLM token counts, and
+  conservative estimated cost where available.
+- STT recording now stores provider/model/audio seconds after successful
+  transcription. Deepgram still updates the cumulative $200-credit estimate.
+- LLM cleanup/drafting now records provider/model and token usage when returned
+  by Groq chat completions, OpenAI Responses, or Gemini `usageMetadata`.
+- The sidebar bottom readout now reflects the active model's audio/tokens/calls
+  instead of only coarse global call counters.
+
+### Codex pet/assets investigation
+
+- `C:\Users\kadar\.codex\pets` existed but was empty at inspection time.
+- The installed Codex app resources included Lottie-related third-party notices,
+  but no obvious exposed pet/mascot/avatar assets were found outside bundled app
+  internals. Codex did not copy bundled Codex artwork into wispr-fox.
+- Codex generated a fresh wispr-fox avatar concept sprite sheet for direction
+  at:
+  `C:\Users\kadar\.codex\generated_images\019f0ff4-1c24-7a90-b917-2117c20eed47\ig_0c3422770c4b780d016a4246a4cb5081949468a93df4db7162.png`
+- That generated image is **not yet packaged into the app**. To ship it as a
+  real avatar, the next pass should slice/export state assets, add a skin id,
+  wire `SkinIcon`, sidebar/settings/context-menu pickers, `/clippy` rendering,
+  and update the avatar SDK docs if the manifest contract changes.
+
+### Verification for nightly.9
+
+- `npm run check`: passed with 0 errors. Existing unrelated warnings remain in
+  History/onboarding and local `@types/node` setup.
+- `npm run build`: passed. Existing unrelated bundle/a11y/unused-selector
+  warnings remain.
+- `cargo check` in `src-tauri`: passed. Existing unrelated Rust warnings remain.
+- Local browser verification against `http://127.0.0.1:1420` confirmed:
+  Security key event log starts collapsed, Cat lab is not visible on Avatar,
+  bottom usage block is compact, and the LLM picker is fully above the anchored
+  usage block at the 1280x720 viewport.
+
+### Notes for the next assistant
+
+- LLM token usage is recorded when providers return it; LLM dollar cost is not
+  estimated yet because pricing is volatile. Add pricing as a separate
+  provider-metadata layer if the user asks for spend tracking.
+- Git status may show `commands.rs` / `lib.rs` as modified on Windows because
+  cargo-formatting touched line endings, but `git diff --name-only` excludes
+  them when there is no real content diff. Do not commit line-ending ghosts.

@@ -20,10 +20,12 @@ promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
 
 Claude Code's final pre-Codex checkpoint is commit `c2d33e3`. Codex then
 published `v1.4.0-nightly.6` for the provider expansion,
-`v1.4.0-nightly.7` for Windows key-storage hardening, and is preparing
-`v1.4.0-nightly.8` for the P0 settings/sidebar cleanup. Future Codex-authored
-nightlies must keep Codex visible in the release title/notes. Do not promote
-any Codex nightly to stable without the user's explicit "ship it" signal.
+`v1.4.0-nightly.7` for Windows key-storage hardening, `v1.4.0-nightly.8`
+for the P0 settings/sidebar cleanup, and is preparing `v1.4.0-nightly.9`
+for follow-up settings/sidebar polish, native titlebar theme sync, and
+per-model usage tracking. Future Codex-authored nightlies must keep Codex
+visible in the release title/notes. Do not promote any Codex nightly to stable
+without the user's explicit "ship it" signal.
 
 Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
 Claude. It captures the user's prompts, what Codex changed, why the Windows
@@ -74,7 +76,7 @@ src/routes/
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Providers, Modes, Dictation, Avatar, General, Security
-  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/cat-lab/duo
+  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/duo
                    (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
                    white loaf supervises, orange tabby works; paw-bump on paste)
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
@@ -148,6 +150,10 @@ to find tray-only apps the way Windows users find the system tray).
   $200 free credit when Deepgram is selected, using Nova-3 multilingual
   pre-recorded pricing ($0.0092/min). This is an estimate, not a billing API
   readout.
+- **Model usage buckets**: as of `v1.4.0-nightly.9`, `usage.json` stores
+  per-day STT/LLM buckets by provider and model. STT buckets track successful
+  audio seconds; LLM buckets track input/output/total tokens when provider
+  responses include usage metadata. LLM cost is deliberately not estimated yet.
 
 ## v1.0.0 design system ("Foxy")
 
@@ -395,7 +401,7 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-06-29 Codex settings/sidebar checkpoint. See*
+*Last touched: 2026-06-29 Codex settings/sidebar + usage checkpoint. See*
 *docs/CODEX_HANDOVER_2026-06-29.md for the full prompts, decisions,*
 *GitHub plaintext-key audit, and settings cleanup notes. Update when*
 *conventions or architecture change - not on every fix.*

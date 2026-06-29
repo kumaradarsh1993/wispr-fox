@@ -30,6 +30,23 @@ pub enum LlmError {
     Decode(String),
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmOutput {
+    pub text: String,
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
+}
+
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &'static str;
@@ -38,5 +55,5 @@ pub trait LlmProvider: Send + Sync {
         system: &str,
         user: &str,
         temperature: f32,
-    ) -> Result<String, LlmError>;
+    ) -> Result<LlmOutput, LlmError>;
 }

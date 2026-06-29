@@ -50,7 +50,6 @@
     { id: "stylized",    label: "Paperclip",        emoji: "Pc" },
     { id: "real-clippy", label: "Clippy",           emoji: "Cl" },
     { id: "cat",         label: "Desk Cat",         emoji: "Ct" },
-    { id: "cat-lab",     label: "Cat (lab)",        emoji: "Lab" },
     { id: "duo",         label: "Khaumani & Indy",  emoji: "KI" },
     { id: "off",         label: "Hide",             emoji: "Off" },
   ];

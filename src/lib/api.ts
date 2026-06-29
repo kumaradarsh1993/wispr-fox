@@ -155,6 +155,25 @@ export interface DailyUsage {
   deepgram_estimated_usd: number;
   deepgram_free_credit_usd: number;
   deepgram_rate_usd_per_min: number;
+  model_usage: ModelUsage[];
+  recent_days: UsageDay[];
+}
+
+export interface ModelUsage {
+  stage: "stt" | "llm" | string;
+  provider: string;
+  model: string;
+  calls: number;
+  audio_seconds: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_usd: number;
+}
+
+export interface UsageDay {
+  date: string;
+  model_usage: ModelUsage[];
 }
 
 export interface DailyStat {

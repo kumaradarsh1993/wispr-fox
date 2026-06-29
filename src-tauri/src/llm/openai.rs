@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{LlmError, LlmProvider};
+use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT: &str = "https://api.openai.com/v1/responses";
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -26,7 +26,11 @@ impl OpenAiLlm {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("reqwest client construction is infallible with default config");
-        Self { client, api_key, model }
+        Self {
+            client,
+            api_key,
+            model,
+        }
     }
 }
 
@@ -71,6 +75,29 @@ fn extract_output_text(v: &Value) -> String {
     out
 }
 
+fn extract_usage(v: &Value) -> Option<TokenUsage> {
+    let usage = v.get("usage")?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(input_tokens + output_tokens);
+    Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    })
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiLlm {
     fn name(&self) -> &'static str {
@@ -82,7 +109,7 @@ impl LlmProvider for OpenAiLlm {
         system: &str,
         user: &str,
         temperature: f32,
-    ) -> Result<String, LlmError> {
+    ) -> Result<LlmOutput, LlmError> {
         let body = ResponsesRequest {
             model: &self.model,
             instructions: system,
@@ -104,7 +131,10 @@ impl LlmProvider for OpenAiLlm {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status: status.as_u16(), body });
+            return Err(LlmError::Http {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let parsed: Value = resp
@@ -116,6 +146,7 @@ impl LlmProvider for OpenAiLlm {
         if text.trim().is_empty() {
             return Err(LlmError::Decode("empty response from OpenAI".into()));
         }
-        Ok(text)
+        let usage = extract_usage(&parsed);
+        Ok(LlmOutput { text, usage })
     }
 }
