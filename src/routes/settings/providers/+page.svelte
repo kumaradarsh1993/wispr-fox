@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type SecretCheck, type SecretKeyName, type SecretLocation, type SecretsDiagnostic } from "$lib/api";
+  import { api, type SecretCheck, type SecretKeyName } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
+  import {
+    LLM_MODELS,
+    STT_MODELS,
+    llmModelsFor,
+    llmReady,
+    providerLabel,
+    sttModelsFor,
+    sttReady,
+  } from "$lib/provider-options";
   import { flash } from "$lib/settings-toast.svelte";
 
   type TestResult =
@@ -9,8 +18,6 @@
     | { kind: "testing" }
     | { kind: "ok"; models: string[] }
     | { kind: "error"; msg: string };
-  type ModelOpt = { id: string; label: string; quality: string };
-
   const EMPTY_SECRETS: SecretCheck = {
     stt: false,
     llm: false,
@@ -23,7 +30,6 @@
   };
 
   let secretCheck = $state<SecretCheck>({ ...EMPTY_SECRETS });
-  let diag = $state<SecretsDiagnostic | null>(null);
   let saving = $state(false);
 
   let groqStt = $state("");
@@ -40,103 +46,8 @@
   let elevenlabsTestResult = $state<TestResult>({ kind: "idle" });
   let geminiTestResult = $state<TestResult>({ kind: "idle" });
 
-  const STT_MODELS: Record<string, ModelOpt[]> = {
-    groq: [
-      { id: "whisper-large-v3-turbo", label: "Whisper Turbo", quality: "Fast, strong default" },
-      { id: "whisper-large-v3", label: "Whisper Large v3", quality: "Slower, highest Whisper accuracy" },
-      { id: "distil-whisper-large-v3-en", label: "Distil-Whisper", quality: "Fastest, English only" },
-    ],
-    openai: [
-      { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", quality: "Best OpenAI STT quality" },
-      { id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", quality: "Lower cost, fast" },
-      { id: "whisper-1", label: "Whisper API", quality: "Legacy compatible fallback" },
-    ],
-    deepgram: [
-      { id: "nova-3", label: "Nova-3", quality: "Recommended Deepgram v2 batch model" },
-      { id: "nova-2", label: "Nova-2", quality: "Stable fallback" },
-    ],
-    elevenlabs: [
-      { id: "scribe_v2", label: "Scribe v2", quality: "Recommended ElevenLabs STT" },
-      { id: "scribe_v1", label: "Scribe v1", quality: "Legacy fallback" },
-    ],
-  };
-
-  const LLM_MODELS: Record<string, ModelOpt[]> = {
-    groq: [
-      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", quality: "Balanced default" },
-      { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", quality: "Fastest cleanup" },
-      { id: "llama-4-maverick", label: "Llama 4 Maverick", quality: "Higher quality, lower free quota" },
-    ],
-    gemini: [
-      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Current default" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast free-tier option" },
-      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Lowest latency / quota friendly" },
-      { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview", quality: "Preview, use only if your key lists it" },
-      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", quality: "Preview Pro, billing likely required" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", quality: "Paid tier" },
-    ],
-    openai: [
-      { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
-      { id: "gpt-5.4", label: "GPT-5.4", quality: "Higher quality" },
-      { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
-    ],
-  };
-
-  function providerLabel(provider: string): string {
-    return provider === "groq"
-      ? "Groq"
-      : provider === "openai"
-      ? "OpenAI"
-      : provider === "deepgram"
-      ? "Deepgram"
-      : provider === "elevenlabs"
-      ? "ElevenLabs"
-      : provider === "gemini"
-      ? "Google Gemini"
-      : provider;
-  }
-
-  function sttReady(provider: string): boolean {
-    return provider === "groq"
-      ? secretCheck.stt
-      : provider === "openai"
-      ? secretCheck.openai_stt || secretCheck.openai_llm
-      : provider === "deepgram"
-      ? secretCheck.deepgram_stt
-      : provider === "elevenlabs"
-      ? secretCheck.elevenlabs_stt
-      : false;
-  }
-
-  function llmReady(provider: string): boolean {
-    return provider === "groq"
-      ? secretCheck.llm || secretCheck.stt
-      : provider === "gemini"
-      ? Boolean(secretCheck.gemini)
-      : provider === "openai"
-      ? secretCheck.openai_llm || secretCheck.openai_stt
-      : false;
-  }
-
-  function sttModelsFor(provider: string): ModelOpt[] {
-    return STT_MODELS[provider] ?? STT_MODELS.groq;
-  }
-
-  function llmModelsFor(provider: string): ModelOpt[] {
-    return LLM_MODELS[provider] ?? LLM_MODELS.groq;
-  }
-
   async function refreshSecrets() {
     secretCheck = await api.checkSecrets();
-    await refreshDiagnostic();
-  }
-
-  async function refreshDiagnostic() {
-    try {
-      diag = await api.secretsDiagnostic();
-    } catch (e) {
-      console.warn("secrets diagnostic failed", e);
-    }
   }
 
   async function saveKey(key: SecretKeyName, value: string, clear: () => void, label: string) {
@@ -177,11 +88,11 @@
   }
 
   async function changeSttProvider(provider: string) {
-    await settings.set("stt_provider", provider as any);
     const options = sttModelsFor(provider);
-    if (!options.find((m) => m.id === settings.s.stt_model)) {
-      await settings.set("stt_model", options[0].id as any);
-    }
+    const stt_model = options.find((m) => m.id === settings.s.stt_model)
+      ? settings.s.stt_model
+      : options[0].id;
+    await settings.setMany({ stt_provider: provider, stt_model } as any);
     flash(`STT provider: ${providerLabel(provider)}`);
   }
 
@@ -192,11 +103,11 @@
   }
 
   async function changeLlmProvider(provider: string) {
-    await settings.set("llm_provider", provider as any);
     const options = llmModelsFor(provider);
-    if (!options.find((m) => m.id === settings.s.llm_model)) {
-      await settings.set("llm_model", options[0].id as any);
-    }
+    const llm_model = options.find((m) => m.id === settings.s.llm_model)
+      ? settings.s.llm_model
+      : options[0].id;
+    await settings.setMany({ llm_provider: provider, llm_model } as any);
     flash(`Cleanup provider: ${providerLabel(provider)}`);
   }
 
@@ -204,40 +115,6 @@
     await settings.set("llm_model", modelId as any);
     const label = llmModelsFor(settings.s.llm_provider).find((m) => m.id === modelId)?.label ?? modelId;
     flash(`Cleanup model: ${label}`);
-  }
-
-  function locationLabel(loc: SecretLocation): string {
-    return loc === "keyring"
-      ? "OS keyring"
-      : loc === "encrypted_file"
-      ? "Encrypted fallback"
-      : loc === "legacy_file"
-      ? "Legacy plaintext"
-      : loc === "file"
-      ? "File fallback"
-      : "Not saved";
-  }
-
-  function locationClass(loc: SecretLocation): string {
-    return loc === "keyring"
-      ? "ok"
-      : loc === "encrypted_file"
-      ? "warn"
-      : loc === "file" || loc === "legacy_file"
-      ? "danger"
-      : "neutral";
-  }
-
-  function anyDiagSaved(d: SecretsDiagnostic): boolean {
-    return [
-      d.stt,
-      d.llm,
-      d.gemini,
-      d.openai_stt,
-      d.openai_llm,
-      d.deepgram_stt,
-      d.elevenlabs_stt,
-    ].some((loc) => loc !== "none");
   }
 
   onMount(() => {
@@ -252,7 +129,75 @@
     locally in the OS keyring first, with encrypted fallback only when the keyring fails.
   </p>
 
-  <div class="provider-grid">
+  <div class="settings-card model-choice-card">
+    <h3>Speech-to-text</h3>
+    <div class="provider-model-row">
+      <div class="field-block field-half">
+        <label for="stt-provider">Service</label>
+        <select id="stt-provider" value={settings.s.stt_provider} onchange={(e) => changeSttProvider((e.currentTarget as HTMLSelectElement).value)}>
+          {#each Object.keys(STT_MODELS) as provider}
+            <option value={provider} disabled={!sttReady(secretCheck, provider)}>
+              {providerLabel(provider)} {sttReady(secretCheck, provider) ? "" : "(add key first)"}
+            </option>
+          {/each}
+        </select>
+      </div>
+      <div class="field-block field-half">
+        <label for="stt-model">Model</label>
+        <select id="stt-model" value={settings.s.stt_model} onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}>
+          {#each sttModelsFor(settings.s.stt_provider) as m (m.id)}
+            <option value={m.id}>{m.label} - {m.quality}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+
+    <div class="field-block">
+      <label for="language-hint">Language hint <span class="hint-inline">(blank = auto-detect)</span></label>
+      <input
+        id="language-hint"
+        type="text"
+        placeholder="auto"
+        value={settings.s.language_hint ?? ""}
+        onchange={(e) => {
+          const v = (e.currentTarget as HTMLInputElement).value.trim();
+          settings.set("language_hint", v.length ? v : null);
+        }}
+      />
+      <p class="hint">Use ISO codes like <code>en</code> or <code>hi</code>. Leave blank for code-switching.</p>
+    </div>
+  </div>
+
+  <div class="settings-card model-choice-card">
+    <h3>LLM cleanup</h3>
+    <div class="provider-model-row">
+      <div class="field-block field-half">
+        <label for="llm-provider">Service</label>
+        <select id="llm-provider" value={settings.s.llm_provider} onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}>
+          {#each Object.keys(LLM_MODELS) as provider}
+            <option value={provider} disabled={!llmReady(secretCheck, provider)}>
+              {providerLabel(provider)} {llmReady(secretCheck, provider) ? "" : "(add key first)"}
+            </option>
+          {/each}
+        </select>
+      </div>
+      <div class="field-block field-half">
+        <label for="llm-model">Model</label>
+        <select id="llm-model" value={settings.s.llm_model} onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}>
+          {#each llmModelsFor(settings.s.llm_provider) as m (m.id)}
+            <option value={m.id}>{m.label} - {m.quality}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <details class="key-manager">
+    <summary>
+      <span>Manage API keys</span>
+      <em>{secretCheck.any_stt ? "STT ready" : "Add an STT key to start"}</em>
+    </summary>
+    <div class="provider-grid">
     <div class="provider-card">
       <div class="provider-head">
         <div>
@@ -410,107 +355,13 @@
         {#if geminiTestResult.kind === "error"}<span class="test-msg error">{geminiTestResult.msg}</span>{/if}
       </div>
     </div>
-  </div>
-
-  <div class="settings-card">
-    <h3>Speech-to-text</h3>
-    <div class="provider-model-row">
-      <div class="field-block field-half">
-        <label for="stt-provider">Service</label>
-        <select id="stt-provider" value={settings.s.stt_provider} onchange={(e) => changeSttProvider((e.currentTarget as HTMLSelectElement).value)}>
-          {#each Object.keys(STT_MODELS) as provider}
-            <option value={provider} disabled={!sttReady(provider)}>
-              {providerLabel(provider)} {sttReady(provider) ? "" : "(add key first)"}
-            </option>
-          {/each}
-        </select>
-      </div>
-      <div class="field-block field-half">
-        <label for="stt-model">Model</label>
-        <select id="stt-model" value={settings.s.stt_model} onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}>
-          {#each sttModelsFor(settings.s.stt_provider) as m (m.id)}
-            <option value={m.id}>{m.label} - {m.quality}</option>
-          {/each}
-        </select>
-      </div>
     </div>
-
-    <div class="field-block">
-      <label for="language-hint">Language hint <span class="hint-inline">(blank = auto-detect)</span></label>
-      <input
-        id="language-hint"
-        type="text"
-        placeholder="auto"
-        value={settings.s.language_hint ?? ""}
-        onchange={(e) => {
-          const v = (e.currentTarget as HTMLInputElement).value.trim();
-          settings.set("language_hint", v.length ? v : null);
-        }}
-      />
-      <p class="hint">Use ISO codes like <code>en</code> or <code>hi</code>. Leave blank for code-switching.</p>
-    </div>
-  </div>
-
-  <div class="settings-card">
-    <h3>LLM cleanup</h3>
-    <div class="provider-model-row">
-      <div class="field-block field-half">
-        <label for="llm-provider">Service</label>
-        <select id="llm-provider" value={settings.s.llm_provider} onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}>
-          {#each Object.keys(LLM_MODELS) as provider}
-            <option value={provider} disabled={!llmReady(provider)}>
-              {providerLabel(provider)} {llmReady(provider) ? "" : "(add key first)"}
-            </option>
-          {/each}
-        </select>
-      </div>
-      <div class="field-block field-half">
-        <label for="llm-model">Model</label>
-        <select id="llm-model" value={settings.s.llm_model} onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}>
-          {#each llmModelsFor(settings.s.llm_provider) as m (m.id)}
-            <option value={m.id}>{m.label} - {m.quality}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-  </div>
+  </details>
 
   <p class="tip">
-    Per-mode cleanup toggles and prompts live in <strong>Settings -> Modes</strong>.
-    Hotkey bindings live in <strong>Settings -> Dictation</strong>.
+    Clean Transcribe by default from the sidebar. Per-mode prompts live in <strong>Modes</strong>,
+    hotkeys live in <strong>Dictation</strong>, and key storage diagnostics live in <strong>Security</strong>.
   </p>
-
-  {#if diag}
-    <div class="diag-card">
-      <div class="diag-head">
-        <h3>Key storage status</h3>
-        <button class="btn-link" onclick={refreshDiagnostic}>Refresh</button>
-      </div>
-      <ul class="diag-list">
-        <li><span class="diag-label">Groq STT</span><span class="diag-loc {locationClass(diag.stt)}">{locationLabel(diag.stt)}</span></li>
-        <li><span class="diag-label">Groq cleanup</span><span class="diag-loc {locationClass(diag.llm)}">{locationLabel(diag.llm)}</span></li>
-        <li><span class="diag-label">OpenAI STT</span><span class="diag-loc {locationClass(diag.openai_stt)}">{locationLabel(diag.openai_stt)}</span></li>
-        <li><span class="diag-label">OpenAI cleanup</span><span class="diag-loc {locationClass(diag.openai_llm)}">{locationLabel(diag.openai_llm)}</span></li>
-        <li><span class="diag-label">Deepgram STT</span><span class="diag-loc {locationClass(diag.deepgram_stt)}">{locationLabel(diag.deepgram_stt)}</span></li>
-        <li><span class="diag-label">ElevenLabs STT</span><span class="diag-loc {locationClass(diag.elevenlabs_stt)}">{locationLabel(diag.elevenlabs_stt)}</span></li>
-        <li><span class="diag-label">Gemini cleanup</span><span class="diag-loc {locationClass(diag.gemini)}">{locationLabel(diag.gemini)}</span></li>
-      </ul>
-      {#if !diag.keyring_works && anyDiagSaved(diag)}
-        <p class="diag-warn">
-          The OS keyring is not accepting verified writes, so at least one key is in local fallback.
-          The key still works, but OS keyring storage is preferred.
-        </p>
-      {/if}
-      {#if diag.legacy_fallback_exists}
-        <p class="diag-warn">
-          A legacy plaintext key file exists. Open this page or use the saved key once to migrate it,
-          then confirm the legacy file is gone.
-        </p>
-      {/if}
-      <p class="diag-path">Encrypted fallback: <code>{diag.encrypted_fallback_path}</code> {diag.encrypted_fallback_exists ? "(exists)" : "(empty)"}</p>
-      <p class="diag-path">Legacy plaintext fallback: <code>{diag.legacy_fallback_path}</code> {diag.legacy_fallback_exists ? "(exists)" : "(empty)"}</p>
-    </div>
-  {/if}
 </section>
 
 <style>
@@ -519,6 +370,58 @@
     grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
     gap: 16px;
     max-width: 1040px;
+  }
+  .model-choice-card {
+    max-width: 860px;
+  }
+  .key-manager {
+    max-width: 1040px;
+    margin-top: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-card);
+    overflow: hidden;
+  }
+  .key-manager > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .key-manager > summary::-webkit-details-marker {
+    display: none;
+  }
+  .key-manager > summary::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 6px solid var(--text-secondary);
+    transform-origin: 3px 4px;
+    transition: transform 120ms ease;
+  }
+  .key-manager[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .key-manager > summary em {
+    margin-left: auto;
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .key-manager[open] > summary {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .key-manager .provider-grid {
+    padding: 16px;
   }
   .provider-card {
     min-width: 0;
@@ -533,103 +436,5 @@
     line-height: 1.5;
     margin: 24px 0 0;
     max-width: 720px;
-  }
-  .diag-card {
-    margin: 28px 0 0;
-    padding: 16px 18px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    max-width: 720px;
-  }
-  .diag-card h3 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .diag-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 4px;
-  }
-  .btn-link {
-    background: none;
-    border: none;
-    color: var(--accent, #ec7c34);
-    font-size: 12px;
-    cursor: pointer;
-    padding: 2px 6px;
-  }
-  .btn-link:hover {
-    text-decoration: underline;
-  }
-  .diag-list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 8px;
-    display: grid;
-    gap: 4px;
-  }
-  .diag-list li {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 6px 0;
-    border-bottom: 1px dashed var(--border);
-    font-size: 13px;
-  }
-  .diag-list li:last-child {
-    border-bottom: none;
-  }
-  .diag-label {
-    font-weight: 500;
-    color: var(--text);
-  }
-  .diag-loc {
-    font-size: 12px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-  .diag-loc.ok {
-    background: rgba(76, 175, 80, 0.15);
-    color: #2e7d32;
-  }
-  .diag-loc.warn {
-    background: rgba(255, 152, 0, 0.18);
-    color: #b06800;
-  }
-  .diag-loc.danger {
-    background: var(--danger-fade);
-    color: var(--danger);
-  }
-  .diag-loc.neutral {
-    background: var(--bg-subtle);
-    color: var(--text-secondary);
-  }
-  .diag-warn {
-    margin: 10px 0 6px;
-    padding: 10px 12px;
-    background: rgba(255, 152, 0, 0.1);
-    border-left: 3px solid #ff9800;
-    border-radius: 4px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text);
-  }
-  .diag-path {
-    margin: 6px 0 0;
-    font-size: 11px;
-    color: var(--text-secondary);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    word-break: break-all;
-  }
-  .diag-path code {
-    background: var(--bg-subtle);
-    padding: 1px 4px;
-    border-radius: 3px;
   }
 </style>

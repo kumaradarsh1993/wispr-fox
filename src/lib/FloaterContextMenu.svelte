@@ -52,7 +52,6 @@
     { id: "cat",         label: "Desk Cat",         emoji: "Ct" },
     { id: "cat-lab",     label: "Cat (lab)",        emoji: "Lab" },
     { id: "duo",         label: "Khaumani & Indy",  emoji: "KI" },
-    { id: "duo-hd",      label: "Khaumani & Indy+", emoji: "KI+" },
     { id: "off",         label: "Hide",             emoji: "Off" },
   ];
 

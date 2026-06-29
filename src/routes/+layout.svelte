@@ -8,14 +8,24 @@
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
   import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
-  import { api } from "$lib/api";
+  import { api, type SecretCheck } from "$lib/api";
   import SkinIcon from "$lib/SkinIcon.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
+  import {
+    DEEPGRAM_FREE_CREDIT_USD,
+    LLM_PROVIDERS,
+    STT_PROVIDERS,
+    llmModelsFor,
+    llmReady,
+    sttModelsFor,
+    sttReady,
+  } from "$lib/provider-options";
 
   let { children } = $props();
 
   let collapsed = $state(false);
   let appVersion = $state<string>("");
+  let flowBusy = $state(false);
 
   // macOS auto-paste needs Accessibility permission (CGEvent injection + the
   // Cmd+V fallback both require it). `accessibility_ok` returns true on
@@ -60,21 +70,68 @@
     { id: "cat",         label: "Desk Cat" },
     { id: "cat-lab",     label: "Cat (lab)" },
     { id: "duo",         label: "Khaumani & Indy" },
-    { id: "duo-hd",      label: "Khaumani & Indy ✦" },
   ];
+
+  let secretCheck = $state<SecretCheck | null>(null);
+
+  async function refreshSidebarSecrets() {
+    try {
+      secretCheck = await api.checkSecrets();
+    } catch (e) {
+      console.warn("sidebar secret check failed", e);
+      secretCheck = null;
+    }
+  }
 
   async function pickSkin(s: Skin) {
     await skinStore.set(s);
     await setClippyWindowVisible(s !== "off");
   }
 
-  // Floater size presets (S/M/L). Sticky + cross-window via floaterScale.
+  async function changeSttProvider(provider: string) {
+    const options = sttModelsFor(provider);
+    const stt_model = options.some((m) => m.id === settings.s.stt_model)
+      ? settings.s.stt_model
+      : options[0].id;
+    await settings.setMany({ stt_provider: provider, stt_model } as any);
+    await usageStore.refresh();
+  }
+
+  async function changeSttModel(modelId: string) {
+    await settings.set("stt_model", modelId as any);
+    await usageStore.refresh();
+  }
+
+  async function changeLlmProvider(provider: string) {
+    const options = llmModelsFor(provider);
+    const llm_model = options.some((m) => m.id === settings.s.llm_model)
+      ? settings.s.llm_model
+      : options[0].id;
+    await settings.setMany({ llm_provider: provider, llm_model } as any);
+    await usageStore.refresh();
+  }
+
+  async function changeLlmModel(modelId: string) {
+    await settings.set("llm_model", modelId as any);
+    await usageStore.refresh();
+  }
+
+  // Avatar size presets (S/M/L). Sticky + cross-window via floaterScale.
   let scaleActive = $derived(floaterScale.activePreset());
 
-  // Lightweight usage meters. Limits are conservative reference markers, not
-  // provider billing counters; exact quotas live in each provider console.
-  let sttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
+  // Lightweight usage meters. Deepgram shows an estimated spend against the
+  // current free credit; other providers stay on conservative call counters.
+  let deepgramSpend = $derived(usageStore.usage?.deepgram_estimated_usd ?? 0);
+  let deepgramCredit = $derived(usageStore.usage?.deepgram_free_credit_usd ?? DEEPGRAM_FREE_CREDIT_USD);
+  let deepgramPct = $derived(Math.min(100, Math.round((deepgramSpend / deepgramCredit) * 100)));
+  let countSttPct = $derived(Math.min(100, Math.round(((usageStore.usage?.stt_count ?? 0) / 2000) * 100)));
+  let sttPct = $derived(settings.s.stt_provider === "deepgram" ? deepgramPct : countSttPct);
   let llmPct = $derived(Math.min(100, Math.round(((usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
+  let sttUsageLabel = $derived(
+    settings.s.stt_provider === "deepgram"
+      ? `$${deepgramSpend.toFixed(2)}/$${Math.round(deepgramCredit)}`
+      : `${usageStore.usage?.stt_count ?? 0}/2000`,
+  );
 
   // Daily usage rolls over at UTC midnight. Show that moment in the
   // user's local timezone so they don't have to do mental UTC math
@@ -117,6 +174,7 @@
     // load, show it ONLY if "open_silently" is off.
     (async () => {
       await settings.init();
+      await refreshSidebarSecrets();
       if (!settings.s.open_silently) {
         try {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -142,11 +200,18 @@
 
     // Tray menu can request navigation via wispr:navigate event.
     let unlisten: (() => void) | undefined;
+    let unlistenFlow: (() => void) | undefined;
     listen<string>("wispr:navigate", (e) => {
       goto(e.payload);
     }).then((u) => (unlisten = u));
+    listen<string>("wispr:state", (e) => {
+      flowBusy = e.payload !== "idle";
+    }).then((u) => (unlistenFlow = u));
 
-    return () => unlisten?.();
+    return () => {
+      unlisten?.();
+      unlistenFlow?.();
+    };
   });
 
   // Accessibility-permission check (macOS auto-paste). Re-check on window
@@ -267,7 +332,7 @@
 
         {#if !collapsed}
           <div class="hotkey-reminder">
-            <div class="hk-title">HOLD TO DICTATE</div>
+            <div class="hk-title">Dictation keys</div>
             <div class="hk-row">
               <span class="hk-mode">Light</span>
               <kbd>{shortcutDisplay(settings.s.light_hotkey)}</kbd>
@@ -283,11 +348,87 @@
           </div>
         {/if}
 
-        <!-- Floater section: icon-only skin picker. Same compact grid in
+        {#if !collapsed}
+          <div class="section model-panel">
+            <div class="section-title-bar">Models</div>
+
+            <div class="model-row">
+              <div class="model-row-head">
+                <span>STT</span>
+                <a href="/settings/providers" title="Manage provider keys">Keys</a>
+              </div>
+              <div class="model-selects">
+                <select
+                  aria-label="Speech-to-text service"
+                  value={settings.s.stt_provider}
+                  disabled={flowBusy}
+                  onchange={(e) => changeSttProvider((e.currentTarget as HTMLSelectElement).value)}
+                >
+                  {#each STT_PROVIDERS as provider}
+                    <option value={provider.id} disabled={!sttReady(secretCheck, provider.id)}>
+                      {provider.label}{sttReady(secretCheck, provider.id) ? "" : " - add key"}
+                    </option>
+                  {/each}
+                </select>
+                <select
+                  aria-label="Speech-to-text model"
+                  value={settings.s.stt_model}
+                  disabled={flowBusy}
+                  onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}
+                >
+                  {#each sttModelsFor(settings.s.stt_provider) as model (model.id)}
+                    <option value={model.id}>{model.label}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+
+            <div class="model-row">
+              <div class="model-row-head">
+                <span>LLM</span>
+                <label class="mini-toggle" title="Clean Transcribe by default">
+                  <input
+                    type="checkbox"
+                    checked={settings.s.auto_clean_in_light}
+                    disabled={flowBusy}
+                    onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  <span>Clean</span>
+                </label>
+              </div>
+              <div class="model-selects">
+                <select
+                  aria-label="LLM service"
+                  value={settings.s.llm_provider}
+                  disabled={flowBusy}
+                  onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}
+                >
+                  {#each LLM_PROVIDERS as provider}
+                    <option value={provider.id} disabled={!llmReady(secretCheck, provider.id)}>
+                      {provider.label}{llmReady(secretCheck, provider.id) ? "" : " - add key"}
+                    </option>
+                  {/each}
+                </select>
+                <select
+                  aria-label="LLM model"
+                  value={settings.s.llm_model}
+                  disabled={flowBusy}
+                  onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}
+                >
+                  {#each llmModelsFor(settings.s.llm_provider) as model (model.id)}
+                    <option value={model.id}>{model.label}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Avatar section: icon-only skin picker. Same compact grid in
              both expanded and collapsed states (just different column count). -->
         <div class="section">
           {#if !collapsed}
-            <div class="section-title-bar">FLOATER</div>
+            <div class="section-title-bar">Avatar</div>
             <div class="skin-grid">
               {#each SKIN_OPTIONS as opt (opt.id)}
                 <button
@@ -302,15 +443,15 @@
               {/each}
             </div>
             {#if skinStore.current !== "off"}
-              <div class="scale-row" role="group" aria-label="Floater size">
+              <div class="scale-row" role="group" aria-label="Avatar size">
                 <span class="scale-label">Size</span>
                 {#each SCALE_PRESETS as p (p.id)}
                   <button
                     class="scale-btn"
                     class:active={scaleActive === p.id}
                     onclick={() => floaterScale.set(p.value)}
-                    title={`Floater size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
-                    aria-label={`Floater size ${p.label}`}
+                    title={`Avatar size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
+                    aria-label={`Avatar size ${p.label}`}
                   >{p.label}</button>
                 {/each}
               </div>
@@ -329,13 +470,13 @@
               {/each}
             </div>
             {#if skinStore.current !== "off"}
-              <div class="scale-row-collapsed" role="group" aria-label="Floater size">
+              <div class="scale-row-collapsed" role="group" aria-label="Avatar size">
                 {#each SCALE_PRESETS as p (p.id)}
                   <button
                     class="scale-btn"
                     class:active={scaleActive === p.id}
                     onclick={() => floaterScale.set(p.value)}
-                    title={`Floater size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
+                    title={`Avatar size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
                   >{p.label}</button>
                 {/each}
               </div>
@@ -347,15 +488,22 @@
       <div class="sidebar-bottom">
         {#if !collapsed}
           <div class="footer-block">
-            <div class="footer-title">Today's usage</div>
-            <div class="footer-reset" title="Local usage counters reset at midnight UTC">{resetLabel}</div>
+            <div class="footer-title">{settings.s.stt_provider === "deepgram" ? "Usage" : "Today's usage"}</div>
+            <div class="footer-reset" title="Local call counters reset at midnight UTC">
+              {settings.s.stt_provider === "deepgram" ? "Deepgram credit is cumulative" : resetLabel}
+            </div>
 
             <div class="bar-row">
               <span class="bar-key">STT</span>
               <div class="bar-track">
                 <div class="bar-fill {pctClass(sttPct)}" style="width: {sttPct}%"></div>
               </div>
-              <span class="bar-val">{usageStore.usage?.stt_count ?? 0}/2000</span>
+              <span
+                class="bar-val"
+                title={settings.s.stt_provider === "deepgram"
+                  ? `Estimated Deepgram credit used at $${(usageStore.usage?.deepgram_rate_usd_per_min ?? 0.0092).toFixed(4)}/min`
+                  : "STT calls today"}
+              >{sttUsageLabel}</span>
             </div>
 
             <div class="bar-row">
@@ -367,17 +515,6 @@
             </div>
           </div>
 
-          <div class="footer-block">
-            <div class="footer-title">Active models</div>
-            <div class="footer-stat" title={usageStore.models?.stt}>
-              <span class="footer-key">STT</span>
-              <span class="footer-val">{shortModel(usageStore.models?.stt)}</span>
-            </div>
-            <div class="footer-stat" title={usageStore.models?.llm_advanced}>
-              <span class="footer-key">LLM</span>
-              <span class="footer-val">{shortModel(usageStore.models?.llm_advanced)}</span>
-            </div>
-          </div>
         {:else}
           <!-- Collapsed: stacked usage chips for STT + LLM, centered. -->
           <div class="usage-stack">
@@ -735,6 +872,97 @@
     padding: 0 10px 8px;
   }
 
+  .model-panel {
+    padding-top: 10px;
+  }
+
+  .model-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 0 2px 10px;
+  }
+
+  .model-row + .model-row {
+    border-top: 1px dashed var(--border-subtle);
+    padding-top: 10px;
+  }
+
+  .model-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  .model-row-head a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .model-row-head a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+  }
+
+  .model-selects {
+    display: grid;
+    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+    gap: 4px;
+  }
+
+  .model-selects select {
+    min-width: 0;
+    width: 100%;
+    height: 28px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  .model-selects select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-fade);
+  }
+
+  .model-selects select:disabled,
+  .mini-toggle input:disabled + span {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .mini-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .mini-toggle input {
+    width: 12px;
+    height: 12px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
   .skin-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -846,17 +1074,17 @@
     align-items: center;
     gap: 6px;
     font-size: 10px;
-    color: #6e6e73;
+    color: var(--text-secondary);
   }
 
   .bar-key {
     font-weight: 500;
-    color: #6e6e73;
+    color: var(--text-secondary);
   }
 
   .bar-track {
     height: 6px;
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--bg-subtle);
     border-radius: 3px;
     overflow: hidden;
   }
@@ -867,13 +1095,13 @@
     transition: width 300ms ease, background 200ms ease;
   }
 
-  .bar-fill.ok { background: #34c759; }
-  .bar-fill.warn { background: #ff9f0a; }
-  .bar-fill.danger { background: #ff453a; }
+  .bar-fill.ok { background: var(--success); }
+  .bar-fill.warn { background: var(--warning); }
+  .bar-fill.danger { background: var(--danger); }
 
   .bar-val {
     font-variant-numeric: tabular-nums;
-    color: #1d1d1f;
+    color: var(--text-primary);
     font-size: 10px;
   }
 
@@ -938,10 +1166,11 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    background: var(--warning-fade, #fff4e0);
+    background: var(--bg-elev);
     color: var(--text-primary);
-    border: 1px solid var(--warning, #ff9f0a);
-    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--warning);
+    border-radius: 8px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
     font-size: 12px;
     line-height: 1.35;
@@ -953,7 +1182,7 @@
     flex: 0 0 auto;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--bg-card);
     border-radius: 7px;
     padding: 4px 10px;
     font-size: 12px;

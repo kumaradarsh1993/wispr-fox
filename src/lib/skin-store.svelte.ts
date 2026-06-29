@@ -16,13 +16,7 @@
 //   "duo"         — Khaumani & Indy, the two-cat team (v1.4): a serene white
 //                   cat loafing on a console slab + an orange tabby kitten
 //                   doing the actual work. Modeled on the user's real cats.
-//   "duo-hd"      — Khaumani & Indy, "Lively" (v1.4): a from-scratch, higher-
-//                   fidelity remake of the duo — gradient fur volume, soft
-//                   fur-fuzz edges, mackerel tabby striping, slit-pupil eyes,
-//                   a warm sunbeam ledge — driven by a single SCENE-DIRECTOR
-//                   timeline so the cats actually move around: stretch, a real
-//                   lateral pounce (squash-and-stretch), a slow-blink "cat
-//                   love" exchange, a paw groom. The original "duo" is kept.
+//   "duo-hd"      — retired pre-stable experiment; saved values migrate to "duo".
 //
 // Removed in v1.0.0-nightly.5: "beige" — the cream-variant paperclip.
 // Removed in v1.1.0-nightly.5: "duck" — the rubber-duck design didn't
@@ -36,7 +30,7 @@ export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat" | "cat-lab
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "cat-lab", "duo", "duo-hd"] as const;
+const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "cat-lab", "duo"] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
@@ -46,6 +40,8 @@ function readInitial(): Skin {
   if (raw === "beige") return "stylized";
   // Migrate retired "duck" → "fox" (closest "cute mascot" cousin).
   if (raw === "duck") return "fox";
+  // Retire the remastered two-cat experiment back to the cleaner original duo.
+  if (raw === "duo-hd") return "duo";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
   // Default: the watercolor fox — wispr-fox's own mascot, matches the
   // design playbook. Previously defaulted to real Clippy; new users now
@@ -66,6 +62,7 @@ class SkinStore {
       // Migrate stale "beige" / "duck" emissions from older windows still running.
       if ((v as string) === "beige") v = "stylized";
       if ((v as string) === "duck") v = "fox";
+      if ((v as string) === "duo-hd") v = "duo";
       if (VALID_SKINS.includes(v)) {
         this.current = v;
         try {

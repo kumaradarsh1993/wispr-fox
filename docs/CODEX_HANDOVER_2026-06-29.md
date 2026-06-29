@@ -110,3 +110,60 @@ artifacts.
   handling now should be legacy migration from `.keys.json`.
 - Keep future Codex-authored release names/descriptions visibly marked Codex.
 - Stable promotion still requires an explicit user signal.
+
+## Settings/sidebar checkpoint - Codex v1.4.0-nightly.8
+
+The next user prompt asked for a P0 cleanup of Settings and the left sidebar,
+with a specific emphasis on reducing information overload and making the
+provider/usage area genuinely useful:
+
+```text
+Hey, so two things. We need to do a UI cleanup on this one, especially within settings. So take a comprehensive look at all the settings. You might want to rejig two things. One is where each of the settings reside, what tabs specifically we retain, where each of the settings sit within each of the tabs, what is the layout of each of the settings so that it's not information overload. This is like a P0 for us to solve for right now. Even on the, we are not touching homepage, we're just touching the settings submodule. And we are sort of doing things there. On the left-hand path, right, which is the left sub bar, we have a usage tracker also, right, where model, I think, where to the bottom left we show which speech-to-text and which cleaner we are using. That space needs to be tweaked a little. That's going to become a major feature for us now because I was thinking, why just use it to show information? So there are three parts. So we are rewriting that. But that entire module can move. So A, it should be always visible, right? Like it should be a part of a homepage itself. It can keep sitting there or it can actually become, you know, in continuation with how wherever we have put up the floater, etc., etc., right? So rather than being anchored to the bottom, it can be anchored inline. So history, stats, settings is fine. Then where you talk about hold to dictate, that section is fine. Then we provide the floater or avatar. We should name that avatar and not floater. Then there is two cat modules, right? Orugujia or I don't know whatever that is named, KhauMoney and IndieStar. There is one older one and then there is a newer one. Newer one looks shitty, just delete that. Then below that, there has to, so today's usage still stays at the bottom as an anchor. But that is slightly dicey and I'll tell you more nuances about it. But yeah, this speech-to-text picker and, so call it, so instead of speech-to-text, yeah, STT and LLM is fine. But we need to provide a picker there, right? And it has to be a dynamic dropdown. And in general, like the theme has to be nicer, cleaner, where the speech-to-text provides me a picker of sorts of what service and model I need to pick. Similarly, the LLM provides same thing, right? So now it provides a picker, and then against the LLM, there's a checkbox, which basically is the toggle that we have in settings, which is whether I want to auto-clean or not, right? So that toggle, that checkbox, we need takes care of it, and says keep the preference. And yeah, last thing, the usage part, right? So the admin module, whatever you're talking about, so that is taken care of there. Can be bottom, but you can take care of the UI. The usage part, and then correcting the post problem, there is, you know, there's an insight that in there's probably usage and that's onboarded, and then as well as the speech-to-text. But in case of Deepgram or something, there's a $200 limit that they have given us, right? So that you should track against $200 on how much usage we are doing against $200. You might need to check what is the translation rate. I can also validate. Okay. So and yeah, one tactical thing, the top bar, with most of that, right, which shows the prompts or something with the close button right at the top. That color does not change with the system theme. That looks odd. Can you please take care of it with the system theme matching colors, whatever thematic options we have should comply.
+```
+
+### What Codex changed for the settings/sidebar checkpoint
+
+- Reworked the Settings IA to six tabs: Providers, Modes, Dictation, Avatar,
+  General, and Security. The old Data tab now redirects into General, where
+  retention/storage controls live.
+- Made Providers less overwhelming: active STT and LLM service/model selectors
+  are the first two cards; API keys are tucked behind a collapsed "Manage API
+  keys" disclosure; key-storage diagnostics remain in Security.
+- Added shared frontend provider metadata in `src/lib/provider-options.ts` so
+  the sidebar and Providers page use the same STT/LLM providers, model lists,
+  readiness checks, and labels.
+- Turned the old passive sidebar "active models" footer into an inline Models
+  panel: STT service/model picker, LLM service/model picker, a "Clean" checkbox
+  for `auto_clean_in_light`, and a Keys shortcut. The controls disable while a
+  dictation flow is active to avoid mid-flight provider swaps.
+- Kept usage anchored at the bottom. Non-Deepgram STT continues to show the
+  local daily call counter. Deepgram now shows an estimated cumulative spend
+  against a $200 credit using the official Nova-3 multilingual pre-recorded
+  price of $0.0092/min, recorded after successful Deepgram transcriptions.
+- Renamed user-facing "Floater" settings/sidebar labels to "Avatar."
+- Retired the newer `duo-hd` Khaumani & Indy variant from selectable UI. Saved
+  `duo-hd` values migrate back to the older `duo` avatar. The deep SVG/CSS
+  implementation remains inert in `/clippy` for now; no user-visible picker can
+  select it.
+- Rewrote the Dictation settings page to reduce duplicated copy and stale macOS
+  hotkey language, while keeping the same controls.
+- Added responsive settings breakpoints so the settings shell collapses cleanly
+  on narrower windows.
+- Updated the macOS permission banner/top notice styling to use theme tokens
+  instead of hard-coded warning colors.
+
+### Verification for settings/sidebar checkpoint
+
+- `npm run check`: passed with 0 errors. Existing unrelated warnings remain in
+  History, onboarding, and the local missing `@types/node` setup.
+- `npm run build`: passed. Existing bundle/a11y/unused-selector warnings remain
+  in unrelated areas.
+- `cargo check` in `src-tauri`: passed. Existing unrelated Rust warnings remain.
+
+### Notes for the next assistant
+
+- The Deepgram usage number is an estimate for the selected Nova-3 multilingual
+  pricing, not a live Deepgram billing API readout.
+- If the retired `duo-hd` code becomes distracting, prune it in a dedicated
+  avatar-code cleanup pass. This checkpoint intentionally only removed it from
+  user-selectable surfaces and added migration.

@@ -1,8 +1,4 @@
 <script lang="ts">
-  // Dictation — cross-cutting hotkeys + behaviour toggles.
-  // Per-mode hotkeys live in /settings/providers under Models > Modes;
-  // this page is for the force-clean override + advanced legacy binding
-  // + post-dictation behaviour (clipboard, pull-back, per-app tone).
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
   import HotkeyCapture from "$lib/HotkeyCapture.svelte";
@@ -10,51 +6,43 @@
 
   async function saveHotkeys() {
     await settings.replace({ ...settings.s });
-    flash("Saved — restart wispr-fox to apply new hotkeys");
+    flash("Restart wispr-fox to apply new hotkeys");
   }
 </script>
 
 <section>
   <h2>Dictation</h2>
   <p class="lede">
-    Per-mode hotkeys ({prettyHotkey(settings.s.light_hotkey)} Transcribe,
-    {prettyHotkey(settings.s.drafting_hotkey)} Draft, Advanced cleanup) live
-    inside <strong>Providers & Models → Modes</strong> alongside their cleanup
-    toggle and system prompt — that's the recommended place to edit them.
-    This page is kept for cross-cutting bindings (the force-clean override)
-    and post-dictation behaviour.
+    Bind the keys that start and stop dictation. Model choices live in
+    <strong>Providers</strong>; cleanup defaults and prompts live in
+    <strong>Modes</strong>.
   </p>
   {#if isMac()}
-    <p class="lede tight" style="margin-top: -4px;">
-      <strong>macOS defaults to ⌃⌥ chords</strong> (Ctrl + Option + letter). The
-      Mac function row sends media/volume events by default, so a global F8 / F9
-      shortcut would either fire only when you hold fn, or fight Apple Music for
-      play-pause. ⌃⌥ chords fire regardless of the "use F1/F2 as standard function
-      keys" system setting and rarely collide with app shortcuts. You can rebind
-      anything below.
+    <p class="lede tight">
+      <strong>macOS defaults to Option+Space and Option+Enter.</strong> Bare
+      F8/F9 can be swallowed by media-key behavior unless macOS is configured
+      for standard function keys.
     </p>
   {/if}
   <p class="lede tight">
-    Every mode has TWO hotkeys: a <strong>main</strong> (push-to-talk by default —
-    hold to record) and a <strong>sticky-invoke</strong> (press once to start,
-    press again to stop). Optionally check <strong>"Default to sticky"</strong>
-    to make the main hotkey also behave as a toggle.
+    Every mode has a main hotkey and a sticky hotkey. Main is push-to-talk by
+    default; sticky starts on first press and stops on the next press.
   </p>
 
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe <span class="hk-tag">{isMac() ? "⌃⌥D" : "F8"} default · most used</span></div>
-        <div class="hk-desc">Voice → text. LLM cleanup toggle is in Providers & Models.</div>
+        <div class="hk-label">Transcribe <span class="hk-tag">{isMac() ? "Option+Space" : "F8"} default</span></div>
+        <div class="hk-desc">Voice to text. The sidebar Clean toggle decides whether this also runs LLM cleanup.</div>
       </div>
     </div>
     <div class="hk-pair">
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Main (push-to-talk)</div>
+        <div class="hk-pair-label">Main</div>
         <HotkeyCapture label="" bind:value={settings.s.light_hotkey} />
       </div>
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+        <div class="hk-pair-label">Sticky</div>
         <HotkeyCapture label="" bind:value={settings.s.light_sticky_hotkey} />
       </div>
     </div>
@@ -64,24 +52,24 @@
         checked={settings.s.sticky_light}
         onchange={(e) => settings.set("sticky_light", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span>Default to sticky — make the MAIN hotkey behave as toggle too</span>
+      <span>Make the main Transcribe hotkey sticky by default</span>
     </label>
   </div>
 
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">{isMac() ? "⌃⌥C" : "Shift+F8"} default</span></div>
-        <div class="hk-desc">Same as Transcribe, but forces LLM cleanup ON for this one press — useful when you normally want raw and occasionally want cleaned. Doesn't change the persistent toggle.</div>
+        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">{isMac() ? "Shift+Option+Space" : "Shift+F8"} default</span></div>
+        <div class="hk-desc">Runs Transcribe with cleanup on for this one dictation without changing your saved preference.</div>
       </div>
     </div>
     <div class="hk-pair">
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Main (push-to-talk)</div>
+        <div class="hk-pair-label">Main</div>
         <HotkeyCapture label="" bind:value={settings.s.force_clean_hotkey} />
       </div>
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+        <div class="hk-pair-label">Sticky</div>
         <HotkeyCapture label="" bind:value={settings.s.force_clean_sticky_hotkey} />
       </div>
     </div>
@@ -90,17 +78,17 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Draft <span class="hk-tag">{isMac() ? "⌃⌥F" : "F9"} default</span></div>
-        <div class="hk-desc">Drafts polished output from your brief. Best for emails, Slack, docs.</div>
+        <div class="hk-label">Draft <span class="hk-tag">{isMac() ? "Option+Enter" : "F9"} default</span></div>
+        <div class="hk-desc">Turns a spoken brief into polished output for email, chat, docs, or social posts.</div>
       </div>
     </div>
     <div class="hk-pair">
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Main (push-to-talk)</div>
+        <div class="hk-pair-label">Main</div>
         <HotkeyCapture label="" bind:value={settings.s.drafting_hotkey} />
       </div>
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+        <div class="hk-pair-label">Sticky</div>
         <HotkeyCapture label="" bind:value={settings.s.drafting_sticky_hotkey} />
       </div>
     </div>
@@ -110,22 +98,22 @@
         checked={settings.s.sticky_drafting}
         onchange={(e) => settings.set("sticky_drafting", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span>Default to sticky</span>
+      <span>Make the main Draft hotkey sticky by default</span>
     </label>
   </div>
 
   <details class="hotkey-block-collapsed">
     <summary>
-      <span class="hk-label">Advanced cleanup (legacy)</span>
-      <span class="hk-desc-inline">— optional dedicated hotkey for the cleanup-only pipeline. Most people don't need this; the Transcribe LLM toggle covers it.</span>
+      <span class="hk-label">Advanced cleanup</span>
+      <span class="hk-desc-inline">Optional legacy cleanup-only binding. Most users can leave this unbound.</span>
     </summary>
     <div class="hk-pair">
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Main (push-to-talk)</div>
+        <div class="hk-pair-label">Main</div>
         <HotkeyCapture label="" bind:value={settings.s.advanced_hotkey} />
       </div>
       <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky-invoke (toggle)</div>
+        <div class="hk-pair-label">Sticky</div>
         <HotkeyCapture label="" bind:value={settings.s.advanced_sticky_hotkey} />
       </div>
     </div>
@@ -135,25 +123,18 @@
         checked={settings.s.sticky_advanced}
         onchange={(e) => settings.set("sticky_advanced", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span>Default to sticky</span>
+      <span>Make Advanced sticky by default</span>
     </label>
   </details>
 
   <button class="btn-primary" onclick={saveHotkeys}>Save hotkeys</button>
   <p class="hint">
-    ⚠ Hotkey changes take effect after restarting wispr-fox.
-    {#if isMac()}
-      Mac defaults use ⌃⌥ chords because the function row is media/volume by default; F-keys only fire when you hold fn.
-    {:else}
-      F10 is retired by default — it activates the menu bar in Outlook, which steals focus from your text field.
-    {/if}
-    <strong>Press Esc</strong> any time during a recording to stop cleanly without sending anything.
+    Hotkey changes take effect after restarting wispr-fox. Press <strong>Esc</strong>
+    during a recording to stop cleanly without sending anything.
   </p>
 
-  <h3>Behaviour</h3>
-  <p class="lede">
-    How wispr-fox delivers the result when you've moved on during the LLM gap.
-  </p>
+  <h3>Delivery</h3>
+  <p class="lede">What wispr-fox does after transcription or cleanup finishes.</p>
 
   <div class="behavior-block">
     <label class="check-row">
@@ -162,9 +143,9 @@
         checked={settings.s.keep_in_clipboard}
         onchange={(e) => settings.set("keep_in_clipboard", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Keep dictation on clipboard</strong> — after every dictation, the cleaned text stays on your clipboard. Press Ctrl+V anywhere as a backup delivery.</span>
+      <span><strong>Keep result on clipboard</strong> so Ctrl+V remains a backup after every dictation.</span>
     </label>
-    <p class="hint">Sacrifices whatever you previously copied. Turn off if you rely on clipboard history flows.</p>
+    <p class="hint">This replaces whatever you previously copied.</p>
   </div>
 
   <div class="behavior-block">
@@ -174,9 +155,9 @@
         checked={settings.s.pull_back_on_navigation}
         onchange={(e) => settings.set("pull_back_on_navigation", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Pull focus back to original app</strong> when result is ready — yank the window you started speaking in back to the foreground so the paste lands there.</span>
+      <span><strong>Pull focus back to the original app</strong> when the result is ready.</span>
     </label>
-    <p class="hint">Off by default (don't disrupt you if you've moved on). When off and you've navigated away, wispr-fox copies to clipboard and Clippy shows "Copied to clipboard" instead.</p>
+    <p class="hint">Off by default. When off and you move away, wispr-fox copies the result to the clipboard instead of pasting into the wrong app.</p>
   </div>
 
   <div class="behavior-block">
@@ -186,8 +167,8 @@
         checked={settings.s.adapt_to_app}
         onchange={(e) => settings.set("adapt_to_app", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Adapt tone to active app</strong> — when you press {prettyHotkey(settings.s.drafting_hotkey)}, look at which app you're dictating into and hint the LLM at the right register (formal for Outlook, casual for WhatsApp, polished for LinkedIn, etc).</span>
+      <span><strong>Adapt Draft tone to the active app</strong> using only a coarse bucket like email, chat, doc, or social.</span>
     </label>
-    <p class="hint">Only the bucket name (e.g. "email", "chat") is sent to the LLM — never your window title or process name. Affects drafting only; Transcribe always preserves your voice exactly. Off = let the LLM infer register from the brief alone.</p>
+    <p class="hint">Affects Draft only. Transcribe preserves your words.</p>
   </div>
 </section>

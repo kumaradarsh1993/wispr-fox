@@ -1,8 +1,5 @@
 <script lang="ts">
-  // Settings layout — left sub-nav + outlet for sub-route content.
-  // Each setting category gets its own URL (deep-linkable from
-  // onboarding, tray menu, etc.). Shared toast lives here; sub-pages
-  // import flash() from $lib/settings-toast to trigger it.
+  // Settings layout: compact sub-nav + outlet for category pages.
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { settings } from "$lib/settings-store.svelte";
@@ -13,13 +10,12 @@
 
   type NavItem = { href: string; label: string; icon: string };
   const NAV: NavItem[] = [
-    { href: "/settings/security",   label: "Security",           icon: "!" },
-    { href: "/settings/providers",  label: "Providers & Models", icon: "🔑" },
-    { href: "/settings/modes",      label: "Modes",              icon: "✨" },
-    { href: "/settings/dictation",  label: "Dictation",          icon: "⌨" },
-    { href: "/settings/general",    label: "General",            icon: "⚙" },
-    { href: "/settings/appearance", label: "Appearance",         icon: "🎨" },
-    { href: "/settings/data",       label: "Data",               icon: "🗃" },
+    { href: "/settings/providers", label: "Providers", icon: "K" },
+    { href: "/settings/modes", label: "Modes", icon: "M" },
+    { href: "/settings/dictation", label: "Dictation", icon: "D" },
+    { href: "/settings/appearance", label: "Avatar", icon: "A" },
+    { href: "/settings/general", label: "General", icon: "G" },
+    { href: "/settings/security", label: "Security", icon: "!" },
   ];
 
   function isActive(href: string): boolean {
@@ -52,7 +48,7 @@
 
   <main class="section-body">
     {#if toast.msg}
-      <div class="toast">✓ {toast.msg}</div>
+      <div class="toast">Saved: {toast.msg}</div>
     {/if}
 
     {@render children?.()}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Appearance — floater skin + app theme.
+  // Appearance - avatar skin + app theme.
   import { onMount } from "svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
@@ -15,7 +15,6 @@
     { id: "cat",         label: "Desk Cat",  desc: "Sleepy charcoal cat with green slit-pupil eyes — curls up idle, perks up to help, typing paws" },
     { id: "cat-lab",     label: "Cat (lab)", desc: "Experimental charcoal cat — thin white edge highlights, lighter belly + paws, defined neck, mouth and tail for legibility over dark wallpapers" },
     { id: "duo",         label: "Khaumani & Indy", desc: "The two-cat team — a serene white cat loafing on the console supervises while an orange tabby kitten does the actual typing. Paw bump on every successful paste" },
-    { id: "duo-hd",      label: "Khaumani & Indy ✦", desc: "The remastered duo, drawn fresh with richer fur, tabby striping and slit-pupil eyes — and far livelier: the cats stretch, pounce, trade a slow-blink and groom on a looping scene timeline, on a warm sunlit ledge. Perks up to listen; happy double-hop on every paste" },
   ];
 
   const THEME_OPTIONS = [
@@ -58,9 +57,9 @@
 
 <section>
   <h2>Appearance</h2>
-  <p class="lede">Floating character and app-wide theme.</p>
+  <p class="lede">Avatar, window behaviour, and app-wide theme.</p>
 
-  <h3>Floater character</h3>
+  <h3>Avatar</h3>
   <p class="lede">The floating animated character that reacts to your dictation. Off = hidden window.</p>
   <div class="skin-tiles">
     {#each SKIN_OPTIONS as opt (opt.id)}
@@ -81,7 +80,7 @@
     {/each}
   </div>
 
-  <h3>Floater size</h3>
+  <h3>Avatar size</h3>
   <p class="lede">Scale the floating character and its window together. Smaller frees up screen space on 13″ laptops; larger is easier to see. Applies live and sticks across restarts.</p>
   <div class="scale-control">
     <input
@@ -92,7 +91,7 @@
       step="0.05"
       value={floaterScale.current}
       oninput={onScaleInput}
-      aria-label="Floater size"
+      aria-label="Avatar size"
     />
     <span class="scale-value">{Math.round(floaterScale.current * 100)}%</span>
   </div>
@@ -108,8 +107,8 @@
     {/each}
   </div>
 
-  <h3>Floater window</h3>
-  <p class="lede">How much screen the floater's (invisible) window claims around the character.</p>
+  <h3>Avatar window</h3>
+  <p class="lede">How much screen the avatar's invisible window claims around the character.</p>
   <div class="radio-grid">
     {#each BOX_OPTIONS as opt (opt.fixed)}
       <button
@@ -133,9 +132,9 @@
         checked={floaterDebug.current}
         onchange={(e) => floaterDebug.set((e.currentTarget as HTMLInputElement).checked)}
       />
-      <span>Show floater debug overlay</span>
+      <span>Show avatar debug overlay</span>
     </label>
-    <p class="debug-hint">Draws the floater's window bounds and a live size readout on the character, so you can see exactly how big the box is and whether it's resizing. For tuning only — leave off for normal use.</p>
+    <p class="debug-hint">Draws the avatar window bounds and a live size readout on the character, so you can see exactly how big the box is and whether it's resizing. For tuning only — leave off for normal use.</p>
   </div>
 
   <h3>Theme</h3>

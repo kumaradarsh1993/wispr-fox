@@ -151,6 +151,10 @@ export interface DailyUsage {
   date: string;
   stt_count: number;
   llm_count: number;
+  deepgram_audio_seconds: number;
+  deepgram_estimated_usd: number;
+  deepgram_free_credit_usd: number;
+  deepgram_rate_usd_per_min: number;
 }
 
 export interface DailyStat {

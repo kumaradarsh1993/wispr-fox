@@ -1,0 +1,129 @@
+import type { SecretCheck } from "./api";
+
+export type ProviderModel = {
+  id: string;
+  label: string;
+  quality: string;
+};
+
+export type ProviderOption = {
+  id: string;
+  label: string;
+  summary: string;
+};
+
+export const DEEPGRAM_FREE_CREDIT_USD = 200;
+export const DEEPGRAM_NOVA3_MULTILINGUAL_USD_PER_MIN = 0.0092;
+
+export const STT_PROVIDERS: ProviderOption[] = [
+  { id: "groq", label: "Groq", summary: "Whisper STT" },
+  { id: "openai", label: "OpenAI", summary: "GPT transcription" },
+  { id: "deepgram", label: "Deepgram", summary: "Nova transcription" },
+  { id: "elevenlabs", label: "ElevenLabs", summary: "Scribe transcription" },
+];
+
+export const LLM_PROVIDERS: ProviderOption[] = [
+  { id: "groq", label: "Groq", summary: "Llama cleanup" },
+  { id: "openai", label: "OpenAI", summary: "GPT cleanup" },
+  { id: "gemini", label: "Gemini", summary: "Google cleanup" },
+];
+
+export const STT_MODELS: Record<string, ProviderModel[]> = {
+  groq: [
+    { id: "whisper-large-v3-turbo", label: "Whisper Turbo", quality: "Fast, strong default" },
+    { id: "whisper-large-v3", label: "Whisper Large v3", quality: "Slower, highest Whisper accuracy" },
+    { id: "distil-whisper-large-v3-en", label: "Distil-Whisper", quality: "Fastest, English only" },
+  ],
+  openai: [
+    { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", quality: "Best OpenAI STT quality" },
+    { id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", quality: "Lower cost, fast" },
+    { id: "whisper-1", label: "Whisper API", quality: "Legacy compatible fallback" },
+  ],
+  deepgram: [
+    { id: "nova-3", label: "Nova-3", quality: "Recommended Deepgram model" },
+    { id: "nova-2", label: "Nova-2", quality: "Stable fallback" },
+  ],
+  elevenlabs: [
+    { id: "scribe_v2", label: "Scribe v2", quality: "Recommended ElevenLabs STT" },
+    { id: "scribe_v1", label: "Scribe v1", quality: "Legacy fallback" },
+  ],
+};
+
+export const LLM_MODELS: Record<string, ProviderModel[]> = {
+  groq: [
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", quality: "Balanced default" },
+    { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", quality: "Fastest cleanup" },
+    { id: "llama-4-maverick", label: "Llama 4 Maverick", quality: "Higher quality, lower free quota" },
+  ],
+  openai: [
+    { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
+    { id: "gpt-5.4", label: "GPT-5.4", quality: "Higher quality" },
+    { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
+  ],
+  gemini: [
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Current default" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast free-tier option" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Lowest latency / quota friendly" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview", quality: "Preview, if listed for your key" },
+    { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", quality: "Preview Pro, billing likely required" },
+    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", quality: "Paid tier" },
+  ],
+};
+
+export function providerLabel(provider: string): string {
+  return [...STT_PROVIDERS, ...LLM_PROVIDERS].find((p) => p.id === provider)?.label ?? provider;
+}
+
+export function sttModelsFor(provider: string): ProviderModel[] {
+  return STT_MODELS[provider] ?? STT_MODELS.groq;
+}
+
+export function llmModelsFor(provider: string): ProviderModel[] {
+  return LLM_MODELS[provider] ?? LLM_MODELS.groq;
+}
+
+export function sttReady(secrets: SecretCheck | null, provider: string): boolean {
+  if (!secrets) return true;
+  return provider === "groq"
+    ? secrets.stt
+    : provider === "openai"
+      ? secrets.openai_stt || secrets.openai_llm
+      : provider === "deepgram"
+        ? secrets.deepgram_stt
+        : provider === "elevenlabs"
+          ? secrets.elevenlabs_stt
+          : false;
+}
+
+export function llmReady(secrets: SecretCheck | null, provider: string): boolean {
+  if (!secrets) return true;
+  return provider === "groq"
+    ? secrets.llm || secrets.stt
+    : provider === "openai"
+      ? secrets.openai_llm || secrets.openai_stt
+      : provider === "gemini"
+        ? Boolean(secrets.gemini)
+        : false;
+}
+
+export function shortModel(name: string | undefined): string {
+  if (!name) return "-";
+  if (name.startsWith("whisper-large-v3-turbo")) return "Whisper Turbo";
+  if (name.startsWith("whisper-large-v3")) return "Whisper v3";
+  if (name.startsWith("distil-whisper")) return "Distil Whisper";
+  if (name.startsWith("gpt-4o-mini-transcribe")) return "4o mini STT";
+  if (name.startsWith("gpt-4o-transcribe")) return "4o STT";
+  if (name.startsWith("nova-3")) return "Nova-3";
+  if (name.startsWith("nova-2")) return "Nova-2";
+  if (name.startsWith("scribe_v2")) return "Scribe v2";
+  if (name.startsWith("scribe_v1")) return "Scribe v1";
+  if (name.startsWith("llama-3.3-70b")) return "Llama 70B";
+  if (name.startsWith("llama-3.1-8b")) return "Llama 8B";
+  if (name.startsWith("gpt-5.4-mini")) return "GPT-5.4 mini";
+  if (name.startsWith("gpt-5.4")) return "GPT-5.4";
+  if (name.startsWith("gpt-5.5")) return "GPT-5.5";
+  if (name.startsWith("gemini-3.5-flash")) return "Gemini 3.5 Flash";
+  if (name.startsWith("gemini-2.5-flash-lite")) return "Gemini Flash-Lite";
+  if (name.startsWith("gemini-2.5-flash")) return "Gemini 2.5 Flash";
+  return name.replace(/[-_]/g, " ");
+}

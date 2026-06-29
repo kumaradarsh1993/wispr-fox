@@ -7,6 +7,10 @@
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
 
+  async function setNumber<K extends keyof typeof settings.s>(key: K, value: number) {
+    await settings.set(key, value as (typeof settings.s)[K]);
+  }
+
   // ── Autostart sync ─────────────────────────────────────────────────────
   // Keep the OS-level "launch on login" registration in step with our
   // settings.autostart flag. tauri-plugin-autostart's enable() / disable()
@@ -167,7 +171,7 @@
         checked={settings.s.autostart}
         onchange={(e) => syncAutostart((e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Launch wispr-fox at login</strong> — start automatically when you sign in to Windows. The tray icon + Clippy floater appear; no main window unless you ask.</span>
+      <span><strong>Launch wispr-fox at login</strong> — start automatically when you sign in to Windows. The tray icon and avatar appear; no main window unless you ask.</span>
     </label>
     <p class="hint">Registers a Windows startup entry under the current user (no admin needed). Toggle off any time to remove it.</p>
   </div>
@@ -179,7 +183,7 @@
         checked={settings.s.open_silently}
         onchange={(e) => settings.set("open_silently", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Open silently</strong> — on launch, only Clippy + the tray icon show. Open this Settings/History window via tray (left-click) or double-click on Clippy.</span>
+      <span><strong>Open silently</strong> — on launch, only the avatar and tray icon show. Open this Settings/History window via tray left-click or by double-clicking the avatar.</span>
     </label>
     <p class="hint">On by default. Turn off if you want the main window to pop open every time the app starts.</p>
   </div>
@@ -243,6 +247,37 @@
           flash(`Couldn't open: ${e}`);
         }
       }}>Open folder</button>
+    </div>
+  </div>
+
+  <h3>Data retention</h3>
+  <p class="lede">How long recordings and transcripts stay on disk before automatic cleanup.</p>
+
+  <div class="settings-card">
+    <div class="field-block">
+      <label for="retention-days">Retention: {settings.s.retention_days} day{settings.s.retention_days === 1 ? "" : "s"}</label>
+      <input
+        id="retention-days"
+        type="range"
+        min="1"
+        max="90"
+        value={settings.s.retention_days}
+        oninput={(e) => setNumber("retention_days", Number((e.currentTarget as HTMLInputElement).value))}
+      />
+      <p class="hint">Recordings older than this are auto-deleted hourly. Lifetime stats are kept separately.</p>
+    </div>
+
+    <div class="field-block">
+      <label for="retention-max-mb">Storage cap (MB)</label>
+      <input
+        id="retention-max-mb"
+        type="number"
+        min="50"
+        step="50"
+        value={settings.s.retention_max_mb}
+        onchange={(e) => setNumber("retention_max_mb", Number((e.currentTarget as HTMLInputElement).value))}
+      />
+      <p class="hint">When the audio folder exceeds this, the oldest files are removed first.</p>
     </div>
   </div>
 

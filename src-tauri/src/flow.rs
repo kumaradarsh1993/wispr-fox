@@ -54,7 +54,7 @@ fn user_friendly_error(raw: &str) -> String {
 
     // Missing-key and local failures are stage-agnostic — handle first.
     if s.contains("no groq stt key") || s.contains("no groq llm key") || s.contains("no gemini api key") || s.contains("no openai") || s.contains("no deepgram") || s.contains("no elevenlabs") {
-        return "API key missing — open Settings → Provider & Keys.".to_string();
+        return "API key missing - open Settings -> Providers & API keys.".to_string();
     }
     if s.contains("recording too short") {
         return "Recording too short — hold the hotkey longer.".to_string();
@@ -156,7 +156,7 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
     match provider_id {
         "gemini" => {
             let key = secrets::get(SecretKey::GeminiLlm)?
-                .ok_or_else(|| anyhow!("no Gemini API key — open Settings → Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no Gemini API key - open Settings -> Providers & API keys"))?;
             // If user has gemini selected but no model set, fall back to default.
             // Also auto-migrate model ids that Google has retired so saved
             // settings from older builds don't suddenly 404 against the API.
@@ -179,7 +179,7 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
         "openai" => {
             let key = secrets::get(SecretKey::OpenAiLlm)?
                 .or_else(|| secrets::get(SecretKey::OpenAiStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no OpenAI API key - open Settings -> Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no OpenAI API key - open Settings -> Providers & API keys"))?;
             let m = if model.starts_with("gpt-") {
                 model
             } else {
@@ -191,7 +191,7 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
             // "groq" or anything unknown -> Groq path.
             let key = secrets::get(SecretKey::GroqLlm)?
                 .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
-                .ok_or_else(|| anyhow!("no Groq LLM key — open Settings → Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no Groq LLM key - open Settings -> Providers & API keys"))?;
             Ok(Box::new(GroqLlm::new(key, model)))
         }
     }
@@ -212,7 +212,7 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
         "openai" => {
             let key = secrets::get(SecretKey::OpenAiStt)?
                 .or_else(|| secrets::get(SecretKey::OpenAiLlm).ok().flatten())
-                .ok_or_else(|| anyhow!("no OpenAI STT key - open Settings -> Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no OpenAI STT key - open Settings -> Providers & API keys"))?;
             let model = selected_model_or(
                 crate::stt::openai::DEFAULT_MODEL,
                 &settings.stt_model,
@@ -222,7 +222,7 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
         }
         "deepgram" => {
             let key = secrets::get(SecretKey::DeepgramStt)?
-                .ok_or_else(|| anyhow!("no Deepgram STT key - open Settings -> Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no Deepgram STT key - open Settings -> Providers & API keys"))?;
             let model = if settings.stt_model.starts_with("nova-") {
                 settings.stt_model.clone()
             } else {
@@ -232,7 +232,7 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
         }
         "elevenlabs" => {
             let key = secrets::get(SecretKey::ElevenLabsStt)?
-                .ok_or_else(|| anyhow!("no ElevenLabs STT key - open Settings -> Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no ElevenLabs STT key - open Settings -> Providers & API keys"))?;
             let model = if settings.stt_model.starts_with("scribe_") {
                 settings.stt_model.clone()
             } else {
@@ -242,7 +242,7 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
         }
         _ => {
             let key = secrets::get(SecretKey::GroqStt)?
-                .ok_or_else(|| anyhow!("no Groq STT key - open Settings -> Provider & Keys"))?;
+                .ok_or_else(|| anyhow!("no Groq STT key - open Settings -> Providers & API keys"))?;
             let model = selected_model_or(
                 "whisper-large-v3-turbo",
                 &settings.stt_model,
@@ -572,7 +572,6 @@ impl Flow {
             "sending WAV to speech-to-text provider"
         );
 
-        self.usage.record_stt();
         // 120s hard cap on STT. Single-request Whisper rarely takes more
         // than ~15s for 5-min audio; the wider ceiling accommodates the
         // multi-chunk path (files > 20 MB get split and transcribed
@@ -593,6 +592,12 @@ impl Flow {
             duration_secs = ?transcript.duration_seconds,
             provider = stt_name,
             "speech-to-text response"
+        );
+        self.usage.record_stt(
+            stt_name,
+            transcript
+                .duration_seconds
+                .unwrap_or_else(|| (duration_ms.max(0) as f64) / 1000.0),
         );
 
         self.history
@@ -849,11 +854,16 @@ impl Flow {
         let stt = build_stt_provider(&stt_settings)?;
         let stt_name = stt.name();
 
-        self.usage.record_stt();
         let transcript = stt
             .transcribe(&rec.audio_path, stt_settings.language_hint.as_deref())
             .await
             .with_context(|| format!("{provider} transcription retry", provider = pretty_provider(stt_name)))?;
+        self.usage.record_stt(
+            stt_name,
+            transcript
+                .duration_seconds
+                .unwrap_or_else(|| (rec.duration_ms.max(0) as f64) / 1000.0),
+        );
         self.history
             .set_transcript(record_id, &transcript.text, stt_name)?;
 

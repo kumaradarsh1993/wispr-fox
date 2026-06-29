@@ -71,7 +71,7 @@
             checked={settings.s[m.settingKey as keyof typeof settings.s] as boolean}
             onchange={(e) => settings.set(m.settingKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
           />
-          <span>LLM cleanup</span>
+          <span>{m.id === "light" ? "Clean Transcribe" : "LLM cleanup"}</span>
         </label>
       </div>
 

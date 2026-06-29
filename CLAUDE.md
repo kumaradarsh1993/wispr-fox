@@ -19,14 +19,16 @@ promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
 ## Codex handoff checkpoint (2026-06-29)
 
 Claude Code's final pre-Codex checkpoint is commit `c2d33e3`. Codex then
-published `v1.4.0-nightly.6` for the provider expansion and is preparing
-`v1.4.0-nightly.7` for Windows key-storage hardening. Future Codex-authored
+published `v1.4.0-nightly.6` for the provider expansion,
+`v1.4.0-nightly.7` for Windows key-storage hardening, and is preparing
+`v1.4.0-nightly.8` for the P0 settings/sidebar cleanup. Future Codex-authored
 nightlies must keep Codex visible in the release title/notes. Do not promote
 any Codex nightly to stable without the user's explicit "ship it" signal.
 
 Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
-Claude. It captures the user's prompt, what Codex changed, why the Windows
-key-management fallback was redesigned, and the GitHub plaintext-key audit.
+Claude. It captures the user's prompts, what Codex changed, why the Windows
+key-management fallback was redesigned, the GitHub plaintext-key audit, and
+the settings/sidebar cleanup decisions.
 
 **What v1.3.0 shipped** (this is the live baseline; details below):
 - **Analytics dashboard** — `/stats` page + a widget on top of History
@@ -68,10 +70,10 @@ src-tauri/src/
   settings.rs   AppSettings struct. Defaults here; user values in tauri-plugin-store.
 
 src/routes/
-  +layout.svelte   Sidebar (brand, hotkey hints, floater picker+S/M/L, usage, fox)
+  +layout.svelte   Sidebar (brand, hotkey hints, Models picker, avatar picker+S/M/L, usage)
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
-  /settings/       Provider keys, modes, hotkeys, behaviour, startup, look & feel
+  /settings/       Providers, Modes, Dictation, Avatar, General, Security
   /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/cat-lab/duo
                    (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
                    white loaf supervises, orange tabby works; paw-bump on paste)
@@ -135,13 +137,17 @@ to find tray-only apps the way Windows users find the system tray).
 - **STT**: Groq Whisper, OpenAI GPT transcription, Deepgram Nova, and
   ElevenLabs Scribe. Files > 20 MB still auto-chunk before provider calls.
 - **LLM cleanup/drafting**: Groq, Gemini, and OpenAI. Provider/model selection
-  is global in Settings -> Providers & Models; mode-specific prompts live in
-  Settings -> Modes.
+  is global in the sidebar Models panel and Settings -> Providers & API keys;
+  mode-specific prompts live in Settings -> Modes.
 - **Keys**: one entry per provider role (`groq_stt`, `groq_llm`, `openai_stt`,
   `openai_llm`, `deepgram_stt`, `elevenlabs_stt`, `gemini_llm`). Keyring is
   primary; Windows local fallback is DPAPI-encrypted as of the Codex
   key-storage checkpoint. Settings -> Security shows storage status and a
   no-secret event log.
+- **Deepgram usage**: the sidebar shows an estimated cumulative spend against a
+  $200 free credit when Deepgram is selected, using Nova-3 multilingual
+  pre-recorded pricing ($0.0092/min). This is an estimate, not a billing API
+  readout.
 
 ## v1.0.0 design system ("Foxy")
 
@@ -217,7 +223,9 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   Credential Manager fails or does not persist, fallback is DPAPI-encrypted
   at `%APPDATA%/com.wispr-fox.app/.keys.enc.json`. Legacy `.keys.json` is
   migration-only and should disappear after verified replacement.
-- **Skin choice** → localStorage in the Clippy webview.
+- **Skin choice** -> localStorage in the Clippy webview. Retired `duo-hd`
+  saved values migrate to `duo`; `duo-hd` is not selectable in the sidebar,
+  context menu, or Settings -> Avatar.
 
 ## Ground rules
 
@@ -387,10 +395,10 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-06-29 Codex handoff/key-storage checkpoint. See*
-*docs/CODEX_HANDOVER_2026-06-29.md for the full prompt, decisions, and*
-*GitHub plaintext-key audit. Update when conventions or architecture change*
-*- not on every fix.*
+*Last touched: 2026-06-29 Codex settings/sidebar checkpoint. See*
+*docs/CODEX_HANDOVER_2026-06-29.md for the full prompts, decisions,*
+*GitHub plaintext-key audit, and settings cleanup notes. Update when*
+*conventions or architecture change - not on every fix.*
 
 ## Open threads (post-v1.3.0, for the next session)
 

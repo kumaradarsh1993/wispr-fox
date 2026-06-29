@@ -240,6 +240,18 @@ class SettingsStore {
     }
   }
 
+  async setMany(patch: Partial<AppSettings>) {
+    this.s = { ...this.s, ...patch };
+    await api.setSettings(this.s).catch((e) => {
+      console.error("settings.setMany: Rust push failed", e);
+    });
+    try {
+      await this.persist();
+    } catch (e) {
+      console.error("settings.setMany: disk persist failed", e);
+    }
+  }
+
   async replace(next: AppSettings) {
     this.s = { ...next };
     await api.setSettings(this.s);
