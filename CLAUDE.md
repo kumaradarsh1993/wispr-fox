@@ -16,6 +16,18 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 **Current stable: `v1.3.0`** (Latest, 2026-06-06) — user-confirmed working,
 promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
 
+## Codex handoff checkpoint (2026-06-29)
+
+Claude Code's final pre-Codex checkpoint is commit `c2d33e3`. Codex then
+published `v1.4.0-nightly.6` for the provider expansion and is preparing
+`v1.4.0-nightly.7` for Windows key-storage hardening. Future Codex-authored
+nightlies must keep Codex visible in the release title/notes. Do not promote
+any Codex nightly to stable without the user's explicit "ship it" signal.
+
+Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
+Claude. It captures the user's prompt, what Codex changed, why the Windows
+key-management fallback was redesigned, and the GitHub plaintext-key audit.
+
 **What v1.3.0 shipped** (this is the live baseline; details below):
 - **Analytics dashboard** — `/stats` page + a widget on top of History
   (time saved vs typing @40wpm, words/sessions per day, speaking speed, day
@@ -120,16 +132,16 @@ to find tray-only apps the way Windows users find the system tray).
 
 ## STT + LLM providers
 
-- **STT**: Groq Whisper Large v3 Turbo. Free tier: 2000 req/day,
-  7200 audio-seconds/hour, 25 MB/file. Files > 20 MB auto-chunk to
-  ~3.5 min slices, transcribe serially, concatenate.
-- **LLM**: Groq Llama 3.3 70B Versatile by default. Gemini secondary.
-  8-second timeout per call; falls back to raw transcript on timeout
-  with a `clippy_timeout` note in the history row.
-- **Next provider on deck**: Sarvam Saaras v3 for Hindi / Hinglish
-  (SOTA on IndicVoices benchmark, ₹1100 free credits ≈ 36 hrs,
-  no CC required). Integration sketched but not built — see
-  `docs/RELEASE_NOTES_v1.0.0.md` § "still on the roadmap".
+- **STT**: Groq Whisper, OpenAI GPT transcription, Deepgram Nova, and
+  ElevenLabs Scribe. Files > 20 MB still auto-chunk before provider calls.
+- **LLM cleanup/drafting**: Groq, Gemini, and OpenAI. Provider/model selection
+  is global in Settings -> Providers & Models; mode-specific prompts live in
+  Settings -> Modes.
+- **Keys**: one entry per provider role (`groq_stt`, `groq_llm`, `openai_stt`,
+  `openai_llm`, `deepgram_stt`, `elevenlabs_stt`, `gemini_llm`). Keyring is
+  primary; Windows local fallback is DPAPI-encrypted as of the Codex
+  key-storage checkpoint. Settings -> Security shows storage status and a
+  no-secret event log.
 
 ## v1.0.0 design system ("Foxy")
 
@@ -201,9 +213,10 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   drafted column for users upgrading from v0.1.x.
 - **Audio files** → `%APPDATA%/com.wispr-fox.app/audio/YYYY-MM-DD/*.wav`
   Retention: 7 days, 500 MB cap. Sweeper runs hourly.
-- **API keys** → Windows Credential Manager (keyring crate). Never
-  stored in plaintext or sent anywhere except to the provider whose
-  key it is.
+- **API keys** → OS keyring first, verified by immediate readback. If Windows
+  Credential Manager fails or does not persist, fallback is DPAPI-encrypted
+  at `%APPDATA%/com.wispr-fox.app/.keys.enc.json`. Legacy `.keys.json` is
+  migration-only and should disappear after verified replacement.
 - **Skin choice** → localStorage in the Clippy webview.
 
 ## Ground rules
@@ -374,9 +387,10 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: v1.3.0 stable ship-day (analytics dashboard, fixed-box floater,*
-*macOS ⌥ hotkeys, durable-signing infra pending secrets), by Claude Code*
-*session. Update when conventions or architecture change — not on every fix.*
+*Last touched: 2026-06-29 Codex handoff/key-storage checkpoint. See*
+*docs/CODEX_HANDOVER_2026-06-29.md for the full prompt, decisions, and*
+*GitHub plaintext-key audit. Update when conventions or architecture change*
+*- not on every fix.*
 
 ## Open threads (post-v1.3.0, for the next session)
 

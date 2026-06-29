@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type SecretCheck, type SecretKeyName, type SecretsDiagnostic } from "$lib/api";
+  import { api, type SecretCheck, type SecretKeyName, type SecretLocation, type SecretsDiagnostic } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
 
@@ -206,16 +206,26 @@
     flash(`Cleanup model: ${label}`);
   }
 
-  function locationLabel(loc: "keyring" | "file" | "none"): string {
+  function locationLabel(loc: SecretLocation): string {
     return loc === "keyring"
       ? "OS keyring"
+      : loc === "encrypted_file"
+      ? "Encrypted fallback"
+      : loc === "legacy_file"
+      ? "Legacy plaintext"
       : loc === "file"
       ? "File fallback"
       : "Not saved";
   }
 
-  function locationClass(loc: "keyring" | "file" | "none"): string {
-    return loc === "keyring" ? "ok" : loc === "file" ? "warn" : "neutral";
+  function locationClass(loc: SecretLocation): string {
+    return loc === "keyring"
+      ? "ok"
+      : loc === "encrypted_file"
+      ? "warn"
+      : loc === "file" || loc === "legacy_file"
+      ? "danger"
+      : "neutral";
   }
 
   function anyDiagSaved(d: SecretsDiagnostic): boolean {
@@ -239,7 +249,7 @@
   <h2>Providers & API keys</h2>
   <p class="lede">
     Choose who transcribes your audio and who handles cleanup. Keys are saved
-    locally in the OS keyring first, with file fallback only when the keyring fails.
+    locally in the OS keyring first, with encrypted fallback only when the keyring fails.
   </p>
 
   <div class="provider-grid">
@@ -487,11 +497,18 @@
       </ul>
       {#if !diag.keyring_works && anyDiagSaved(diag)}
         <p class="diag-warn">
-          The OS keyring is not accepting verified writes, so at least one key is in file fallback.
-          The key still works, but keyring storage is preferred.
+          The OS keyring is not accepting verified writes, so at least one key is in local fallback.
+          The key still works, but OS keyring storage is preferred.
         </p>
       {/if}
-      <p class="diag-path">File fallback location: <code>{diag.fallback_path}</code> {diag.fallback_exists ? "(exists)" : "(empty)"}</p>
+      {#if diag.legacy_fallback_exists}
+        <p class="diag-warn">
+          A legacy plaintext key file exists. Open this page or use the saved key once to migrate it,
+          then confirm the legacy file is gone.
+        </p>
+      {/if}
+      <p class="diag-path">Encrypted fallback: <code>{diag.encrypted_fallback_path}</code> {diag.encrypted_fallback_exists ? "(exists)" : "(empty)"}</p>
+      <p class="diag-path">Legacy plaintext fallback: <code>{diag.legacy_fallback_path}</code> {diag.legacy_fallback_exists ? "(exists)" : "(empty)"}</p>
     </div>
   {/if}
 </section>
@@ -584,6 +601,10 @@
   .diag-loc.warn {
     background: rgba(255, 152, 0, 0.18);
     color: #b06800;
+  }
+  .diag-loc.danger {
+    background: var(--danger-fade);
+    color: var(--danger);
   }
   .diag-loc.neutral {
     background: var(--bg-subtle);

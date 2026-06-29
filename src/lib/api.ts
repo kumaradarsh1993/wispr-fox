@@ -89,7 +89,7 @@ export interface SecretCheck {
   any_stt: boolean;
 }
 
-export type SecretLocation = "keyring" | "file" | "none";
+export type SecretLocation = "keyring" | "encrypted_file" | "file" | "legacy_file" | "none";
 
 export interface SecretsDiagnostic {
   stt: SecretLocation;
@@ -102,6 +102,21 @@ export interface SecretsDiagnostic {
   keyring_works: boolean;
   fallback_path: string;
   fallback_exists: boolean;
+  encrypted_fallback_path: string;
+  encrypted_fallback_exists: boolean;
+  legacy_fallback_path: string;
+  legacy_fallback_exists: boolean;
+  audit_log_path: string;
+}
+
+export interface SecretAuditEvent {
+  ts: string;
+  key: string;
+  label: string;
+  action: string;
+  storage: string;
+  outcome: string;
+  detail: string;
 }
 
 export interface UpdateInfo {
@@ -171,6 +186,7 @@ export const api = {
   ping: () => invoke<string>("ping"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
+  secretAuditLog: (limit = 100) => invoke<SecretAuditEvent[]>("secret_audit_log", { limit }),
   floaterTrigger: (mode: "light" | "advanced" | "drafting") =>
     invoke<void>("floater_trigger", { mode }),
   setClickthrough: (ignore: boolean) =>

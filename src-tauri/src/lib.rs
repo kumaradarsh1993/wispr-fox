@@ -273,6 +273,7 @@ pub fn run() {
             commands::open_accessibility_settings,
             commands::check_secrets,
             commands::secrets_diagnostic,
+            commands::secret_audit_log,
             commands::save_secret,
             commands::delete_secret,
             commands::get_settings,

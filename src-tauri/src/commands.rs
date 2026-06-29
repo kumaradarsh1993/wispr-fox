@@ -310,6 +310,12 @@ pub fn secrets_diagnostic() -> secrets::SecretsDiagnostic {
     secrets::diagnostic()
 }
 
+/// Recent no-secret key-storage events for Settings -> Security.
+#[tauri::command]
+pub fn secret_audit_log(limit: Option<usize>) -> Vec<secrets::SecretAuditEvent> {
+    secrets::audit_log(limit)
+}
+
 fn parse_secret_key(name: &str) -> Result<SecretKey, String> {
     match name {
         "groq_stt" => Ok(SecretKey::GroqStt),

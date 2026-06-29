@@ -97,9 +97,11 @@ Three modes (in order of how aggressively the LLM touches your text):
 - **LLM cleanup:** Groq `llama-3.3-70b-versatile` OR Google Gemini
   2.5 Pro. Switchable globally per the `llm_provider` / `llm_model`
   setting (with legacy per-mode fields kept for back-compat).
-- **Secrets:** `keyring-rs` v3 + JSON file fallback at
-  `%APPDATA%/com.wispr-fox.app/.keys.json`. Three keys: `groq_stt`,
-  `groq_llm`, `gemini_llm`.
+- **Secrets:** `keyring-rs` v3 first. If a verified keyring write fails,
+  Windows uses a DPAPI-encrypted fallback at
+  `%APPDATA%/com.wispr-fox.app/.keys.enc.json`; legacy `.keys.json`
+  files are migration-only. Keys exist per provider (`groq_*`,
+  `openai_*`, `deepgram_stt`, `elevenlabs_stt`, `gemini_llm`).
 - **History:** `rusqlite` (bundled SQLite). Hourly GC by `retention_days`
   (default 7d) + 500 MB cap. Audio file deleted when row deleted.
 - **Hotkeys:** `tauri-plugin-global-shortcut`. 6 registrations: 3 main
@@ -229,8 +231,10 @@ autostart
    touched by the LLM.
 5. **F9 is strict copy-edit only.** Earlier draft-style F9 prompt was
    rewritten because it overlapped F10's drafting role.
-6. Secrets: keyring primary, JSON file fallback. Separate keychain
-   entries per provider (`groq_stt`, `groq_llm`, `gemini_llm`).
+6. Secrets: keyring primary, encrypted local fallback only after verified
+   keyring failure. Separate entries per provider (`groq_stt`,
+   `groq_llm`, `openai_stt`, `openai_llm`, `deepgram_stt`,
+   `elevenlabs_stt`, `gemini_llm`).
 7. History in SQLite. Hourly GC. Audio + DB row deleted together.
 8. Audio at `appData/audio/{YYYY-MM-DD}/{clip_id}.wav`. Clips < 300ms
    discarded. Audio retained on transcription failure for retry.

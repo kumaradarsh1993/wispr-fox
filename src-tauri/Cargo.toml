@@ -42,7 +42,7 @@ arboard = "3"
 # files dropped at %APPDATA%/com.wispr-fox.app/sounds/{start,stop}.{wav,mp3}
 rodio = { version = "0.20", default-features = false, features = ["wav", "mp3", "vorbis"] }
 
-# Windows Credential Manager for API keys (primary); file fallback via dirs
+# Windows Credential Manager for API keys (primary); encrypted fallback via dirs
 keyring = "3"
 dirs = "6"
 
@@ -68,6 +68,7 @@ windows = { version = "0.58", features = [
   "Win32_System_DataExchange",
   "Win32_System_Memory",
   "Win32_System_Threading",
+  "Win32_Security_Cryptography",
   "Win32_Foundation",
 ] }
 

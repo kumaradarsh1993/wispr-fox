@@ -6,6 +6,12 @@ node_modules
 .env
 .env.*
 !.env.example
+.keys.json
+.keys.enc.json
+**/.keys.json
+**/.keys.enc.json
+secret-audit.jsonl
+**/secret-audit.jsonl
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 src-tauri/target/
