@@ -25,7 +25,8 @@ for the P0 settings/sidebar cleanup, `v1.4.0-nightly.9` for follow-up
 settings/sidebar polish, native titlebar theme sync, and per-model usage
 tracking, `v1.4.0-nightly.10` for Codex-authored avatar concepts, and
 `v1.4.0-nightly.11` for replacing the rejected hand-coded SVG avatar
-implementation with manifest-v2 raster state packs.
+implementation with manifest-v2 raster state packs, and
+`v1.4.0-nightly.12` for Codex raster avatar scaling and edge-artifact QA.
 Future Codex-authored nightlies must keep Codex
 visible in the release title/notes. Do not promote any Codex nightly to stable
 without the user's explicit "ship it" signal.

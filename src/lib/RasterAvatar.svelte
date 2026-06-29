@@ -71,18 +71,22 @@
 <style>
   .raster-avatar {
     position: relative;
-    width: var(--avatar-w);
-    height: var(--avatar-h);
+    width: calc(var(--avatar-w) * var(--fscale, 1));
+    height: calc(var(--avatar-h) * var(--fscale, 1));
+    box-sizing: border-box;
+    overflow: hidden;
+    isolation: isolate;
     transform-origin: bottom center;
     animation: raster-breathe 4.8s ease-in-out infinite;
     pointer-events: auto;
+    --raster-safe: calc(8px * var(--fscale, 1));
   }
 
   .raster-frame {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    inset: var(--raster-safe);
+    width: calc(100% - var(--raster-safe) - var(--raster-safe));
+    height: calc(100% - var(--raster-safe) - var(--raster-safe));
     object-fit: contain;
     object-position: center bottom;
     opacity: 0;
@@ -167,15 +171,15 @@
   .raster-signal {
     position: absolute;
     top: 31%;
-    width: 28px;
-    height: 44px;
+    width: calc(28px * var(--fscale, 1));
+    height: calc(44px * var(--fscale, 1));
     z-index: 3;
     opacity: 0.9;
     pointer-events: none;
   }
 
-  .signal-left { left: -5px; }
-  .signal-right { right: -5px; transform: scaleX(-1); }
+  .signal-left { left: calc(2px * var(--fscale, 1)); }
+  .signal-right { right: calc(2px * var(--fscale, 1)); transform: scaleX(-1); }
 
   .raster-signal span {
     position: absolute;

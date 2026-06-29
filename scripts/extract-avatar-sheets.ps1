@@ -27,6 +27,7 @@ public static class AvatarSheetExtractor
         public int MaxChannelSpread = 34;
         public int BorderTolerance = 60;
         public int DarkKeepFloor = 190;
+        public bool ChromaGreen = false;
     }
 
     private static readonly string[] States = new[] {
@@ -53,11 +54,12 @@ public static class AvatarSheetExtractor
             },
             new SheetSpec {
                 Id = "oru-gujia",
-                Source = Path.Combine(projectRoot, "static", "avatar-concepts", "oru-gujia-duo-sheet.png"),
+                Source = Path.Combine(projectRoot, "static", "avatar-concepts", "oru-gujia-duo-sheet-chromakey.png"),
                 BrightFloor = 238,
                 MaxChannelSpread = 24,
                 BorderTolerance = 44,
-                DarkKeepFloor = 204
+                DarkKeepFloor = 204,
+                ChromaGreen = true
             },
             new SheetSpec {
                 Id = "spark-buddy",
@@ -161,6 +163,10 @@ public static class AvatarSheetExtractor
                 else
                 {
                     var c = dst.GetPixel(x, y);
+                    if (spec.ChromaGreen)
+                    {
+                        c = DespillGreen(c);
+                    }
                     dst.SetPixel(x, y, Color.FromArgb(255, c.R, c.G, c.B));
                 }
             }
@@ -219,6 +225,12 @@ public static class AvatarSheetExtractor
 
     private static bool LooksLikeSheetBackground(Color c, Color border, SheetSpec spec)
     {
+        if (spec.ChromaGreen)
+        {
+            var maxRb = Math.Max(c.R, c.B);
+            return c.G > 105 && c.G - maxRb > 24;
+        }
+
         var max = Math.Max(c.R, Math.Max(c.G, c.B));
         var min = Math.Min(c.R, Math.Min(c.G, c.B));
         var spread = max - min;
@@ -228,6 +240,14 @@ public static class AvatarSheetExtractor
         var dist = Math.Abs(c.R - border.R) + Math.Abs(c.G - border.G) + Math.Abs(c.B - border.B);
         var softlyWhite = bright >= spec.BrightFloor && spread <= spec.MaxChannelSpread;
         return dist <= spec.BorderTolerance || softlyWhite;
+    }
+
+    private static Color DespillGreen(Color c)
+    {
+        var maxRb = Math.Max(c.R, c.B);
+        if (c.G <= 90 || c.G - maxRb <= 8) return c;
+        var g = Math.Min(c.G, (int)Math.Round(maxRb * 1.04 + 6));
+        return Color.FromArgb(c.A, c.R, Math.Max(0, Math.Min(255, g)), c.B);
     }
 
     private static Bitmap TrimAlpha(Bitmap src, int pad)

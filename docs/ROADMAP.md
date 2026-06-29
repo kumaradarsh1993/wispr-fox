@@ -63,6 +63,14 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0-nightly.12** — **Codex raster avatar QA**: fixed the rejected
+  raster-avatar runtime problems from nightly.11. Raster packs now scale with
+  the floater S/M/L setting, are isolated from the old SVG whole-character
+  rotate/jitter animations, render inside an internal safe frame, and anchor
+  the speech bubble above the head. Also cleaned stray edge-touching PNG
+  fragments that caused duplicated slivers to appear at the floater border, and
+  regenerated the Oru & Gujia pack from a Codex chroma-key source to remove the
+  white-fur matte damage visible on dark backgrounds.
 - ✅ **v1.4.0-nightly.6** — **Codex provider expansion**: OpenAI, Deepgram,
   and ElevenLabs are now real selectable speech-to-text providers, not disabled
   placeholders. OpenAI is also available for cleanup/drafting. Provider settings

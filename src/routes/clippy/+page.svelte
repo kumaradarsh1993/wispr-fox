@@ -3,7 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
+  import { PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
   import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
@@ -2517,8 +2517,11 @@
     50% { width: 56px; opacity: 0.6; }
   }
 
-  /* Common character behaviour — shared across all three skins. */
-  .character {
+  /* Common character behaviour — shared across the inline SVG skins.
+     Raster packs own their scaling and state animation inside
+     RasterAvatar.svelte; applying these legacy whole-character transforms
+     to them made the bitmap roll into the floater edge. */
+  .character:not(.raster-avatar) {
     overflow: visible;
     transform-origin: 50% 90%;
     animation: idle-bob 3.6s ease-in-out infinite;
@@ -2670,7 +2673,7 @@
 
   /* State-driven animations. Note: the stylized skin overrides these so
      the body-group can do its own (more deliberate) listening turn. */
-  .character:not(.clippy-stylized)[data-state="listening"] {
+  .character:not(.clippy-stylized):not(.raster-avatar)[data-state="listening"] {
     animation: lean-in 1s ease-in-out infinite;
   }
   /* For stylized: subtle listening bob, not a side-to-side sway. */
@@ -2687,11 +2690,11 @@
     50% { transform: rotate(2deg) translateY(-1px); }
   }
 
-  .character[data-state="thinking"] {
+  .character:not(.raster-avatar)[data-state="thinking"] {
     animation: thinking-tilt 1.4s ease-in-out infinite;
   }
 
-  .character[data-state="thinking"] .brows {
+  .character:not(.raster-avatar)[data-state="thinking"] .brows {
     animation: brow-pulse 0.9s ease-in-out infinite;
   }
 
@@ -2705,7 +2708,7 @@
     50% { transform: translateY(-1.5px); }
   }
 
-  .character[data-state="writing"] {
+  .character:not(.raster-avatar)[data-state="writing"] {
     animation: writing-jitter 0.5s ease-in-out infinite;
   }
 
@@ -2716,7 +2719,7 @@
     75% { transform: translateX(1px) rotate(1deg); }
   }
 
-  .character[data-state="pasting"] {
+  .character:not(.raster-avatar)[data-state="pasting"] {
     animation: bounce 0.4s ease-out;
   }
 

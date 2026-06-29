@@ -339,3 +339,66 @@ references and rebuilt them manually in SVG. Nightly.11 uses the generated
 images themselves as the live app artwork, with CSS transforms only for subtle
 motion and state transitions. This keeps the visual fidelity aligned with the
 approved concepts while staying backward-compatible with all existing skins.
+
+## Codex raster avatar QA correction - v1.4.0-nightly.12
+
+After nightly.11, the user reported that the new raster avatars still failed in
+the live floater: they did not follow the S/M/L scale setting, rotated/rolled
+into the right edge, showed duplicated cut fragments at the right border, and
+the Oru & Gujia cutout looked visibly rough.
+
+User correction prompt:
+
+```text
+All right, I'll test the Android part later, but the part that you have created, which is the, okay, first of all, consolidate. Secondly, the part that you have created is becoming problematic because the, say the raster-based graphic that you created does not follow scaling. I think it also does like cut and rotate, so... So, let's say that as of, so all our existing ones are looking good and nice. The new ones that you've created, they are basically rolling over to the right side. So if the image sort of moves to the left to a certain extent, then the cut part shows up towards the right border. And it does not scale. The quality also looks dicey. The two cat thing, I'm not sure if you have done some sort of edge reduction and removal of background thingy. But that also looks really bad. It has cut really, really badly. So, a lot of problems with that whole thing. And I'm not sure like how you are doing this, but we need better quality control. I'll give you a few examples. I'm quick pasting screenshots.
+```
+
+### Root causes Codex found
+
+- `RasterAvatar.svelte` ignored the floater `--fscale` variable, so the window
+  scale changed but the raster frame stayed at the original dimensions.
+- `/clippy/+page.svelte` still had broad legacy SVG animation selectors that
+  matched `.character.raster-avatar`. Raster avatars were therefore getting both
+  their own raster animation and the old whole-character rotate/jitter/bounce
+  transforms.
+- Several generated PNG state files contained small secondary alpha islands
+  touching the image edge. These were invisible in concept-sheet review but
+  became visible as duplicated slivers when the live floater animated.
+- The first Oru & Gujia source used white cats on a white/off-white sheet.
+  Background removal therefore erased some of Gujia's white fur; those missing
+  pixels looked acceptable on white previews but turned into dark holes on the
+  live dark floater.
+- The raster pack head metadata was too low for the generated sheets, so the
+  status bubble/provider label sat over faces instead of above the head.
+
+### What Codex changed for nightly.12
+
+- Updated `src/lib/RasterAvatar.svelte` so raster avatars scale all dimensions
+  through `--fscale`, including the outer box, internal frame, and signal waves.
+- Added an internal safe frame and `overflow: hidden` boundary for raster packs
+  so hover/bounce motion and soft shadows do not crop against the window border.
+- Scoped legacy `/clippy` state animations away from `.raster-avatar`, leaving
+  the existing SVG avatars unchanged.
+- Raised the `head` anchor for `codex-fox`, `oru-gujia`, and `spark-buddy` in
+  both `src/lib/avatar-packs.ts` and each `avatar.json` manifest.
+- Cleaned non-primary edge-touching PNG fragments from affected raster states:
+  - `static/avatars/codex-fox/error.png`
+  - `static/avatars/codex-fox/thinking.png`
+  - `static/avatars/spark-buddy/error.png`
+- Regenerated the entire Oru & Gujia state pack from a Codex chroma-key sheet:
+  - `static/avatar-concepts/oru-gujia-duo-sheet-chromakey.png`
+  - `static/avatars/oru-gujia/{idle,listening,thinking,writing,pasting,error,sleeping,excited,thumbnail}.png`
+- Updated `scripts/extract-avatar-sheets.ps1` so future extractions use the
+  chroma-key Oru & Gujia source instead of the old white-background sheet.
+- Updated the Oru & Gujia art frame to `222x214` with head anchor `214`, so the
+  taller clean sprites scale without being squeezed into the old shorter frame.
+
+### Verification for nightly.12
+
+- `npm run check`: passed with 0 errors. Existing unrelated warnings remain.
+- `npm run build`: passed. Existing unrelated bundle/a11y warnings remain.
+- A local contact sheet checked Codex Fox, Oru & Gujia, and Spark Buddy at 80%,
+  100%, and 125% scale.
+- A PNG alpha-component scan found no remaining secondary edge-touching
+  fragments after cleanup.
+- A dark-background preview checked all eight regenerated Oru & Gujia states.
