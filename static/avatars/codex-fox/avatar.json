@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 2,
+  "renderer": "raster-state-pack",
+  "id": "codex-fox",
+  "name": "Codex Fox",
+  "description": "Polished 2.5D fox companion with Codex-blue collar glow.",
+  "author": "Codex",
+  "version": "1.0.0-codex",
+  "license": "Generated for wispr-fox; personal project use",
+  "art": {
+    "width": 170,
+    "height": 182,
+    "head": 170,
+    "anchor": "bottom-center"
+  },
+  "states": {
+    "idle": "idle.png",
+    "listening": "listening.png",
+    "thinking": "thinking.png",
+    "writing": "writing.png",
+    "pasting": "pasting.png",
+    "error": "error.png",
+    "sleeping": "sleeping.png",
+    "excited": "excited.png"
+  },
+  "thumbnail": "thumbnail.png"
+}

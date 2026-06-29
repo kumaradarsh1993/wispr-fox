@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 2,
+  "renderer": "raster-state-pack",
+  "id": "spark-buddy",
+  "name": "Spark Buddy",
+  "description": "Original electric companion with lively 2.5D poses.",
+  "author": "Codex",
+  "version": "1.0.0-codex",
+  "license": "Generated for wispr-fox; personal project use",
+  "art": {
+    "width": 168,
+    "height": 184,
+    "head": 172,
+    "anchor": "bottom-center"
+  },
+  "states": {
+    "idle": "idle.png",
+    "listening": "listening.png",
+    "thinking": "thinking.png",
+    "writing": "writing.png",
+    "pasting": "pasting.png",
+    "error": "error.png",
+    "sleeping": "sleeping.png",
+    "excited": "excited.png"
+  },
+  "thumbnail": "thumbnail.png"
+}

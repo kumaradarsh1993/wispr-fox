@@ -291,3 +291,51 @@ Oh, I like this one. Can you actually, you know, sort of create the assets for i
   avatar picker shows all 9 icon buttons above the anchored Usage block at
   1280x720; and `/clippy` renders `codex-fox`, `oru-gujia`, and `spark-buddy`
   as nonblank SVG avatars with the expected bubble skin IDs.
+
+## Codex avatar renderer correction - v1.4.0-nightly.11
+
+After testing nightly.10, the user correctly rejected the implementation: the
+generated concept sheets were high-fidelity raster art, but Codex had shipped
+small hand-coded SVG approximations through `RichAvatar.svelte`. The live
+avatar quality was therefore far below the approved concepts.
+
+User correction prompt:
+
+```text
+Wait a second, am I getting any of this wrong or the kind of assets that you created, or at least showed for me in the illustrations versus what you have actually implemented is miles apart. Like it's so different. And I can't even, like what is happening? Why the shitty implementation when the concepts were so nice? Why you're not able to generate them? Like what's happening? I want you to actually implement identically the same. If you think the SDK is an issue, I would be more than happy to spin up a panel SDK or, you know, evolve the SDK or increase its scope and the kind of assets that it can, you know, digest. But this, whatever you have created is so bad. Like just compare against the three options, the three images that you sent me in the last one. This, like where the gap is. Like before you go ahead and commit anything, tell me where the gap exists. Why were you not able to realize that same vision?
+
+Yeah, I think you have, these two better, and you can go ahead and see. Yes, absolutely, the assets that you created, it even more high fidelity, if we can generate 3D assets even better. Not shader, I don't know shader and all. You know, 3D assets which look even much more interactive, nice, real, of sorts. I am giving you again, full, how do you say, full freedom to spend up as many agents, whatever cost. Just go ahead and implement it. Right, but I need that richer thing, also backwards compatible, right? So, my existing avatars, especially with the classic one, PPTA one, etc., etc., whatever have been created for me, those are the ones which should not break. Right, so if you want to have some compatibility mode within this revised SDK, I mean, feel free to change it bottoms up, right? Not an issue. But this is a core part of my application, and then I want it to be of top-notch quality. 2D supported, raster supported or whatever. You can start off with raster, and you can also create some 3D assets and then, you know, go for it. All of that is feasible, should be done. And I'm giving you unlimited time and resources to do it.
+```
+
+### What Codex changed for nightly.11
+
+- Added a manifest-v2 raster state-pack layer for built-in high-fidelity
+  avatars:
+  - `src/lib/avatar-packs.ts`
+  - `src/lib/RasterAvatar.svelte`
+- Added a reproducible extraction script:
+  - `scripts/extract-avatar-sheets.ps1`
+- Sliced the approved concept sheets into transparent per-state PNG assets:
+  - `static/avatars/codex-fox/{idle,listening,thinking,writing,pasting,error,sleeping,excited,thumbnail}.png`
+  - `static/avatars/oru-gujia/{idle,listening,thinking,writing,pasting,error,sleeping,excited,thumbnail}.png`
+  - `static/avatars/spark-buddy/{idle,listening,thinking,writing,pasting,error,sleeping,excited,thumbnail}.png`
+- Added `avatar.json` manifests for all three raster packs.
+- Updated `SkinIcon` so the picker thumbnails show the actual raster art.
+- Updated `/clippy` so `codex-fox`, `oru-gujia`, and `spark-buddy` render via
+  `RasterAvatar`, not `RichAvatar`.
+- Preserved compatibility for the legacy avatars:
+  - `fox` still uses the original watercolor PNG layer stack.
+  - `stylized`, `cat`, `duo`, and retired migration-only branches remain SVG.
+  - `real-clippy` still uses the vendored Clippy sprite runtime.
+  - Existing saved skin migrations remain unchanged.
+- Updated the avatar SDK docs to state that raster state packs are now
+  implemented for built-in avatars; multi-frame timelines and real-time 3D
+  remain future work.
+
+### Why this fixes the nightly.10 gap
+
+The rejected nightly.10 path used the generated images only as visual
+references and rebuilt them manually in SVG. Nightly.11 uses the generated
+images themselves as the live app artwork, with CSS transforms only for subtle
+motion and state transitions. This keeps the visual fidelity aligned with the
+approved concepts while staying backward-compatible with all existing skins.

@@ -23,7 +23,9 @@ published `v1.4.0-nightly.6` for the provider expansion,
 `v1.4.0-nightly.7` for Windows key-storage hardening, `v1.4.0-nightly.8`
 for the P0 settings/sidebar cleanup, `v1.4.0-nightly.9` for follow-up
 settings/sidebar polish, native titlebar theme sync, and per-model usage
-tracking, and `v1.4.0-nightly.10` for Codex-authored richer avatar skins.
+tracking, `v1.4.0-nightly.10` for Codex-authored avatar concepts, and
+`v1.4.0-nightly.11` for replacing the rejected hand-coded SVG avatar
+implementation with manifest-v2 raster state packs.
 Future Codex-authored nightlies must keep Codex
 visible in the release title/notes. Do not promote any Codex nightly to stable
 without the user's explicit "ship it" signal.
@@ -79,8 +81,8 @@ src/routes/
   /settings/       Providers, Modes, Dictation, Avatar, General, Security
   /clippy/         Always-on-top floater. Skins: off/fox/codex-fox/stylized/real-clippy/cat/duo/oru-gujia/spark-buddy
                    (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
-                   white loaf supervises, orange tabby works; oru-gujia = the richer Oru
-                   and Gujia duo; spark-buddy = original electric companion)
+                   white loaf supervises, orange tabby works; codex-fox/oru-gujia/spark-buddy
+                   are raster state packs under static/avatars rendered by RasterAvatar)
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
                    Bubble: HARD 2-line cap (CSS line-clamp) — BUBBLE_BAND height math
                    depends on it; write all bubble copy to fit two lines. Idle hover

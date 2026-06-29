@@ -8,7 +8,8 @@
   import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
-  import RichAvatar from "$lib/RichAvatar.svelte";
+  import RasterAvatar from "$lib/RasterAvatar.svelte";
+  import { RASTER_AVATAR_ART, isRasterAvatarSkin } from "$lib/avatar-packs";
 
   // Right-click context menu state. Renders our custom app actions instead
   // of the default WebView2 / WKWebView menu (Inspect Element, etc.).
@@ -231,16 +232,14 @@
   type Art = { w: number; h: number; head: number };
   const ART: Record<string, Art> = {
     fox:           { w: 116, h: 116, head: 110 },
-    "codex-fox":   { w: 148, h: 142, head: 130 },
     stylized:      { w: 128, h: 122, head: 120 },
     "real-clippy": { w: 118, h: 112, head: 110 },
     cat:           { w: 150, h: 168, head: 128 },
     "cat-lab":     { w: 150, h: 168, head: 128 },
-    "oru-gujia":   { w: 210, h: 138, head: 124 },
-    "spark-buddy": { w: 138, h: 140, head: 132 },
     duo:           { w: 198, h: 117, head: 107 }, // two cats side by side — wide, deliberately LOW
     "duo-hd":      { w: 200, h: 130, head: 120 }, // remastered duo — a touch taller for the pounce headroom
     off:           { w: 116, h: 116, head: 110 },
+    ...RASTER_AVATAR_ART,
   };
   const SIDE_PAD = 8; // L/R breathing room around the character
   const BOTTOM_PAD = 8; // gap below the character (shadow lives at 6px)
@@ -1188,7 +1187,7 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "codex-fox" || skin === "cat" || skin === "duo" || skin === "oru-gujia" || skin === "spark-buddy" || skin === "duo-hd" || skin === "real-clippy"}
+  {#if skin === "stylized" || skin === "fox" || isRasterAvatarSkin(skin) || skin === "cat" || skin === "duo" || skin === "duo-hd" || skin === "real-clippy"}
 
     <!-- State-driven bubble — our own consistent dialog box, shown for ALL
          skins including real Clippy (user asked for the same dialog box on
@@ -1434,15 +1433,12 @@
            the fox reacts when you move the cursor over the floater. -->
       <img class="fox-layer fox-hover"     src="/fox/fox-curious.png"     alt="" />
     </div>
-  {:else if skin === "codex-fox" || skin === "oru-gujia" || skin === "spark-buddy"}
-    <RichAvatar
+  {:else if isRasterAvatarSkin(skin)}
+    <RasterAvatar
       {skin}
       state={displayState}
       {mode}
       {hovering}
-      {blinkOpen}
-      {eyeShiftX}
-      {eyeShiftY}
       {phewActive}
     />
   {:else if skin === "real-clippy"}

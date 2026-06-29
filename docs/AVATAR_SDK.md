@@ -1,5 +1,13 @@
 # wispr-fox Avatar SDK
 
+> **Current implementation note (`v1.4.0-nightly.11`).** The high-fidelity
+> Codex-authored skins use manifest-v2 raster state packs, not hand-coded SVG.
+> Their assets live in `static/avatars/<id>/`, metadata lives in
+> `src/lib/avatar-packs.ts`, and the live floater renderer is
+> `src/lib/RasterAvatar.svelte`. The older SVG package contract below remains
+> valid for lightweight vector avatars, but raster is now the preferred path
+> for polished illustrated mascots.
+
 > **Purpose of this document.** This is the contract for creating new
 > floater avatars for wispr-fox. It's written so that another AI agent
 > (Gemini CLI, a fresh Claude session, etc.) — or a human designer —
@@ -8,14 +16,10 @@
 > idea ("make a Pikachu") and you should get back a folder that drops
 > into wispr-fox's avatars directory and Just Works.
 >
-> **Status.** The renderer described here (SVG state-files driven by
-> CSS variables) is **partly implemented** today (`v1.4.0-nightly.10`):
-> the built-in skins are still hard-wired in `src/routes/clippy/+page.svelte`
-> and `src/lib/RichAvatar.svelte`, not yet loaded via the plugin mechanism. The user-avatar
-> *loader* and *manager UI* are roadmapped for `v1.2.0-nightly.x`.
-> Avatar packages written to this spec *will* work once the loader
-> ships — and we deliberately froze the contract first so authoring
-> can run in parallel.
+> **Legacy SVG status.** The SVG package contract below remains a
+> compatibility target for lightweight avatars. Built-in high-fidelity skins
+> now use the raster state-pack path described above; user-installed package
+> loading and manager UI remain future work.
 
 ---
 
@@ -404,16 +408,21 @@ Before you ship, verify every box:
 
 ## 11. What this spec doesn't cover (yet)
 
-- **Multi-frame raster avatars** (PNG sprite-sheets like the
-  watercolor fox uses today). The SVG path is the v1; PNG-sprite
-  support comes later.
+Update for `v1.4.0-nightly.11`: single-frame raster state packs are now
+implemented for built-in avatars through manifest version 2. Multi-frame
+sprites, Lottie, Live2D, and real-time 3D models remain future work.
+
+- **Multi-frame raster avatars** (animated sprite sheets with several frames
+  per state). Single-image raster state packs are implemented; full frame
+  timelines still need a separate runtime contract.
 - **Lottie / Bodymovin avatars**. Same story.
 - **Live2D models**. Roadmapped but a separate spec — Live2D needs
   its own runtime initialisation and licence handling.
 - **Sound effects** per state. Currently the start/stop tones come
   from `~/Library/Application Support/.../sounds/`; per-avatar sound
   isn't supported.
-- **3D avatars**. Not on the roadmap.
+- **Real-time 3D avatars** (`.glb`/Three.js scene packs). The current raster
+  packs can use a 2.5D/3D-rendered art style, but they are still images.
 
 If you're authoring something that needs any of those, leave a comment
 on the GitHub repo (kumaradarsh1993/wispr-fox) so we can prioritise

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Skin } from "./skin-store.svelte";
+  import { rasterAvatarForSkin } from "./avatar-packs";
   // Import the actual Microsoft Clippy sprite data (base64 PNG + frame map)
   // from the vendored clippyjs agent file. Vite bundles it once and dedupes
   // across all SkinIcon usages.
@@ -18,6 +19,7 @@
   let spriteW = $derived(Math.round(size * (CLIPPY_FRAME.w / CLIPPY_FRAME.h)));
   let spriteH = $derived(size);
   let scale = $derived(size / CLIPPY_FRAME.h);
+  let rasterPack = $derived(rasterAvatarForSkin(skin));
 </script>
 
 {#if skin === "off"}
@@ -30,24 +32,14 @@
        (different from the watercolor fox-logo so it reads clearly at
        small picker sizes). -->
   <img src="/fox/fox-favicon.png" alt="" width={size} height={size} style="object-fit: contain;" />
-{:else if skin === "codex-fox"}
-  <svg viewBox="0 0 80 80" width={size} height={size} aria-hidden="true">
-    <defs>
-      <linearGradient id="skin-codex-fox" x1="0.3" y1="0" x2="0.7" y2="1">
-        <stop offset="0%" stop-color="#ffbd68" />
-        <stop offset="100%" stop-color="#e07324" />
-      </linearGradient>
-    </defs>
-    <path d="M 24 33 L 20 10 L 38 28 Z" fill="url(#skin-codex-fox)" stroke="#8a4216" stroke-width="1.5" />
-    <path d="M 56 33 L 60 10 L 42 28 Z" fill="url(#skin-codex-fox)" stroke="#8a4216" stroke-width="1.5" />
-    <circle cx="40" cy="38" r="24" fill="url(#skin-codex-fox)" stroke="#8a4216" stroke-width="1.5" />
-    <path d="M 20 42 Q 40 60 60 42 Q 54 66 40 68 Q 26 66 20 42 Z" fill="#fff0d5" />
-    <path d="M 21 51 Q 40 62 59 51 L 55 62 Q 40 71 25 62 Z" fill="#172033" />
-    <path d="M 24 52 Q 40 61 56 52" fill="none" stroke="#48d5ff" stroke-width="2" />
-    <circle cx="34" cy="38" r="4" fill="#24180f" />
-    <circle cx="46" cy="38" r="4" fill="#24180f" />
-    <path d="M 37.8 47 L 40 49.6 L 42.2 47 Z" fill="#4a2a1c" />
-  </svg>
+{:else if rasterPack}
+  <img
+    src={rasterPack.thumbnail}
+    alt=""
+    width={size}
+    height={size}
+    style="object-fit: contain; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.18));"
+  />
 {:else if skin === "stylized"}
   <svg viewBox="0 0 60 80" width={size * 0.75} height={size} aria-hidden="true">
     <path d="M 25 14 C 25 8, 35 8, 35 14 L 35 56 C 35 67, 19 67, 19 56 L 19 26 C 19 20, 29 20, 29 26 L 29 51"
@@ -171,48 +163,6 @@
       <circle cx="53.5" cy="48.8" r="1.5" fill="#1c1208"/>
       <path d="M 46.8 53.5 L 48 55.5 L 49.2 53.5 Z" fill="#e58f86"/>
     </g>
-  </svg>
-{:else if skin === "oru-gujia"}
-  <svg viewBox="0 0 80 80" width={size} height={size} aria-hidden="true">
-    <defs>
-      <linearGradient id="skin-oru" x1="0.3" y1="0" x2="0.7" y2="1">
-        <stop offset="0%" stop-color="#ffc174" />
-        <stop offset="100%" stop-color="#de8330" />
-      </linearGradient>
-    </defs>
-    <path d="M 16 30 L 12 12 L 28 26 Z" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1" />
-    <path d="M 40 29 L 45 12 L 29 26 Z" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1" />
-    <circle cx="28" cy="38" r="17" fill="#fbfaf6" stroke="#c9c2b2" stroke-width="1.2" />
-    <ellipse cx="23" cy="37" rx="3.2" ry="4" fill="#68723c" />
-    <ellipse cx="33" cy="37" rx="3.2" ry="4" fill="#68723c" />
-    <path d="M 26.8 43 L 28 45 L 29.2 43 Z" fill="#e59c9c" />
-    <path d="M 42 48 L 37 27 L 55 43 Z" fill="url(#skin-oru)" stroke="#c96f28" stroke-width="1" />
-    <path d="M 68 48 L 73 27 L 55 43 Z" fill="url(#skin-oru)" stroke="#c96f28" stroke-width="1" />
-    <circle cx="55" cy="55" r="18" fill="url(#skin-oru)" stroke="#c96f28" stroke-width="1.2" />
-    <path d="M 49 40 L 48.5 46 M 55 39 L 55 46 M 61 40 L 61.5 46" stroke="#c9701f" stroke-width="1.6" stroke-linecap="round" />
-    <ellipse cx="55" cy="62" rx="9" ry="6" fill="#fff1da" />
-    <circle cx="49" cy="54" r="3.5" fill="#22170d" />
-    <circle cx="61" cy="54" r="3.5" fill="#22170d" />
-    <path d="M 53.8 58.8 L 55 61 L 56.2 58.8 Z" fill="#e58f86" />
-  </svg>
-{:else if skin === "spark-buddy"}
-  <svg viewBox="0 0 80 80" width={size} height={size} aria-hidden="true">
-    <defs>
-      <linearGradient id="skin-spark" x1="0.3" y1="0" x2="0.7" y2="1">
-        <stop offset="0%" stop-color="#ffe878" />
-        <stop offset="100%" stop-color="#f0a817" />
-      </linearGradient>
-    </defs>
-    <path d="M 26 32 L 17 8 L 33 19 L 31 7 L 43 34 Z" fill="url(#skin-spark)" stroke="#b36d00" stroke-width="1.4" />
-    <path d="M 54 32 L 63 8 L 47 19 L 49 7 L 37 34 Z" fill="url(#skin-spark)" stroke="#b36d00" stroke-width="1.4" />
-    <ellipse cx="40" cy="48" rx="24" ry="27" fill="url(#skin-spark)" stroke="#b36d00" stroke-width="1.4" />
-    <ellipse cx="40" cy="58" rx="12" ry="13" fill="#fff1a6" opacity="0.9" />
-    <ellipse cx="33" cy="43" rx="4.2" ry="5.2" fill="#211609" />
-    <ellipse cx="47" cy="43" rx="4.2" ry="5.2" fill="#211609" />
-    <ellipse cx="24" cy="50" rx="4" ry="2.4" fill="#55ffe4" opacity="0.9" />
-    <ellipse cx="56" cy="50" rx="4" ry="2.4" fill="#55ffe4" opacity="0.9" />
-    <path d="M 36 50 Q 40 54 44 50" fill="none" stroke="#6e470a" stroke-width="1.5" stroke-linecap="round" />
-    <path d="M 60 57 L 73 50 L 68 61 L 76 61 L 60 75 L 64 63 Z" fill="url(#skin-spark)" stroke="#b36d00" stroke-width="1.2" />
   </svg>
 {:else if skin === "duo-hd"}
   <!-- Khaumani & Indy ✦ (remastered) — gradient fur + a sparkle to mark the
