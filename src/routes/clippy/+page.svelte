@@ -8,6 +8,7 @@
   import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
+  import RichAvatar from "$lib/RichAvatar.svelte";
 
   // Right-click context menu state. Renders our custom app actions instead
   // of the default WebView2 / WKWebView menu (Inspect Element, etc.).
@@ -230,10 +231,13 @@
   type Art = { w: number; h: number; head: number };
   const ART: Record<string, Art> = {
     fox:           { w: 116, h: 116, head: 110 },
+    "codex-fox":   { w: 148, h: 142, head: 130 },
     stylized:      { w: 128, h: 122, head: 120 },
     "real-clippy": { w: 118, h: 112, head: 110 },
     cat:           { w: 150, h: 168, head: 128 },
     "cat-lab":     { w: 150, h: 168, head: 128 },
+    "oru-gujia":   { w: 210, h: 138, head: 124 },
+    "spark-buddy": { w: 138, h: 140, head: 132 },
     duo:           { w: 198, h: 117, head: 107 }, // two cats side by side — wide, deliberately LOW
     "duo-hd":      { w: 200, h: 130, head: 120 }, // remastered duo — a touch taller for the pounce headroom
     off:           { w: 116, h: 116, head: 110 },
@@ -294,7 +298,7 @@
   // fscale, so while it's open the window must be at least this big (logical
   // px) or the menu gets cropped. Tall enough for the Avatar sub-pane (7 rows).
   const MENU_W = 192;
-  const MENU_H = 244;
+  const MENU_H = 316;
 
   // User-chosen size multiplier (sticky, sidebar + settings slider). The ONLY
   // input (besides skin + the open menu) that changes the window size now.
@@ -1065,11 +1069,38 @@
     "two cats, zero typos",
     "psst — F8. we're bored",
   ];
+  const IDLE_QUIPS_CODEX_FOX = [
+    "Codex fox online",
+    "blue scarf, clean paste",
+    "say it. I'll tidy the edges",
+    "ears calibrated for accents",
+    "F8 and I pounce",
+  ];
+  const IDLE_QUIPS_ORU_GUJIA = [
+    "Gujia supervises. Oru touches everything",
+    "two cats, one keyboard",
+    "Oru heard F8 and arrived upside down",
+    "Gujia has reviewed this silence",
+    "cream tax payable in words",
+    "we caught the thought. mostly",
+  ];
+  const IDLE_QUIPS_SPARK = [
+    "zap me with a thought",
+    "battery full. patience medium",
+    "tiny volts, tidy notes",
+    "say the thing, I'll spark it",
+    "no thunder, just transcription",
+  ];
   let _quipShowTimer: ReturnType<typeof setTimeout> | null = null;
   let _quipHideTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const idleHover = hovering && displayState === "idle";
-    const pool = skin === "duo" || skin === "duo-hd" ? IDLE_QUIPS_DUO : IDLE_QUIPS;
+    const pool =
+      skin === "codex-fox" ? IDLE_QUIPS_CODEX_FOX :
+      skin === "oru-gujia" ? IDLE_QUIPS_ORU_GUJIA :
+      skin === "spark-buddy" ? IDLE_QUIPS_SPARK :
+      skin === "duo" || skin === "duo-hd" ? IDLE_QUIPS_DUO :
+      IDLE_QUIPS;
     if (idleHover) {
       if (!_quipShowTimer && !hoverQuip) {
         _quipShowTimer = setTimeout(() => {
@@ -1157,7 +1188,7 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || skin === "cat" || skin === "cat-lab" || skin === "duo" || skin === "duo-hd" || skin === "real-clippy"}
+  {#if skin === "stylized" || skin === "fox" || skin === "codex-fox" || skin === "cat" || skin === "duo" || skin === "oru-gujia" || skin === "spark-buddy" || skin === "duo-hd" || skin === "real-clippy"}
 
     <!-- State-driven bubble — our own consistent dialog box, shown for ALL
          skins including real Clippy (user asked for the same dialog box on
@@ -1403,6 +1434,17 @@
            the fox reacts when you move the cursor over the floater. -->
       <img class="fox-layer fox-hover"     src="/fox/fox-curious.png"     alt="" />
     </div>
+  {:else if skin === "codex-fox" || skin === "oru-gujia" || skin === "spark-buddy"}
+    <RichAvatar
+      {skin}
+      state={displayState}
+      {mode}
+      {hovering}
+      {blinkOpen}
+      {eyeShiftX}
+      {eyeShiftY}
+      {phewActive}
+    />
   {:else if skin === "real-clippy"}
     <!-- The REAL Microsoft Clippy via vendored clippyts library.
          clippyts injects a div.clippy directly into document.body and
@@ -2771,6 +2813,42 @@
     border-right-color: rgba(120, 80, 30, 0.18);
     border-bottom-color: rgba(120, 80, 30, 0.18);
   }
+  .bubble[data-skin="codex-fox"] {
+    background: #f5fbff;
+    color: #152033;
+    border-color: rgba(72, 200, 255, 0.34);
+    box-shadow: 0 4px 14px rgba(44, 148, 206, 0.18);
+  }
+  .bubble[data-skin="codex-fox"]::after {
+    background: #f5fbff;
+    border-right-color: rgba(72, 200, 255, 0.34);
+    border-bottom-color: rgba(72, 200, 255, 0.34);
+  }
+  .bubble[data-skin="oru-gujia"] {
+    background: #fff8ee;
+    color: #2b2218;
+    border-color: rgba(193, 125, 54, 0.24);
+    box-shadow: 0 4px 12px rgba(120, 80, 30, 0.16);
+  }
+  .bubble[data-skin="oru-gujia"]::after {
+    background: #fff8ee;
+    border-right-color: rgba(193, 125, 54, 0.24);
+    border-bottom-color: rgba(193, 125, 54, 0.24);
+  }
+  .bubble[data-skin="spark-buddy"] {
+    background: #fffbe0;
+    color: #302300;
+    border-color: rgba(80, 214, 194, 0.42);
+    box-shadow: 0 4px 14px rgba(80, 214, 194, 0.2);
+  }
+  .bubble[data-skin="spark-buddy"]::after {
+    background: #fffbe0;
+    border-right-color: rgba(80, 214, 194, 0.42);
+    border-bottom-color: rgba(80, 214, 194, 0.42);
+  }
+  .bubble[data-skin="codex-fox"] .bubble-eq span,
+  .bubble[data-skin="spark-buddy"] .bubble-eq span { background: #19c7d3; }
+  .bubble[data-skin="oru-gujia"] .bubble-eq span { background: #d78633; }
 
   .bubble-text { font-weight: 500; }
 
@@ -3005,24 +3083,20 @@
 
   /* Cat bubble — dark charcoal with green accent.
      cat-lab shares the same bubble theme (visual change is on the body only). */
-  .bubble[data-skin="cat"],
-  .bubble[data-skin="cat-lab"] {
+  .bubble[data-skin="cat"] {
     background: #2B2B2B;
     color: #e0e0e0;
     border-color: rgba(127, 255, 0, 0.2);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
-  .bubble[data-skin="cat"]::after,
-  .bubble[data-skin="cat-lab"]::after {
+  .bubble[data-skin="cat"]::after {
     background: #2B2B2B;
     border-right-color: rgba(127, 255, 0, 0.2);
     border-bottom-color: rgba(127, 255, 0, 0.2);
   }
   /* Override EQ bar color for dark bubble */
-  .bubble[data-skin="cat"] .bubble-eq span,
-  .bubble[data-skin="cat-lab"] .bubble-eq span { background: #7FFF00; }
-  .bubble[data-skin="cat"] .bubble-dots span,
-  .bubble[data-skin="cat-lab"] .bubble-dots span { background: #999; }
+  .bubble[data-skin="cat"] .bubble-eq span { background: #7FFF00; }
+  .bubble[data-skin="cat"] .bubble-dots span { background: #999; }
 
   /* ═══════════════════════════════════════════════════════════════════════
      KHAUMANI & INDY (duo) — animations

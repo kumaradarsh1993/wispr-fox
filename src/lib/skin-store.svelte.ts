@@ -22,12 +22,33 @@
 
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type Skin = "off" | "fox" | "stylized" | "real-clippy" | "cat" | "cat-lab" | "duo" | "duo-hd";
+export type Skin =
+  | "off"
+  | "fox"
+  | "codex-fox"
+  | "stylized"
+  | "real-clippy"
+  | "cat"
+  | "cat-lab"
+  | "duo"
+  | "oru-gujia"
+  | "spark-buddy"
+  | "duo-hd";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
-const VALID_SKINS: readonly Skin[] = ["off", "fox", "stylized", "real-clippy", "cat", "duo"] as const;
+const VALID_SKINS: readonly Skin[] = [
+  "off",
+  "fox",
+  "codex-fox",
+  "stylized",
+  "real-clippy",
+  "cat",
+  "duo",
+  "oru-gujia",
+  "spark-buddy",
+] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"

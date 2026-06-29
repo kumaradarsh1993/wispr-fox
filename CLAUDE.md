@@ -21,9 +21,10 @@ promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
 Claude Code's final pre-Codex checkpoint is commit `c2d33e3`. Codex then
 published `v1.4.0-nightly.6` for the provider expansion,
 `v1.4.0-nightly.7` for Windows key-storage hardening, `v1.4.0-nightly.8`
-for the P0 settings/sidebar cleanup, and is preparing `v1.4.0-nightly.9`
-for follow-up settings/sidebar polish, native titlebar theme sync, and
-per-model usage tracking. Future Codex-authored nightlies must keep Codex
+for the P0 settings/sidebar cleanup, `v1.4.0-nightly.9` for follow-up
+settings/sidebar polish, native titlebar theme sync, and per-model usage
+tracking, and `v1.4.0-nightly.10` for Codex-authored richer avatar skins.
+Future Codex-authored nightlies must keep Codex
 visible in the release title/notes. Do not promote any Codex nightly to stable
 without the user's explicit "ship it" signal.
 
@@ -76,9 +77,10 @@ src/routes/
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Providers, Modes, Dictation, Avatar, General, Security
-  /clippy/         Always-on-top floater. Skins: off/fox/stylized/real-clippy/cat/duo
+  /clippy/         Always-on-top floater. Skins: off/fox/codex-fox/stylized/real-clippy/cat/duo/oru-gujia/spark-buddy
                    (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
-                   white loaf supervises, orange tabby works; paw-bump on paste)
+                   white loaf supervises, orange tabby works; oru-gujia = the richer Oru
+                   and Gujia duo; spark-buddy = original electric companion)
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
                    Bubble: HARD 2-line cap (CSS line-clamp) — BUBBLE_BAND height math
                    depends on it; write all bubble copy to fit two lines. Idle hover

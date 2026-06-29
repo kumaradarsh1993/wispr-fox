@@ -241,3 +241,53 @@ Hey, good job in the cleanup and the settings, etc., etc. Few minor changes from
 - Git status may show `commands.rs` / `lib.rs` as modified on Windows because
   cargo-formatting touched line endings, but `git diff --name-only` excludes
   them when there is no real content diff. Do not commit line-ending ghosts.
+
+## Codex avatar pack checkpoint - v1.4.0-nightly.10
+
+The next user prompt asked Codex to turn the generated fox concept into real
+assets/avatars, add more states/animation, create cat avatars from photos of
+Oru (orange tabby) and Gujia (white cat), and add a "Pikachu of sorts" while
+using as much dynamic work as useful:
+
+```text
+Oh, I like this one. Can you actually, you know, sort of create the assets for it? And I like it. In fact, you can make it more high-fidelity, richer, you know, maybe a little more states, but in addition to these six. I'm not sure to what extent the SDK supports it. And a little bit of animation, right? How the entire avatar sort of shakes around or bounces around, or those little subtle touches which actually makes it beautiful. So, that's some actually good job that you've done. I think you have access to good image generation models, which I'm impressed at. So yeah, you can go ahead with that. Secondly, can you also create an avatar for the cat theme? And I'm pasting a photo of my cats to you. There's orange one is called Oru, and white one is called Gujia. And maybe a one-on-one or a combo of them, and then a whole lot of, you know, funny stuff that they can say. Again, implement dynamic agents and dynamic coping, and use as much resources that you want to run with. But yeah, make this happen, please. I would really love to have a few avatars. In fact, I would love to have a Pikachu of sorts, right? So please, two or three avatars, create assets you're getting access to, and I'm giving you go-ahead, right? If you can create these high-fidelity assets via them and create a few avatars, I think that would be super nice. If they can also do some fancy animations and all, even better, right? I'm just giving you a photo of my cats.
+```
+
+### What Codex changed for nightly.10
+
+- Used the image generation skill to create three high-fidelity concept sheets:
+  Codex Fox, Oru & Gujia, and Spark Buddy. The Spark Buddy is an original
+  electric mascot, deliberately not a Pokemon/Pikachu clone.
+- Copied those sheets into:
+  - `static/avatar-concepts/codex-fox-deluxe-sheet.png`
+  - `static/avatar-concepts/oru-gujia-duo-sheet.png`
+  - `static/avatar-concepts/spark-buddy-sheet.png`
+- Added `src/lib/RichAvatar.svelte` for the new code-native SVG avatars. This
+  keeps the rich art/animation separate from the already-large `/clippy` page.
+- Added selectable skins:
+  - `codex-fox`
+  - `oru-gujia`
+  - `spark-buddy`
+- Wired those skins through `skin-store`, `SkinIcon`, the sidebar Avatar picker,
+  Settings -> Avatar, the floater context menu, and `/clippy` sizing/rendering.
+- Added state animation for the new skins: idle breathing, listening bounce and
+  waves, thinking effects, writing/tapping, paste celebration, hover reactions,
+  and phew transition support.
+- Added skin-specific hover quips and bubble color themes.
+- Kept `cat-lab` retired from active UI. Existing `cat-lab` saved values still
+  migrate to `cat`; the large old renderer branch remains unreachable legacy
+  code and can be pruned in a later cleanup-only pass.
+- Updated `docs/AVATAR_SDK.md` so it points future agents to both
+  `src/routes/clippy/+page.svelte` and `src/lib/RichAvatar.svelte`.
+
+### Verification for nightly.10
+
+- `npm run check`: passed with 0 errors. Existing unrelated warnings remain in
+  History/onboarding and local `@types/node` setup.
+- `npm run build`: passed. Existing unrelated bundle/a11y/unused-selector
+  warnings remain.
+- Browser verification against `http://127.0.0.1:1420` confirmed Settings ->
+  Avatar shows all 9 tiles without horizontal overflow; the expanded sidebar
+  avatar picker shows all 9 icon buttons above the anchored Usage block at
+  1280x720; and `/clippy` renders `codex-fox`, `oru-gujia`, and `spark-buddy`
+  as nonblank SVG avatars with the expected bubble skin IDs.

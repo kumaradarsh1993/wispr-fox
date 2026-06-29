@@ -77,10 +77,13 @@
   const SKIN_OPTIONS: SkinOption[] = [
     { id: "off",         label: "Off" },
     { id: "fox",         label: "Fox" },
+    { id: "codex-fox",   label: "Codex Fox" },
     { id: "stylized",    label: "Paperclip" },
     { id: "real-clippy", label: "Clippy" },
     { id: "cat",         label: "Desk Cat" },
     { id: "duo",         label: "Khaumani & Indy" },
+    { id: "oru-gujia",   label: "Oru & Gujia" },
+    { id: "spark-buddy", label: "Spark Buddy" },
   ];
 
   let secretCheck = $state<SecretCheck | null>(null);
@@ -525,7 +528,7 @@
                   title={opt.label}
                   aria-label={opt.label}
                 >
-                  <SkinIcon skin={opt.id} size={26} />
+                  <SkinIcon skin={opt.id} size={22} />
                 </button>
               {/each}
             </div>
@@ -1009,9 +1012,9 @@
 
   /* Avatar section — icon-only grid (same in both light + dark themes). */
   .section {
-    margin-top: 14px;
+    margin-top: 12px;
     border-top: 1px solid var(--border-subtle);
-    padding-top: 12px;
+    padding-top: 10px;
   }
 
   .section-title-bar {
@@ -1020,7 +1023,7 @@
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    padding: 0 10px 8px;
+    padding: 0 8px 6px;
   }
 
   .model-panel {
@@ -1116,9 +1119,9 @@
 
   .skin-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 4px;
-    padding: 0 2px 8px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 3px;
+    padding: 0 2px 6px;
   }
 
   .skin-grid-collapsed {
@@ -1134,7 +1137,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 6px 2px 2px;
+    padding: 4px 2px 0;
   }
   .scale-label {
     font-size: 10px;
@@ -1380,7 +1383,13 @@
      in sidebar-bottom. Shrink, then hide, so today's-usage + active
      models keep their space and don't fight sidebar-top for room. */
   @media (max-height: 720px) {
-    .sidebar-fox { width: 96px; height: 96px; }
+    .hotkey-reminder { display: none; }
+    .sidebar-top { padding-top: 10px; padding-bottom: 10px; }
+    .model-row { padding-bottom: 8px; }
+    .model-row + .model-row { padding-top: 8px; }
+    .model-selects { gap: 5px; }
+    .model-selects select { height: 27px; }
+    .sidebar-fox { display: none; }
   }
   @media (max-height: 580px) {
     .sidebar-fox { display: none; }

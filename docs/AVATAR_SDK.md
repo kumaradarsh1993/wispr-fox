@@ -9,9 +9,9 @@
 > into wispr-fox's avatars directory and Just Works.
 >
 > **Status.** The renderer described here (SVG state-files driven by
-> CSS variables) is **partly implemented** today (`v1.1.0-nightly.5`):
-> the built-in skins still live inline in `src/routes/clippy/+page.svelte`
-> and are not yet loaded via the plugin mechanism. The user-avatar
+> CSS variables) is **partly implemented** today (`v1.4.0-nightly.10`):
+> the built-in skins are still hard-wired in `src/routes/clippy/+page.svelte`
+> and `src/lib/RichAvatar.svelte`, not yet loaded via the plugin mechanism. The user-avatar
 > *loader* and *manager UI* are roadmapped for `v1.2.0-nightly.x`.
 > Avatar packages written to this spec *will* work once the loader
 > ships — and we deliberately froze the contract first so authoring

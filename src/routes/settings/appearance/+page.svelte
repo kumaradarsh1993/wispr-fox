@@ -9,11 +9,14 @@
   type SkinOption = { id: Skin; label: string; desc: string };
   const SKIN_OPTIONS: SkinOption[] = [
     { id: "off",         label: "Off",       desc: "Hide the floating character entirely" },
+    { id: "codex-fox",   label: "Codex Fox", desc: "Higher-fidelity fox companion with Codex-blue glow, richer listening/thinking/writing states" },
     { id: "fox",         label: "Fox",       desc: "Watercolor fox mascot — the Foxy identity, default since v1.0" },
     { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
     { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
     { id: "cat",         label: "Desk Cat",  desc: "Sleepy charcoal cat with green slit-pupil eyes — curls up idle, perks up to help, typing paws" },
     { id: "duo",         label: "Khaumani & Indy", desc: "The two-cat team — a serene white cat loafing on the console supervises while an orange tabby kitten does the actual typing. Paw bump on every successful paste" },
+    { id: "oru-gujia",   label: "Oru & Gujia", desc: "Personal duo based on Oru the orange tabby and Gujia the white supervisor, with playful cat-specific states" },
+    { id: "spark-buddy", label: "Spark Buddy", desc: "Original electric companion with lightning ears, teal glow, waveform listening, and celebratory sparkles" },
   ];
 
   const THEME_OPTIONS = [
