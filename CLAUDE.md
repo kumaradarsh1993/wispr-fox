@@ -13,8 +13,9 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v1.4.0`** (Latest, 2026-06-30) — user-confirmed working,
-promoted from the Codex `v1.4.0-nightly.12` line. Single owner, no paid users.
+**Current stable: `v2.0.0`** (Latest, 2026-06-30) — user-confirmed working,
+promoted from the Codex `v1.4.0-nightly.12` line plus the final v2.0.0
+floater bubble/readability correction. Single owner, no paid users.
 
 ## Codex handoff checkpoint (2026-06-29)
 
@@ -28,16 +29,19 @@ tracking, `v1.4.0-nightly.10` for Codex-authored avatar concepts, and
 implementation with manifest-v2 raster state packs, and
 `v1.4.0-nightly.12` for Codex raster avatar scaling and edge-artifact QA. The
 user tested nightly.12, said it "works great", and explicitly asked to make it
-the latest stable; `v1.4.0` is that stable promotion. Future Codex-authored
-nightlies must keep Codex visible in the release title/notes. Do not promote
-any Codex nightly to stable without the user's explicit "ship it" signal.
+the latest stable. A `v1.4.0` draft/tag was started, then the user stopped the
+release for one last sizing fix; Codex canceled the workflow, removed the draft
+release/tag, and promoted the corrected build as `v2.0.0`. Future
+Codex-authored nightlies must keep Codex visible in the release title/notes. Do
+not promote any Codex nightly to stable without the user's explicit "ship it"
+signal.
 
 Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
 Claude. It captures the user's prompts, what Codex changed, why the Windows
 key-management fallback was redesigned, the GitHub plaintext-key audit, and
 the settings/sidebar cleanup decisions.
 
-**What v1.4.0 shipped** (this is the live baseline; details below):
+**What v2.0.0 shipped** (this is the live baseline; details below):
 - **Provider expansion** — Groq remains supported, and OpenAI, Deepgram, and
   ElevenLabs are now selectable STT providers. OpenAI is also available for
   cleanup/drafting.
@@ -49,15 +53,16 @@ the settings/sidebar cleanup decisions.
 - **Codex raster avatars** — Codex Fox, Oru & Gujia, and Spark Buddy use
   manifest-v2 raster state packs rendered by `RasterAvatar.svelte`; the
   nightly.12 QA pass fixed scaling, edge slivers, and the Oru/Gujia white-fur
-  matte issue.
+  matte issue, and v2.0.0 reduced raster footprints by ~20%.
 - **Analytics dashboard** — `/stats` page + a widget on top of History
   (time saved vs typing @40wpm, words/sessions per day, speaking speed, day
   streak, 7/30/90-day chart). Backed by a lifetime `daily_stats` SQLite table
   that is NOT pruned by retention.
-- **Floater = ONE fixed box per avatar** (reverted from the dynamic-resize
-  experiment). Box never resizes on dictation state; only the S/M/L scale (and
-  the right-click menu) changes window size. Bubble anchored above the head,
-  grows upward. Double-click avatar → opens main window. (Full model below.)
+- **Floater = constrained REST/TALK two-box model.** The window grows only when
+  a bubble is visible, shrinks after the bubble fades, and remains
+  bottom-centre anchored. v2.0.0 decouples bubble scale from avatar scale so
+  small avatars still have readable status text and large avatars get a tighter
+  bubble. Double-click avatar → opens main window. (Full model below.)
 - **macOS hotkeys = ⌥-based** (⌥Space dictate / ⌥Enter draft / ⌘ for sticky)
   since nightly.8-v2, NOT the old ⌃⌥ chords. (Hotkey section below is updated.)
 - **macOS durable Accessibility signing** — infrastructure ready but NOT yet
@@ -65,9 +70,10 @@ the settings/sidebar cleanup decisions.
   the mac build if they're set without the secrets). One-time enablement steps
   in `docs/MACOS_SIGNING.md`. **Pending the user adding 3 GitHub secrets.**
 
-The v1.4.0 Codex line reached `v1.4.0-nightly.12` before promotion to stable.
-Earlier v1.3.0 nightly history and the v1.4.0 Codex nightlies are both tracked
-in `docs/ROADMAP.md` "Done — recent".
+The v1.4.0 Codex line reached `v1.4.0-nightly.12`; stable was published as
+`v2.0.0` after the final floater sizing correction. Earlier v1.3.0 nightly
+history and the v1.4.0 Codex nightlies are tracked in `docs/ROADMAP.md`
+"Done — recent".
 
 ## Architecture (90-second tour)
 
@@ -188,7 +194,7 @@ to find tray-only apps the way Windows users find the system tray).
 - **History bottom** carries the `landscape-combined.png` autumn
   pastoral banner with a top-fade mask.
 
-## Floater model (current — v1.4.0 two-box model)
+## Floater model (current — v2.0.0 two-box + readable bubble model)
 
 The floater (`/clippy`) went through a painful dynamic-resize experiment
 (nightly.1→7), was reverted to ONE fixed box for v1.3.0, then — at the user's
@@ -198,10 +204,11 @@ fixed box permanently reserved the ~110px bubble band above the head, an
 invisible always-on-top dead zone that covered content and ate clicks. Rules:
 
 - **TWO boxes per avatar: REST (tight around the character) and TALK (adds
-  the bubble band above the head).** `boxFor(skin, talking)` from the per-skin
-  `ART` table (`{w,h,head}`). The window grows upward when a bubble (state or
-  toast) appears and shrinks back ~350ms after it hides (debounced `talking`
-  state — fade-out finishes first; mid-pipeline state hops never resize).
+  the bubble band above the head).** `boxFor(skin, talking, avatarScale,
+  bubbleScale)` from the per-skin `ART` table (`{w,h,head}`). The window grows
+  upward when a bubble (state or toast) appears and shrinks back ~350ms after
+  it hides (debounced `talking` state — fade-out finishes first; mid-pipeline
+  state hops never resize).
   This is NOT the old per-state experiment: resize keys off bubble visibility
   only, and works because the resize is one atomic native SetWindowPos,
   bottom-centre anchored, **with SWP_NOCOPYBITS** (nightly.2) — without that
@@ -220,8 +227,10 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   the classic v1.3 full box — `boxFor(skin, fixedBox || talking)` — and the
   dedupe key then guarantees zero resizes during dictation.
 - **S/M/L scale (and the open right-click menu) also change window size.**
-  Scale store: `lib/floater-scale.svelte.ts`; everything (window, avatar,
-  bubble, text) multiplies by `--fscale` together.
+  Scale store: `lib/floater-scale.svelte.ts`; avatars still multiply by
+  `--fscale`, but bubble text/controls use `--bubble-scale`. At 60% avatar
+  scale the bubble is about 2x the old tiny bubble; around medium it is normal;
+  at large it is about 30% tighter than the old proportional bubble.
 - **Resize is a NATIVE Rust command** (`commands.rs::resize_floater`,
   bottom-center anchored). JS `outerSize()`/`setSize()` THROW in the floater
   webview — do NOT resize from JS. `clippy` window is `resizable:true,
@@ -420,13 +429,13 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-06-30 Codex stable promotion + handover reset. See*
+*Last touched: 2026-06-30 Codex v2.0.0 stable promotion + handover reset. See*
 *docs/CODEX_HANDOVER_2026-06-29.md for the full prompts, decisions,*
-*GitHub plaintext-key audit, settings cleanup notes, avatar QA, and stable*
-*promotion notes. Update when*
+*GitHub plaintext-key audit, settings cleanup notes, avatar QA, v1.4.0 draft*
+*cancellation, and stable promotion notes. Update when*
 *conventions or architecture change - not on every fix.*
 
-## Open threads (post-v1.4.0, for the next session)
+## Open threads (post-v2.0.0, for the next session)
 
 1. **Enable macOS signing** — user to add 3 GitHub secrets + uncomment the env
    block in `release.yml` per `docs/MACOS_SIGNING.md`. Until then mac builds are

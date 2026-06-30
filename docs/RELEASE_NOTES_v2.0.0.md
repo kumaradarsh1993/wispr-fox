@@ -1,8 +1,8 @@
-# wispr-fox v1.4.0 - Codex provider, settings, and avatar release
+# wispr-fox v2.0.0 - Codex provider, settings, and avatar release
 
-This stable release promotes the user-tested `v1.4.0-nightly.12` line. The app
-code is the same tested code path, with this stable commit adding the release
-notes, download-link updates, and handover checkpoint.
+This stable release promotes the user-tested Codex avatar/provider line after
+one final floater sizing correction. The earlier `v1.4.0` draft was canceled
+before publication; `v2.0.0` is the stable release users should install.
 
 ## More speech-to-text and cleanup providers
 
@@ -41,7 +41,12 @@ notes, download-link updates, and handover checkpoint.
 
 - Added Codex-authored high-fidelity raster avatar support for Codex Fox, Oru &
   Gujia, and Spark Buddy.
-- Raster avatars now scale correctly with the floater S/M/L setting.
+- Raster avatars now scale correctly with the floater S/M/L setting and are
+  about 20% smaller than the first raster release, matching the older avatar
+  footprint more closely.
+- The speech/status bubble now scales independently from the avatar: it stays
+  readable at the smallest size, sits above the face instead of overlapping,
+  and is tighter at the largest size.
 - Raster avatars are isolated from the old SVG whole-character animations, so
   they no longer roll into the window edge.
 - Added an internal safe frame so subtle motion, drop shadows, and signal waves
@@ -54,5 +59,5 @@ notes, download-link updates, and handover checkpoint.
 
 - `npm run check` passed with 0 errors. Existing unrelated warnings remain.
 - `npm run build` passed. Existing unrelated bundle/a11y warnings remain.
-- `v1.4.0-nightly.12` passed CI for Windows, macOS, and Linux and was
-  user-tested before this stable promotion.
+- The v2.0.0 correction was reviewed against the reported small-scale bubble
+  overlap/readability issue and the oversized raster-avatar footprint.

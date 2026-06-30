@@ -216,8 +216,10 @@
   // old dynamic-resize experiment wasn't because every piece it was missing
   // now exists: the resize is ONE atomic native SetWindowPos (no flicker),
   // bottom-centre anchored (the character never moves), and it changes only
-  // on bubble visibility — never per pipeline state, never per frame.
-  // The S/M/L scale still multiplies the whole box uniformly.
+  // on bubble visibility - never per pipeline state, never per frame.
+  // v2.0.0 keeps the avatar scale uniform, but decouples the bubble scale:
+  // very small avatars still need readable status text, while large avatars
+  // should not get a comically large bubble.
   //
   // Each avatar's footprint + where its head is, all LOGICAL px at scale 1.0.
   //   w/h  = the rendered character size (must match the avatar CSS below).
@@ -254,17 +256,35 @@
   // TOP_MARGIN-ish slack. Was 104 for a 4–5 line bubble — that head-room is
   // exactly the vertical dead space the user flagged.
   const BUBBLE_BAND = 62;
-  const BUBBLE_W = 226; // min box width — unchanged (the user explicitly does
+  const BUBBLE_W = 226; // min box width - unchanged (the user explicitly does
                         // NOT want a wider window; the bubble inside it gets
                         // wider instead, see .bubble max-width).
 
-  function boxFor(skin: string, talking: boolean): Size {
+  function bubbleScaleFor(scale: number): number {
+    if (scale <= 0.6) return 1.2;
+    if (scale <= 0.8) return 1.2 - ((scale - 0.6) / 0.2) * 0.15;
+    if (scale <= 1.0) return 1.05 - ((scale - 0.8) / 0.2) * 0.05;
+    if (scale <= 1.25) return 1.0 - ((scale - 1.0) / 0.25) * 0.125;
+    return Math.max(0.86, 0.875 - (scale - 1.25) * 0.05);
+  }
+
+  function bubbleGapFor(scale: number): number {
+    return Math.max(12, HEAD_GAP * scale);
+  }
+
+  function boxFor(skin: string, talking: boolean, avatarScale: number, bubbleScale: number): Size {
     const a = ART[skin] ?? ART.fox;
-    const rest: Size = { w: a.w + 2 * SIDE_PAD, h: a.h + BOTTOM_PAD + TOP_MARGIN };
+    const rest: Size = {
+      w: Math.ceil((a.w + 2 * SIDE_PAD) * avatarScale),
+      h: Math.ceil((a.h + BOTTOM_PAD + TOP_MARGIN) * avatarScale),
+    };
     if (!talking) return rest;
     return {
-      w: Math.max(rest.w, BUBBLE_W),
-      h: Math.max(rest.h, a.head + HEAD_GAP + BUBBLE_BAND),
+      w: Math.max(rest.w, Math.ceil(BUBBLE_W * bubbleScale)),
+      h: Math.max(
+        rest.h,
+        Math.ceil(a.head * avatarScale + bubbleGapFor(avatarScale) + BUBBLE_BAND * bubbleScale),
+      ),
     };
   }
 
@@ -302,11 +322,13 @@
   // User-chosen size multiplier (sticky, sidebar + settings slider). The ONLY
   // input (besides skin + the open menu) that changes the window size now.
   let fscale = $derived(floaterScale.current);
+  let bubbleScale = $derived(bubbleScaleFor(fscale));
+  let bubbleGap = $derived(bubbleGapFor(fscale));
 
   // Where the bubble's tail sits (logical px from window bottom), scaled.
-  // The bubble anchors here and grows upward. We add HEAD_GAP so there's a
-  // real gap between the head and the bubble (it no longer sits on the face).
-  let bubbleBottom = $derived(((ART[skin]?.head ?? ART.fox.head) + HEAD_GAP) * fscale);
+  // The bubble anchors here and grows upward. v2.0.0 keeps a minimum physical
+  // gap so the larger small-size bubble no longer lands on the avatar's face.
+  let bubbleBottom = $derived(((ART[skin]?.head ?? ART.fox.head) * fscale) + bubbleGap);
 
   // Debug overlay (off by default). Shows the requested vs ACTUAL window size
   // so we can tell at a glance whether setSize is taking effect — the whole
@@ -395,9 +417,9 @@
   // mid-dictation transitions (listening→thinking→writing) never touch
   // the window.
   $effect(() => {
-    const box = boxFor(skin, fixedBox || talking);
-    let w = Math.round(box.w * fscale);
-    let h = Math.round(box.h * fscale);
+    const box = boxFor(skin, fixedBox || talking, fscale, bubbleScale);
+    let w = box.w;
+    let h = box.h;
     // While the right-click menu is open, ensure the window is at least big
     // enough to show the whole (fixed-size) menu — grow only, never shrink.
     if (ctxMenuOpen) {
@@ -1130,7 +1152,7 @@
 <div
   class="clippy-stage"
   class:stage-hidden={!stageVisible}
-  style="--fscale:{fscale}; --bubble-bottom:{bubbleBottom}px;"
+  style="--fscale:{fscale}; --bubble-scale:{bubbleScale}; --bubble-bottom:{bubbleBottom}px;"
   role="button"
   tabindex="0"
   aria-label="wispr-fox floater — drag to move, right-click for options"
@@ -2733,26 +2755,25 @@
        visual regressions on the stylized skin per user feedback. Will
        resurface as part of the new fox skin in a future build.) */
 
-  /* Speech bubble — anchored just above the character's head (--bubble-bottom,
+  /* Speech bubble - anchored just above the character's head (--bubble-bottom,
      measured from the window bottom) and grows UPWARD as text gets longer, so
      it hugs the head at rest (no big gap) and never reaches the face. The box
-     is sized per-skin with enough headroom above for a 3-line bubble. */
+     is sized per-skin with enough headroom above for a 2-line bubble. */
   .bubble {
     position: absolute;
     bottom: var(--bubble-bottom, 130px);
     top: auto;
     left: 50%;
     transform: translateX(-50%) translateY(6px) scale(0.92);
-    /* Scale the bubble WITH the floater scale so Small shrinks text + box
-       together instead of overflowing. As wide as the window allows (window
-       width is unchanged) + slightly smaller type, so copy spreads sideways
-       into at most two lines instead of stacking tall. */
-    max-width: calc(216px * var(--fscale, 1));
+    /* Bubble scale is intentionally decoupled from avatar scale: small avatars
+       need readable status text, large avatars need a tighter bubble. */
+    box-sizing: border-box;
+    max-width: calc(216px * var(--bubble-scale, 1));
     background: #fff;
     border: 1px solid rgba(0, 0, 0, 0.12);
-    border-radius: 13px;
-    padding: calc(5px * var(--fscale, 1)) calc(10px * var(--fscale, 1));
-    font-size: calc(10.5px * var(--fscale, 1));
+    border-radius: calc(13px * var(--bubble-scale, 1));
+    padding: calc(5px * var(--bubble-scale, 1)) calc(10px * var(--bubble-scale, 1));
+    font-size: calc(10.5px * var(--bubble-scale, 1));
     color: #1d1d1f;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     opacity: 0;
@@ -2760,7 +2781,7 @@
     transition: opacity 200ms ease, transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(6px * var(--bubble-scale, 1));
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     z-index: 5;
   }
@@ -2788,11 +2809,11 @@
   .bubble::after {
     content: "";
     position: absolute;
-    bottom: -5px;
+    bottom: calc(-5px * var(--bubble-scale, 1));
     left: 50%;
     transform: translateX(-50%) rotate(45deg);
-    width: 8px;
-    height: 8px;
+    width: calc(8px * var(--bubble-scale, 1));
+    height: calc(8px * var(--bubble-scale, 1));
     background: #fff;
     border-right: 1px solid rgba(0, 0, 0, 0.12);
     border-bottom: 1px solid rgba(0, 0, 0, 0.12);
@@ -2854,21 +2875,21 @@
   .bubble-eq {
     display: inline-flex;
     align-items: flex-end;
-    gap: 2px;
-    height: 11px;
+    gap: calc(2px * var(--bubble-scale, 1));
+    height: calc(11px * var(--bubble-scale, 1));
   }
 
   .bubble-eq span {
-    width: 2px;
+    width: calc(2px * var(--bubble-scale, 1));
     background: #0a84ff;
-    border-radius: 1px;
+    border-radius: calc(1px * var(--bubble-scale, 1));
     animation: eq-bar 0.7s ease-in-out infinite;
   }
 
-  .bubble-eq span:nth-child(1) { animation-delay: 0s; height: 4px; }
-  .bubble-eq span:nth-child(2) { animation-delay: 0.15s; height: 8px; }
-  .bubble-eq span:nth-child(3) { animation-delay: 0.30s; height: 11px; }
-  .bubble-eq span:nth-child(4) { animation-delay: 0.45s; height: 6px; }
+  .bubble-eq span:nth-child(1) { animation-delay: 0s; height: calc(4px * var(--bubble-scale, 1)); }
+  .bubble-eq span:nth-child(2) { animation-delay: 0.15s; height: calc(8px * var(--bubble-scale, 1)); }
+  .bubble-eq span:nth-child(3) { animation-delay: 0.30s; height: calc(11px * var(--bubble-scale, 1)); }
+  .bubble-eq span:nth-child(4) { animation-delay: 0.45s; height: calc(6px * var(--bubble-scale, 1)); }
 
   @keyframes eq-bar {
     0%, 100% { transform: scaleY(0.4); }
@@ -2877,12 +2898,12 @@
 
   .bubble-dots {
     display: inline-flex;
-    gap: 2px;
+    gap: calc(2px * var(--bubble-scale, 1));
   }
 
   .bubble-dots span {
-    width: 4px;
-    height: 4px;
+    width: calc(4px * var(--bubble-scale, 1));
+    height: calc(4px * var(--bubble-scale, 1));
     background: #6e6e73;
     border-radius: 50%;
     animation: dot-bounce 1.2s ease-in-out infinite;
@@ -2899,12 +2920,12 @@
   .bubble-pencil {
     display: inline-block;
     animation: pencil-wiggle 0.4s ease-in-out infinite;
-    font-size: 11px;
+    font-size: calc(11px * var(--bubble-scale, 1));
   }
 
   .bubble-emoji {
     display: inline-block;
-    font-size: 13px;
+    font-size: calc(13px * var(--bubble-scale, 1));
     animation: emoji-pop 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
@@ -2930,7 +2951,7 @@
     background: #b3261e;
     color: #fff;
     border-color: #b3261e;
-    max-width: 200px;
+    max-width: calc(200px * var(--bubble-scale, 1));
     white-space: normal;
   }
   .bubble[data-state="toast-error"]::after {

@@ -22,18 +22,18 @@ window.PRODUCT_SITE = {
   downloads: [
     {
       label: "Download for Windows",
-      note: "Stable v1.4.0 installer",
-      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.4.0/wispr-fox_1.4.0_x64-setup.exe"
+      note: "Stable v2.0.0 installer",
+      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v2.0.0/wispr-fox_2.0.0_x64-setup.exe"
     },
     {
       label: "Download for macOS",
       note: "Apple silicon DMG",
-      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.4.0/wispr-fox_1.4.0_aarch64.dmg"
+      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v2.0.0/wispr-fox_2.0.0_aarch64.dmg"
     },
     {
       label: "Download for Linux",
       note: "AppImage",
-      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v1.4.0/wispr-fox_1.4.0_amd64.AppImage"
+      href: "https://github.com/kumaradarsh1993/wispr-fox/releases/download/v2.0.0/wispr-fox_2.0.0_amd64.AppImage"
     },
     {
       label: "Beta builds",

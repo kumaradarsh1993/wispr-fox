@@ -8,9 +8,9 @@
   "version": "1.0.0-codex",
   "license": "Generated for wispr-fox; personal project use",
   "art": {
-    "width": 170,
-    "height": 182,
-    "head": 182,
+    "width": 136,
+    "height": 146,
+    "head": 146,
     "anchor": "bottom-center"
   },
   "states": {

@@ -403,9 +403,10 @@ All right, I'll test the Android part later, but the part that you have created,
   fragments after cleanup.
 - A dark-background preview checked all eight regenerated Oru & Gujia states.
 
-## Stable promotion and session-reset checkpoint - v1.4.0
+## Stable-promotion draft checkpoint - v1.4.0 canceled before publish
 
-On 2026-06-30, the user tested `v1.4.0-nightly.12` and approved it for stable:
+On 2026-06-30, the user tested `v1.4.0-nightly.12` and initially approved it
+for stable:
 
 ```text
 works great
@@ -414,27 +415,59 @@ lets make this the latest stable release
 also - we will handover and reset this session post this commit and changes - so make sure you get the handover docs updated
 ```
 
-### What this promotion means
+### What happened to this draft
 
-- `v1.4.0` is the stable promotion of the Codex `v1.4.0-nightly.12` line.
-- App code is the same tested code path as nightly.12; the stable-promotion
-  commit updates release notes, public download links, project memory, and this
-  handover checkpoint.
-- The release title/notes still make Codex provenance visible, per the user's
-  standing request.
-- This is not a new feature branch. Future work should start after the stable
-  tag unless the user explicitly asks to go back.
+Codex created and pushed the `v1.4.0` stable-promotion commit on `main`, and
+started a `v1.4.0` release workflow. Before that release published, the user
+stopped the process with a new correction request. Codex then canceled the
+GitHub Actions release run, deleted the draft `v1.4.0` release, removed the
+remote `v1.4.0` tag, and deleted the local `v1.4.0` tag. `v1.4.0` should not be
+treated as a published stable.
 
-### Stable-promotion docs updated
+## Codex v2.0.0 sizing correction and stable checkpoint
 
-- `docs/RELEASE_NOTES_v1.4.0.md` added for the stable release workflow.
-- `README.md`, `docs/site-data.js`, and `docs/index.html` updated so public
-  download links point to `v1.4.0` artifacts.
-- `CLAUDE.md` updated so future Claude/Codex sessions see `v1.4.0` as the live
-  stable baseline.
-- `docs/ROADMAP.md` updated with a `v1.4.0 stable` done entry.
-- `docs/AVATAR_SDK.md` updated so the raster-avatar implementation note refers
-  to `v1.4.0`, not the earlier nightly.
+The user then asked for the stable to become version 2.0.0 and for two final
+floater sizing fixes before release:
+
+```text
+Okay. I'm stopping you midway, but two things that I want to fix. And by the way, version should now be changed to version two point zero. This is a substantial uptick over whatever we had created earlier. So yeah. So make it version two point zero. Secondly, when I scale this down, I'm observing that in case of the raster graphic avatar, the the display box of the text and the audio animation becomes too small. And by too small, I'm just attaching a screen shot for you, which has, like, for scale, the normal text on my screen. Right? So it's becoming too small. I'm also going to check if the same happens with my existing ones. Yeah. Even existing ones, the box is becoming a little too small and now starts overlapping with the base model. Right? So if if, for example, I'm attaching another screenshot at the small scale itself. Like, the previous one was a minimal like, the least scale, but I'm showing you, like, even at small scale, this is becoming too small and becomes too overlapping. And and taking some text from the background for you to understand how small this is. Like, this is almost unreadable. Maybe not that small. Maybe at the smallest size, I would ideally want the a, the bubble not to overlap with the model. Slightly above or something would be better. Secondly, slightly larger layer. The smallest scale, I want it to be double the size. And at large, again, this box becomes too big. Maybe at large, it can be like, the text as well as the box can be 30% smaller. Right? Or it can be yeah. So roughly that should be good enough references to work within, make it version two point zero after these fixes.
+```
+
+The user immediately added:
+
+```text
+Oh, and by the way, all the raster ones that you have created are still too big. Right? The base raster graphic avatars itself. At the smallest one, I would expect them or want them across the board, I would want them to be roughly 20% smaller.
+```
+
+### What Codex changed for v2.0.0
+
+- Bumped app/release metadata to `2.0.0` in `package.json`,
+  `package-lock.json`, and `src-tauri/tauri.conf.json`.
+- Replaced the `v1.4.0` release-note file with
+  `docs/RELEASE_NOTES_v2.0.0.md`.
+- Updated public download links and landing-page data to point at `v2.0.0`
+  artifacts.
+- Changed `/clippy` sizing so the bubble no longer scales linearly with avatar
+  size:
+  - 60% avatar scale now uses about a 1.2x bubble scale, which is roughly
+    double the old 0.6x bubble.
+  - medium scale stays near normal.
+  - large scale uses a tighter bubble, roughly 30% smaller than the old
+    proportional large bubble.
+- Added a minimum physical gap between avatar head and speech bubble so the
+  bubble/tail no longer overlaps the face at small scale.
+- Updated window-size math so TALK boxes are sized from avatar scale and bubble
+  scale separately.
+- Reduced only the new raster avatar art metadata by about 20%:
+  - Codex Fox: `170x182` -> `136x146`
+  - Oru & Gujia: `222x214` -> `178x171`
+  - Spark Buddy: `168x184` -> `134x147`
+- Mirrored those dimensions in all three `avatar.json` manifests.
+- Left the legacy/vector avatars and existing saved-skin compatibility paths
+  unchanged.
+- Updated `CLAUDE.md`, `docs/ROADMAP.md`, `docs/AVATAR_SDK.md`, and this
+  handover so future Claude/Codex sessions know `v2.0.0` is the actual stable
+  target and `v1.4.0` was canceled before publish.
 
 ### Reset guidance for the next session
 
@@ -443,13 +476,14 @@ Start by checking:
 ```powershell
 git status --short --branch
 git log -5 --oneline
-gh release view v1.4.0 --repo kumaradarsh1993/wispr-fox
+gh release view v2.0.0 --repo kumaradarsh1993/wispr-fox
 ```
 
 Expected state after this handover completes:
 
 - Branch `main` clean and pushed.
-- Stable tag `v1.4.0` pushed and published as Latest.
+- Stable tag `v2.0.0` pushed and published as Latest.
 - `v1.4.0-nightly.12` remains as the pre-stable test checkpoint.
-- The next desktop task should branch conceptually from `v1.4.0` stable, not
+- `v1.4.0` has no release/tag; it was a canceled draft.
+- The next desktop task should branch conceptually from `v2.0.0` stable, not
   from any earlier Claude checkpoint.

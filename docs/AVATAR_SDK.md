@@ -1,6 +1,6 @@
 # wispr-fox Avatar SDK
 
-> **Current implementation note (`v1.4.0`).** The high-fidelity
+> **Current implementation note (`v2.0.0`).** The high-fidelity
 > Codex-authored skins use manifest-v2 raster state packs, not hand-coded SVG.
 > Their assets live in `static/avatars/<id>/`, metadata lives in
 > `src/lib/avatar-packs.ts`, and the live floater renderer is
@@ -408,7 +408,7 @@ Before you ship, verify every box:
 
 ## 11. What this spec doesn't cover (yet)
 
-Update for `v1.4.0`: single-frame raster state packs are now
+Update for `v2.0.0`: single-frame raster state packs are now
 implemented for built-in avatars through manifest version 2. Multi-frame
 sprites, Lottie, Live2D, and real-time 3D models remain future work.
 
