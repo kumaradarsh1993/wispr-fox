@@ -13,8 +13,8 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v1.3.0`** (Latest, 2026-06-06) — user-confirmed working,
-promoted from `v1.3.0-nightly.11`. Single owner, no paid users.
+**Current stable: `v1.4.0`** (Latest, 2026-06-30) — user-confirmed working,
+promoted from the Codex `v1.4.0-nightly.12` line. Single owner, no paid users.
 
 ## Codex handoff checkpoint (2026-06-29)
 
@@ -26,17 +26,30 @@ settings/sidebar polish, native titlebar theme sync, and per-model usage
 tracking, `v1.4.0-nightly.10` for Codex-authored avatar concepts, and
 `v1.4.0-nightly.11` for replacing the rejected hand-coded SVG avatar
 implementation with manifest-v2 raster state packs, and
-`v1.4.0-nightly.12` for Codex raster avatar scaling and edge-artifact QA.
-Future Codex-authored nightlies must keep Codex
-visible in the release title/notes. Do not promote any Codex nightly to stable
-without the user's explicit "ship it" signal.
+`v1.4.0-nightly.12` for Codex raster avatar scaling and edge-artifact QA. The
+user tested nightly.12, said it "works great", and explicitly asked to make it
+the latest stable; `v1.4.0` is that stable promotion. Future Codex-authored
+nightlies must keep Codex visible in the release title/notes. Do not promote
+any Codex nightly to stable without the user's explicit "ship it" signal.
 
 Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
 Claude. It captures the user's prompts, what Codex changed, why the Windows
 key-management fallback was redesigned, the GitHub plaintext-key audit, and
 the settings/sidebar cleanup decisions.
 
-**What v1.3.0 shipped** (this is the live baseline; details below):
+**What v1.4.0 shipped** (this is the live baseline; details below):
+- **Provider expansion** — Groq remains supported, and OpenAI, Deepgram, and
+  ElevenLabs are now selectable STT providers. OpenAI is also available for
+  cleanup/drafting.
+- **Secure key storage hardening** — Windows key storage is keyring-first with
+  DPAPI-encrypted local fallback and a no-secret Settings -> Security event log.
+- **Settings/sidebar cleanup** — Settings are split into clearer sections; the
+  sidebar now has STT/LLM model pickers, a Clean toggle, resizable width, and
+  per-model usage readouts.
+- **Codex raster avatars** — Codex Fox, Oru & Gujia, and Spark Buddy use
+  manifest-v2 raster state packs rendered by `RasterAvatar.svelte`; the
+  nightly.12 QA pass fixed scaling, edge slivers, and the Oru/Gujia white-fur
+  matte issue.
 - **Analytics dashboard** — `/stats` page + a widget on top of History
   (time saved vs typing @40wpm, words/sessions per day, speaking speed, day
   streak, 7/30/90-day chart). Backed by a lifetime `daily_stats` SQLite table
@@ -52,8 +65,9 @@ the settings/sidebar cleanup decisions.
   the mac build if they're set without the secrets). One-time enablement steps
   in `docs/MACOS_SIGNING.md`. **Pending the user adding 3 GitHub secrets.**
 
-Nightly channel reached `v1.3.0-nightly.11` before promotion. History of the
-nightly.1→11 work is in `docs/ROADMAP.md` "Done — recent".
+The v1.4.0 Codex line reached `v1.4.0-nightly.12` before promotion to stable.
+Earlier v1.3.0 nightly history and the v1.4.0 Codex nightlies are both tracked
+in `docs/ROADMAP.md` "Done — recent".
 
 ## Architecture (90-second tour)
 
@@ -406,12 +420,13 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-06-29 Codex settings/sidebar + usage checkpoint. See*
+*Last touched: 2026-06-30 Codex stable promotion + handover reset. See*
 *docs/CODEX_HANDOVER_2026-06-29.md for the full prompts, decisions,*
-*GitHub plaintext-key audit, and settings cleanup notes. Update when*
+*GitHub plaintext-key audit, settings cleanup notes, avatar QA, and stable*
+*promotion notes. Update when*
 *conventions or architecture change - not on every fix.*
 
-## Open threads (post-v1.3.0, for the next session)
+## Open threads (post-v1.4.0, for the next session)
 
 1. **Enable macOS signing** — user to add 3 GitHub secrets + uncomment the env
    block in `release.yml` per `docs/MACOS_SIGNING.md`. Until then mac builds are

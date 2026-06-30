@@ -63,6 +63,10 @@ time.
 
 ## Done — recent
 
+- ✅ **v1.4.0 stable** — promoted the user-tested `v1.4.0-nightly.12` Codex
+  line to Latest: provider expansion, key-storage hardening, Settings/sidebar
+  cleanup, per-model usage tracking, high-fidelity raster avatars, and the
+  final raster scaling/matte QA fixes.
 - ✅ **v1.4.0-nightly.12** — **Codex raster avatar QA**: fixed the rejected
   raster-avatar runtime problems from nightly.11. Raster packs now scale with
   the floater S/M/L setting, are isolated from the old SVG whole-character

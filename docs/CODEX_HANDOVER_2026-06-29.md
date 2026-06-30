@@ -402,3 +402,54 @@ All right, I'll test the Android part later, but the part that you have created,
 - A PNG alpha-component scan found no remaining secondary edge-touching
   fragments after cleanup.
 - A dark-background preview checked all eight regenerated Oru & Gujia states.
+
+## Stable promotion and session-reset checkpoint - v1.4.0
+
+On 2026-06-30, the user tested `v1.4.0-nightly.12` and approved it for stable:
+
+```text
+works great
+lets make this the latest stable release
+
+also - we will handover and reset this session post this commit and changes - so make sure you get the handover docs updated
+```
+
+### What this promotion means
+
+- `v1.4.0` is the stable promotion of the Codex `v1.4.0-nightly.12` line.
+- App code is the same tested code path as nightly.12; the stable-promotion
+  commit updates release notes, public download links, project memory, and this
+  handover checkpoint.
+- The release title/notes still make Codex provenance visible, per the user's
+  standing request.
+- This is not a new feature branch. Future work should start after the stable
+  tag unless the user explicitly asks to go back.
+
+### Stable-promotion docs updated
+
+- `docs/RELEASE_NOTES_v1.4.0.md` added for the stable release workflow.
+- `README.md`, `docs/site-data.js`, and `docs/index.html` updated so public
+  download links point to `v1.4.0` artifacts.
+- `CLAUDE.md` updated so future Claude/Codex sessions see `v1.4.0` as the live
+  stable baseline.
+- `docs/ROADMAP.md` updated with a `v1.4.0 stable` done entry.
+- `docs/AVATAR_SDK.md` updated so the raster-avatar implementation note refers
+  to `v1.4.0`, not the earlier nightly.
+
+### Reset guidance for the next session
+
+Start by checking:
+
+```powershell
+git status --short --branch
+git log -5 --oneline
+gh release view v1.4.0 --repo kumaradarsh1993/wispr-fox
+```
+
+Expected state after this handover completes:
+
+- Branch `main` clean and pushed.
+- Stable tag `v1.4.0` pushed and published as Latest.
+- `v1.4.0-nightly.12` remains as the pre-stable test checkpoint.
+- The next desktop task should branch conceptually from `v1.4.0` stable, not
+  from any earlier Claude checkpoint.
