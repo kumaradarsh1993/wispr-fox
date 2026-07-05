@@ -18,7 +18,10 @@
   import { listen } from "@tauri-apps/api/event";
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
-  import { prettyHotkey } from "$lib/hotkey-display";
+  import { prettyHotkey, isMac } from "$lib/hotkey-display";
+
+  // Where the OS actually stores the key — platform-aware copy in Setup step 2.
+  const keyStoreName = isMac() ? "macOS Keychain" : "Windows Credential Manager";
 
   type Screen = "welcome" | "setup" | "demo";
   let screen = $state<Screen>("welcome");
@@ -226,7 +229,7 @@
       <div class="mode-row">
         <div class="mode-card">
           <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
-          <h3>Raw</h3>
+          <h3>Transcribe</h3>
           <p class="example">
             <span class="said">You say:</span> "the meeting is at 4 pm tomorrow"<br />
             <span class="written">You get:</span> "the meeting is at 4 pm tomorrow"
@@ -234,7 +237,7 @@
         </div>
         <div class="mode-card">
           <kbd>{prettyHotkey(settings.s.force_clean_hotkey)}</kbd>
-          <h3>Cleaned</h3>
+          <h3>Transcribe + clean</h3>
           <p class="example">
             <span class="said">You say:</span> "uhh so the meeting tomorrow at 4 i think"<br />
             <span class="written">You get:</span> "The meeting tomorrow is at 4."
@@ -242,7 +245,7 @@
         </div>
         <div class="mode-card">
           <kbd>{prettyHotkey(settings.s.drafting_hotkey)}</kbd>
-          <h3>Drafted</h3>
+          <h3>Draft</h3>
           <p class="example">
             <span class="said">You say:</span> "email saurabh that i'll be late tomorrow"<br />
             <span class="written">You get:</span> "Hi Saurabh, just letting you know I'll be running late tomorrow…"
@@ -251,7 +254,7 @@
       </div>
 
       <p class="bonus">
-        <strong>Bonus:</strong> Drafted mode is a hidden superpower —
+        <strong>Bonus:</strong> Draft mode is a hidden superpower —
         say the gist of what you want and it writes the whole thing for you.
         Email, Slack, doc, anything.
       </p>
@@ -280,7 +283,7 @@
           No secret — we piggyback on the generous personal-tier free
           credits that AI companies offer. By default we use <strong>Groq</strong>,
           which gives you <strong>2,000 transcriptions every day</strong> plus
-          ~1,000 cleanups, no credit card, resets every midnight.
+          ~1,000 cleanups, no credit card, resets daily at midnight UTC.
         </p>
         <p>
           You can change providers later or hook up paid models in Settings.
@@ -324,8 +327,7 @@
         <div class="step-body">
           <h3>Paste your key</h3>
           <p class="hint">
-            Stored on your machine only (Windows Credential Manager) — never
-            sent anywhere except Groq.
+            Stored on your machine only ({keyStoreName}) — never sent anywhere except Groq.
           </p>
           <div class="paste-row">
             <input
@@ -388,7 +390,6 @@
           class:thinking={recState === "transcribing" || recState === "cleaning" || recState === "injecting"}
           placeholder="Press {prettyHotkey(settings.s.light_hotkey)} anywhere — your words appear here."
           rows="6"
-          autofocus
         ></textarea>
 
         <div class="rec-ring">
@@ -426,7 +427,7 @@
         <div class="tip-row">
           <strong>{prettyHotkey(settings.s.drafting_hotkey)} instead</strong>
           — try it again with {prettyHotkey(settings.s.drafting_hotkey)} to
-          see Drafted mode. "Email John I'll be late" → a real email.
+          see Draft mode. "Email John I'll be late" → a real email.
         </div>
         <div class="tip-row">
           <strong>Need to bail mid-recording?</strong>
@@ -733,10 +734,6 @@
   .step-block.done .step-num::before {
     content: "✓";
   }
-  .step-block.done .step-num span,
-  .step-block.done .step-num {
-    font-size: 14px;
-  }
 
   .step-body h3 {
     font-size: 15px;
@@ -876,8 +873,7 @@
   }
   .ring-label { font-weight: 500; }
   .ring-hint { color: var(--text-secondary); font-size: 12px; }
-  .ring.listening .ring-hint,
-  .ring.success .ring-hint { color: inherit; opacity: 0.75; }
+  .ring.listening .ring-hint { color: inherit; opacity: 0.75; }
 
   .tips {
     display: flex;

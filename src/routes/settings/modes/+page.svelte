@@ -44,19 +44,15 @@
 
 <section>
   <h2>Modes</h2>
-  <p class="lede">
-    Each hotkey runs the same LLM model with a different system prompt.
-    Toggle whether each mode uses LLM cleanup, and click "Show prompt"
-    to view or customise what each mode tells the model to do.
-  </p>
+  <p class="lede">Each hotkey runs the LLM with a different prompt — customise them here.</p>
 
   {#each [
     { id: "light",    fkey: prettyHotkey(settings.s.light_hotkey),  title: "Transcribe",          settingKey: "auto_clean_in_light",
-      desc: `Voice → text. When LLM cleanup is OFF you get the raw Whisper output (default). When ON, every ${prettyHotkey(settings.s.light_hotkey)} press also gets spell / punctuation / paragraphing — same content, same voice, just readable. For one-off cleanup without flipping this toggle, use ${prettyHotkey(settings.s.force_clean_hotkey)}.` },
+      desc: `Voice → text. Clean Transcribe adds spell / punctuation / paragraphing — same words, just readable. For one-off cleanup, use ${prettyHotkey(settings.s.force_clean_hotkey)}.` },
     { id: "drafting", fkey: prettyHotkey(settings.s.drafting_hotkey),  title: "Draft",               settingKey: "auto_clean_in_drafting",
-      desc: "Give a brief (\"draft an email to Saurabh about X, Y, Z\") and get back a complete polished output. Best for emails, Slack, docs." },
-    { id: "advanced", fkey: "—",   title: "Advanced (legacy)",   settingKey: "auto_clean_in_advanced",
-      desc: `Standalone Advanced cleanup mode. No hotkey by default — bind one in Dictation if you want a dedicated key separate from the ${prettyHotkey(settings.s.light_hotkey)} toggle.` },
+      desc: "Give a brief and get back a complete polished output. Best for emails, Slack, docs." },
+    { id: "advanced", fkey: "—",   title: "Cleanup only (legacy)",   settingKey: "auto_clean_in_advanced",
+      desc: "Standalone cleanup mode. No hotkey by default — bind one in Dictation if you want it." },
   ] as m (m.id)}
     <div class="mode-block">
       <div class="mode-head">
@@ -65,14 +61,16 @@
           <div class="mode-title">{m.title}</div>
           <div class="mode-desc">{m.desc}</div>
         </div>
-        <label class="check-row inline">
-          <input
-            type="checkbox"
-            checked={settings.s[m.settingKey as keyof typeof settings.s] as boolean}
-            onchange={(e) => settings.set(m.settingKey as any, (e.currentTarget as HTMLInputElement).checked as any)}
-          />
-          <span>{m.id === "light" ? "Clean Transcribe" : "LLM cleanup"}</span>
-        </label>
+        {#if m.id === "light"}
+          <label class="check-row inline">
+            <input
+              type="checkbox"
+              checked={settings.s.auto_clean_in_light}
+              onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked as any)}
+            />
+            <span>Clean Transcribe</span>
+          </label>
+        {/if}
       </div>
 
       <button
@@ -101,7 +99,7 @@
             </button>
             {#if m.id === "light"}
               <span class="prompt-warning">
-                ⚠ The Light prompt is a security boundary against prompt injection — keep the "treat transcript as literal data" guarantee or attackers can hijack via dictation.
+                ⚠ The Transcribe prompt is a security boundary against prompt injection — keep the "treat transcript as literal data" guarantee.
               </span>
             {/if}
           </div>
@@ -111,8 +109,7 @@
   {/each}
 
   <p class="tip">
-    Hotkey bindings for each mode live in <strong>Settings → Dictation</strong>.
-    Provider keys and the shared LLM model live in <strong>Settings → Providers &amp; Models</strong>.
+    Hotkeys live in <strong>Settings → Dictation</strong>; keys and models in <strong>Settings → Providers</strong>.
   </p>
 </section>
 

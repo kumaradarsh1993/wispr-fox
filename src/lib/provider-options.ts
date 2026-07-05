@@ -1,4 +1,5 @@
 import type { SecretCheck } from "./api";
+import { settings } from "./settings-store.svelte";
 
 export type ProviderModel = {
   id: string;
@@ -104,6 +105,39 @@ export function llmReady(secrets: SecretCheck | null, provider: string): boolean
       : provider === "gemini"
         ? Boolean(secrets.gemini)
         : false;
+}
+
+// -- Shared provider/model switching --------------------------------------
+// The sidebar (`+layout.svelte`) and Settings → Providers both drive the same
+// four state changes. These helpers own the settings write + model-fallback
+// logic so the two call sites don't drift; each site layers its own UI feedback
+// (sidebar refreshes usage bars, the providers page adds flash() toasts) on top.
+
+/** Switch STT provider, keeping the current model if the new provider offers
+ *  it, else falling back to that provider's first model. */
+export async function applySttProvider(provider: string): Promise<void> {
+  const options = sttModelsFor(provider);
+  const stt_model = options.some((m) => m.id === settings.s.stt_model)
+    ? settings.s.stt_model
+    : options[0].id;
+  await settings.setMany({ stt_provider: provider, stt_model } as any);
+}
+
+export async function applySttModel(modelId: string): Promise<void> {
+  await settings.set("stt_model", modelId as any);
+}
+
+/** Switch LLM provider, keeping the current model if valid, else its first. */
+export async function applyLlmProvider(provider: string): Promise<void> {
+  const options = llmModelsFor(provider);
+  const llm_model = options.some((m) => m.id === settings.s.llm_model)
+    ? settings.s.llm_model
+    : options[0].id;
+  await settings.setMany({ llm_provider: provider, llm_model } as any);
+}
+
+export async function applyLlmModel(modelId: string): Promise<void> {
+  await settings.set("llm_model", modelId as any);
 }
 
 export function shortModel(name: string | undefined): string {

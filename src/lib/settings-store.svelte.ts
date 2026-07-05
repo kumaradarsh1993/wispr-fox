@@ -191,6 +191,34 @@ class SettingsStore {
       }
     }
 
+    // 2c) One-time: force LLM cleanup ON for Draft + Advanced. Those modes
+    //     ONLY function with cleanup on (F9 with it off returns the raw
+    //     transcript — a silent foot-gun), so the per-mode toggle was removed
+    //     from the UI. Marker-gated like the hotkey migrations so a future
+    //     deliberate change isn't clobbered on every launch.
+    {
+      const store = await this.getStore().catch(() => null);
+      let draftCleanForced = false;
+      try {
+        draftCleanForced = (await store?.get<boolean>("draftCleanForced")) ?? false;
+      } catch {
+        /* treat as not-yet-migrated */
+      }
+      if (!draftCleanForced) {
+        if (!this.s.auto_clean_in_drafting || !this.s.auto_clean_in_advanced) {
+          this.s.auto_clean_in_drafting = true;
+          this.s.auto_clean_in_advanced = true;
+          migrated = true;
+        }
+        try {
+          await store?.set("draftCleanForced", true);
+          await store?.save();
+        } catch {
+          /* best-effort marker */
+        }
+      }
+    }
+
     // 3) Push to Rust so the backend flow has the right state.
     try {
       await api.setSettings(this.s);

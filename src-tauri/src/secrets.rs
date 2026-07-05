@@ -494,6 +494,18 @@ fn delete_fallback_copies(key: SecretKey) {
 }
 
 fn migrate_from_file(key: SecretKey, value: &str, source: &str) {
+    // Only attempt the keyring hop when the keyring is currently verified to
+    // work. On a broken keyring this avoids a pointless write/verify_failed
+    // churn on every read and keeps the encrypted fallback authoritative.
+    if !keyring_probe() {
+        // For a legacy plaintext entry we still want to upgrade it into the
+        // encrypted fallback even if the keyring is unavailable.
+        if source == "legacy_file" {
+            migrate_legacy_into_fallback(key, value);
+        }
+        return;
+    }
+
     match keyring_set(key, value) {
         Ok(()) if keyring_get(key).as_deref() == Some(value) => {
             record_secret_audit(
@@ -501,8 +513,9 @@ fn migrate_from_file(key: SecretKey, value: &str, source: &str) {
                 "migrate",
                 "keyring",
                 "ok",
-                format!("Migrated {source} entry to OS keyring"),
+                format!("Migrated {source} entry to OS keyring after keyring verified"),
             );
+            // Remove the fallback copy only after the keyring readback matched.
             match source {
                 "legacy_file" => {
                     let _ = legacy_file_delete(key);
@@ -523,35 +536,43 @@ fn migrate_from_file(key: SecretKey, value: &str, source: &str) {
         Err(e) => record_secret_audit(key, "migrate", "keyring", "failed", e.to_string()),
     }
 
+    // Keyring hop did not verify — for a legacy plaintext entry, at least
+    // upgrade it into the encrypted local fallback so the plaintext file goes.
     if source == "legacy_file" {
-        match file_set(key, value) {
-            Ok(()) if file_get(key).as_deref() == Some(value) => {
-                record_secret_audit(
-                    key,
-                    "migrate",
-                    fallback_storage_name(),
-                    "ok",
-                    "Migrated legacy plaintext fallback to local fallback",
-                );
-                if let Err(e) = legacy_file_delete(key) {
-                    record_secret_audit(key, "cleanup", "legacy_file", "failed", e.to_string());
-                }
+        migrate_legacy_into_fallback(key, value);
+    }
+}
+
+/// Upgrade a legacy plaintext key into the encrypted local fallback, then
+/// remove the plaintext copy once the encrypted write reads back cleanly.
+fn migrate_legacy_into_fallback(key: SecretKey, value: &str) {
+    match file_set(key, value) {
+        Ok(()) if file_get(key).as_deref() == Some(value) => {
+            record_secret_audit(
+                key,
+                "migrate",
+                fallback_storage_name(),
+                "ok",
+                "Migrated legacy plaintext fallback to local fallback",
+            );
+            if let Err(e) = legacy_file_delete(key) {
+                record_secret_audit(key, "cleanup", "legacy_file", "failed", e.to_string());
             }
-            Ok(()) => record_secret_audit(
-                key,
-                "migrate",
-                fallback_storage_name(),
-                "verify_failed",
-                "Fallback write completed but readback did not match",
-            ),
-            Err(e) => record_secret_audit(
-                key,
-                "migrate",
-                fallback_storage_name(),
-                "failed",
-                e.to_string(),
-            ),
         }
+        Ok(()) => record_secret_audit(
+            key,
+            "migrate",
+            fallback_storage_name(),
+            "verify_failed",
+            "Fallback write completed but readback did not match",
+        ),
+        Err(e) => record_secret_audit(
+            key,
+            "migrate",
+            fallback_storage_name(),
+            "failed",
+            e.to_string(),
+        ),
     }
 }
 

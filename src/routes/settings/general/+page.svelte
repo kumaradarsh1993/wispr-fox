@@ -159,37 +159,34 @@
 
 <section>
   <h2>General</h2>
-  <p class="lede">Startup behaviour and audio cues.</p>
+  <p class="lede">Startup, sounds, data retention, and updates.</p>
 
   <h3>Startup</h3>
-  <p class="lede">What happens when wispr-fox launches — automatic or manual, loud or silent.</p>
 
   <div class="behavior-block">
-    <label class="check-row">
+    <label class="check-row" title="Registers a per-user Windows startup entry (no admin needed). Tray icon and avatar appear; no main window unless you ask.">
       <input
         type="checkbox"
         checked={settings.s.autostart}
         onchange={(e) => syncAutostart((e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Launch wispr-fox at login</strong> — start automatically when you sign in to Windows. The tray icon and avatar appear; no main window unless you ask.</span>
+      <span><strong>Launch wispr-fox at login</strong></span>
     </label>
-    <p class="hint">Registers a Windows startup entry under the current user (no admin needed). Toggle off any time to remove it.</p>
   </div>
 
   <div class="behavior-block">
-    <label class="check-row">
+    <label class="check-row" title="Only the avatar and tray icon show on launch. Open this window via tray left-click or by double-clicking the avatar.">
       <input
         type="checkbox"
         checked={settings.s.open_silently}
         onchange={(e) => settings.set("open_silently", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Open silently</strong> — on launch, only the avatar and tray icon show. Open this Settings/History window via tray left-click or by double-clicking the avatar.</span>
+      <span><strong>Open silently</strong> — start in the tray, no main window</span>
     </label>
-    <p class="hint">On by default. Turn off if you want the main window to pop open every time the app starts.</p>
   </div>
 
   <h3>Audio cues</h3>
-  <p class="lede">A short sound plays when recording starts and stops. Click any tile to pick it (and hear a preview).</p>
+  <p class="lede">A short sound plays when recording starts and stops.</p>
 
   <label class="check-row">
     <input
@@ -251,7 +248,7 @@
   </div>
 
   <h3>Data retention</h3>
-  <p class="lede">How long recordings and transcripts stay on disk before automatic cleanup.</p>
+  <p class="lede">How long recordings stay on disk before automatic cleanup.</p>
 
   <div class="settings-card">
     <div class="field-block">
@@ -282,7 +279,7 @@
   </div>
 
   <h3>Updates</h3>
-  <p class="lede">Manual check for now — no automatic background updater. Click to see if a newer build (stable or nightly) is available on GitHub.</p>
+  <p class="lede">Manual check — see if a newer build is on GitHub.</p>
 
   <div class="update-card">
     <div class="update-status">

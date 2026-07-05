@@ -78,9 +78,14 @@
 
 .nav-icon {
   width: 18px;
-  text-align: center;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   opacity: 0.85;
+}
+.nav-btn.active .nav-icon {
+  opacity: 1;
 }
 
 .section-body {

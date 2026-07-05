@@ -62,7 +62,7 @@
   <p class="lede">Avatar, window behaviour, and app-wide theme.</p>
 
   <h3>Avatar</h3>
-  <p class="lede">The floating animated character that reacts to your dictation. Off = hidden window.</p>
+  <p class="lede">The floating character that reacts to your dictation.</p>
   <div class="skin-tiles">
     {#each SKIN_OPTIONS as opt (opt.id)}
       <button
@@ -83,7 +83,7 @@
   </div>
 
   <h3>Avatar size</h3>
-  <p class="lede">Scale the floating character and its window together. Smaller frees up screen space on 13″ laptops; larger is easier to see. Applies live and sticks across restarts.</p>
+  <p class="lede">Scale the character and its window together.</p>
   <div class="scale-control">
     <input
       class="scale-slider"
@@ -136,11 +136,11 @@
       />
       <span>Show avatar debug overlay</span>
     </label>
-    <p class="debug-hint">Draws the avatar window bounds and a live size readout on the character, so you can see exactly how big the box is and whether it's resizing. For tuning only — leave off for normal use.</p>
+    <p class="debug-hint">Draws the window bounds and a live size readout on the character. For tuning only.</p>
   </div>
 
   <h3>Theme</h3>
-  <p class="lede">App-wide colour scheme. (Retro warm theme is in progress — placeholder for now.)</p>
+  <p class="lede">App-wide colour scheme.</p>
   <div class="radio-grid">
     {#each THEME_OPTIONS as opt (opt.id)}
       <button

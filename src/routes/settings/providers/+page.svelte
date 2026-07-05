@@ -5,6 +5,10 @@
   import {
     LLM_MODELS,
     STT_MODELS,
+    applyLlmModel,
+    applyLlmProvider,
+    applySttModel,
+    applySttProvider,
     llmModelsFor,
     llmReady,
     providerLabel,
@@ -88,31 +92,23 @@
   }
 
   async function changeSttProvider(provider: string) {
-    const options = sttModelsFor(provider);
-    const stt_model = options.find((m) => m.id === settings.s.stt_model)
-      ? settings.s.stt_model
-      : options[0].id;
-    await settings.setMany({ stt_provider: provider, stt_model } as any);
+    await applySttProvider(provider);
     flash(`STT provider: ${providerLabel(provider)}`);
   }
 
   async function changeSttModel(modelId: string) {
-    await settings.set("stt_model", modelId as any);
+    await applySttModel(modelId);
     const label = sttModelsFor(settings.s.stt_provider).find((m) => m.id === modelId)?.label ?? modelId;
     flash(`STT: ${label}`);
   }
 
   async function changeLlmProvider(provider: string) {
-    const options = llmModelsFor(provider);
-    const llm_model = options.find((m) => m.id === settings.s.llm_model)
-      ? settings.s.llm_model
-      : options[0].id;
-    await settings.setMany({ llm_provider: provider, llm_model } as any);
+    await applyLlmProvider(provider);
     flash(`Cleanup provider: ${providerLabel(provider)}`);
   }
 
   async function changeLlmModel(modelId: string) {
-    await settings.set("llm_model", modelId as any);
+    await applyLlmModel(modelId);
     const label = llmModelsFor(settings.s.llm_provider).find((m) => m.id === modelId)?.label ?? modelId;
     flash(`Cleanup model: ${label}`);
   }
@@ -124,10 +120,7 @@
 
 <section>
   <h2>Providers & API keys</h2>
-  <p class="lede">
-    Choose who transcribes your audio and who handles cleanup. Keys are saved
-    locally in the OS keyring first, with encrypted fallback only when the keyring fails.
-  </p>
+  <p class="lede">Choose who transcribes your audio and who handles cleanup.</p>
 
   <div class="settings-card model-choice-card">
     <h3>Speech-to-text</h3>
@@ -358,10 +351,7 @@
     </div>
   </details>
 
-  <p class="tip">
-    Clean Transcribe by default from the sidebar. Per-mode prompts live in <strong>Modes</strong>,
-    hotkeys live in <strong>Dictation</strong>, and key storage diagnostics live in <strong>Security</strong>.
-  </p>
+  <p class="tip">Per-mode prompts live in <strong>Modes</strong>; key storage status in <strong>Security</strong>.</p>
 </section>
 
 <style>

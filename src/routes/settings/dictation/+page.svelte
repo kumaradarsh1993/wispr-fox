@@ -12,22 +12,13 @@
 
 <section>
   <h2>Dictation</h2>
-  <p class="lede">
-    Bind the keys that start and stop dictation. Model choices live in
-    <strong>Providers</strong>; cleanup defaults and prompts live in
-    <strong>Modes</strong>.
-  </p>
+  <p class="lede">Bind the keys that start and stop dictation.</p>
   {#if isMac()}
-    <p class="lede tight">
-      <strong>macOS defaults to Option+Space and Option+Enter.</strong> Bare
-      F8/F9 can be swallowed by media-key behavior unless macOS is configured
-      for standard function keys.
+    <p class="lede tight" title="Bare F8/F9 can be swallowed by media-key behavior unless macOS is set for standard function keys.">
+      <strong>macOS defaults to Option+Space and Option+Enter.</strong>
     </p>
   {/if}
-  <p class="lede tight">
-    Every mode has a main hotkey and a sticky hotkey. Main is push-to-talk by
-    default; sticky starts on first press and stops on the next press.
-  </p>
+  <p class="lede tight">Main is push-to-talk; sticky toggles on the next press.</p>
 
   <div class="hotkey-block">
     <div class="hotkey-head">
@@ -128,28 +119,24 @@
   </details>
 
   <button class="btn-primary" onclick={saveHotkeys}>Save hotkeys</button>
-  <p class="hint">
-    Hotkey changes take effect after restarting wispr-fox. Press <strong>Esc</strong>
-    during a recording to stop cleanly without sending anything.
-  </p>
+  <p class="hint">Press <strong>Esc</strong> during a recording to stop without sending.</p>
 
   <h3>Delivery</h3>
   <p class="lede">What wispr-fox does after transcription or cleanup finishes.</p>
 
   <div class="behavior-block">
-    <label class="check-row">
+    <label class="check-row" title="This replaces whatever you previously copied.">
       <input
         type="checkbox"
         checked={settings.s.keep_in_clipboard}
         onchange={(e) => settings.set("keep_in_clipboard", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Keep result on clipboard</strong> so Ctrl+V remains a backup after every dictation.</span>
+      <span><strong>Keep result on clipboard</strong> as a Ctrl+V backup.</span>
     </label>
-    <p class="hint">This replaces whatever you previously copied.</p>
   </div>
 
   <div class="behavior-block">
-    <label class="check-row">
+    <label class="check-row" title="When off and you've moved away, wispr-fox copies the result to the clipboard instead of pasting into the wrong app.">
       <input
         type="checkbox"
         checked={settings.s.pull_back_on_navigation}
@@ -157,18 +144,16 @@
       />
       <span><strong>Pull focus back to the original app</strong> when the result is ready.</span>
     </label>
-    <p class="hint">Off by default. When off and you move away, wispr-fox copies the result to the clipboard instead of pasting into the wrong app.</p>
   </div>
 
   <div class="behavior-block">
-    <label class="check-row">
+    <label class="check-row" title="Affects Draft only — a coarse bucket like email, chat, doc, or social. Transcribe preserves your words.">
       <input
         type="checkbox"
         checked={settings.s.adapt_to_app}
         onchange={(e) => settings.set("adapt_to_app", (e.currentTarget as HTMLInputElement).checked)}
       />
-      <span><strong>Adapt Draft tone to the active app</strong> using only a coarse bucket like email, chat, doc, or social.</span>
+      <span><strong>Adapt Draft tone to the active app</strong>.</span>
     </label>
-    <p class="hint">Affects Draft only. Transcribe preserves your words.</p>
   </div>
 </section>

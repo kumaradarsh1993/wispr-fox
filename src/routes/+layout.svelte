@@ -15,6 +15,10 @@
     DEEPGRAM_FREE_CREDIT_USD,
     LLM_PROVIDERS,
     STT_PROVIDERS,
+    applyLlmModel,
+    applyLlmProvider,
+    applySttModel,
+    applySttProvider,
     llmModelsFor,
     llmReady,
     sttModelsFor,
@@ -24,7 +28,7 @@
   let { children } = $props();
 
   let collapsed = $state(false);
-  let sidebarWidth = $state(248);
+  let sidebarWidth = $state(276);
   let appVersion = $state<string>("");
   let flowBusy = $state(false);
   let resizingSidebar = $state(false);
@@ -103,30 +107,22 @@
   }
 
   async function changeSttProvider(provider: string) {
-    const options = sttModelsFor(provider);
-    const stt_model = options.some((m) => m.id === settings.s.stt_model)
-      ? settings.s.stt_model
-      : options[0].id;
-    await settings.setMany({ stt_provider: provider, stt_model } as any);
+    await applySttProvider(provider);
     await usageStore.refresh();
   }
 
   async function changeSttModel(modelId: string) {
-    await settings.set("stt_model", modelId as any);
+    await applySttModel(modelId);
     await usageStore.refresh();
   }
 
   async function changeLlmProvider(provider: string) {
-    const options = llmModelsFor(provider);
-    const llm_model = options.some((m) => m.id === settings.s.llm_model)
-      ? settings.s.llm_model
-      : options[0].id;
-    await settings.setMany({ llm_provider: provider, llm_model } as any);
+    await applyLlmProvider(provider);
     await usageStore.refresh();
   }
 
   async function changeLlmModel(modelId: string) {
-    await settings.set("llm_model", modelId as any);
+    await applyLlmModel(modelId);
     await usageStore.refresh();
   }
 
@@ -170,6 +166,15 @@
   let llmTokenPct = $derived(Math.min(100, Math.round(((currentLlmUsage?.total_tokens ?? 0) / 200_000) * 100)));
   let llmCallPct = $derived(Math.min(100, Math.round(((currentLlmUsage?.calls ?? usageStore.usage?.llm_count ?? 0) / 1000) * 100)));
   let llmPct = $derived(llmTokenPct || llmCallPct);
+  // The 2,000-call / 3,600s / 200k-token caps are Groq free-tier numbers.
+  // Deepgram has its own credit meter. For every other provider the % fill
+  // is meaningless, so show the number only (empty bar track, no fake fill).
+  let sttHasMeter = $derived(
+    settings.s.stt_provider === "groq" || settings.s.stt_provider === "deepgram",
+  );
+  let llmHasMeter = $derived(settings.s.llm_provider === "groq");
+  // Deepgram's line shows lifetime credit spend, not a daily "today" number.
+  let sttBarKey = $derived(settings.s.stt_provider === "deepgram" ? "Credit" : "STT");
   let sttUsageLabel = $derived(
     settings.s.stt_provider === "deepgram"
       ? `$${deepgramSpend.toFixed(2)}/$${Math.round(deepgramCredit)}`
@@ -287,7 +292,7 @@
   }
 
   function clampSidebarWidth(width: number): number {
-    return Math.min(360, Math.max(236, Math.round(width)));
+    return Math.min(380, Math.max(256, Math.round(width)));
   }
 
   function setSidebarWidth(width: number) {
@@ -424,7 +429,7 @@
           <div class="hotkey-reminder">
             <div class="hk-title">Dictation keys</div>
             <div class="hk-row">
-              <span class="hk-mode">Light</span>
+              <span class="hk-mode">Transcribe</span>
               <kbd>{shortcutDisplay(settings.s.light_hotkey)}</kbd>
             </div>
             <div class="hk-row">
@@ -574,8 +579,8 @@
           {/if}
         </div>
 
-        <!-- Replay onboarding stays with scrollable sidebar extras so usage
-             remains a compact bottom anchor. -->
+        <!-- Replay onboarding — a quiet footer link so testers (and curious
+             users) can re-walk the 3-screen flow without touching their keys. -->
         {#if !collapsed}
           <a class="replay-onboarding" href="/onboarding" data-sveltekit-preload-data="off">
             ↻ Replay onboarding
@@ -607,9 +612,11 @@
             </div>
 
             <div class="bar-row">
-              <span class="bar-key">STT</span>
+              <span class="bar-key">{sttBarKey}</span>
               <div class="bar-track">
-                <div class="bar-fill {pctClass(sttPct)}" style="width: {sttPct}%"></div>
+                {#if sttHasMeter}
+                  <div class="bar-fill {pctClass(sttPct)}" style="width: {sttPct}%"></div>
+                {/if}
               </div>
               <span
                 class="bar-val"
@@ -622,7 +629,9 @@
             <div class="bar-row">
               <span class="bar-key">LLM</span>
               <div class="bar-track">
-                <div class="bar-fill {pctClass(llmPct)}" style="width: {llmPct}%"></div>
+                {#if llmHasMeter}
+                  <div class="bar-fill {pctClass(llmPct)}" style="width: {llmPct}%"></div>
+                {/if}
               </div>
               <span class="bar-val" title={llmUsageTitle}>{llmUsageLabel}</span>
             </div>
@@ -631,37 +640,14 @@
         {:else}
           <!-- Collapsed: stacked usage chips for STT + LLM, centered. -->
           <div class="usage-stack">
-            <div class="usage-chip {pctClass(sttPct)}" title={sttUsageTitle}>
-              <span class="usage-chip-key">STT</span>
-              <span class="usage-chip-val">{sttPct}%</span>
+            <div class="usage-chip {sttHasMeter ? pctClass(sttPct) : 'ok'}" title={sttUsageTitle}>
+              <span class="usage-chip-key">{settings.s.stt_provider === "deepgram" ? "CR" : "STT"}</span>
+              <span class="usage-chip-val">{sttHasMeter ? `${sttPct}%` : "·"}</span>
             </div>
-            <div class="usage-chip {pctClass(llmPct)}" title={llmUsageTitle}>
+            <div class="usage-chip {llmHasMeter ? pctClass(llmPct) : 'ok'}" title={llmUsageTitle}>
               <span class="usage-chip-key">LLM</span>
-              <span class="usage-chip-val">{llmPct}%</span>
+              <span class="usage-chip-val">{llmHasMeter ? `${llmPct}%` : "·"}</span>
             </div>
-          </div>
-        {/if}
-
-        <!-- Replay onboarding — small dev-mode helper so testers can re-walk
-             the 3-screen flow without nuking their keys. TODO: hide behind
-             a settings.dev_mode flag once the flow is locked. -->
-        {#if !collapsed}
-          <a class="replay-onboarding" href="/onboarding" data-sveltekit-preload-data="off">
-            ↻ Replay onboarding
-          </a>
-        {/if}
-
-        <!-- Sidebar fox mascot. Placeholder inline SVG (a stylised fox face)
-             until the user-provided pastoral fox illustration lands. Hidden
-             when the sidebar is collapsed since it'd just be visual noise
-             at 56px wide. The eventual replacement asset is a small fox
-             sitting in grass — see RELEASE_NOTES_v0.4.0 asset wishlist. -->
-        {#if !collapsed}
-          <div class="sidebar-fox" aria-hidden="true">
-            <!-- Pastoral watercolor fox in tall grass — the calm, ambient
-                 mascot at the bottom of the sidebar from the design
-                 playbook. Replaces v0.4.0's inline-SVG placeholder. -->
-            <img src="/fox/fox-hero.png" alt="" />
           </div>
         {/if}
       </div>
@@ -670,12 +656,9 @@
     <main class="main-content">
       {#if showA11yBanner}
         <div class="a11y-banner" role="alert">
-          <span class="a11y-text">
-            Auto-paste needs <strong>Accessibility</strong> permission, and macOS ties it to the
-            exact app binary — so <strong>after every update you have to re-grant it</strong>. If
-            wispr-fox is already in the list but this still shows, select it, click <strong>–</strong>
-            to remove it, then click Open Settings and re-add wispr-fox (or toggle it off and on).
-            Until then, dictated text is copied to your clipboard but won't paste itself.
+          <span class="a11y-text" title="macOS ties Accessibility to the exact app binary, so it resets after every update. If wispr-fox is already listed, remove it with – then re-add it.">
+            Auto-paste needs <strong>Accessibility</strong> permission — macOS resets it after every update.
+            Until you grant it, dictated text lands on the clipboard but won't paste itself.
           </span>
           <button class="a11y-btn" onclick={grantAccessibility}>Open Settings</button>
           <button class="a11y-btn ghost" onclick={() => checkAccessibility()}>Re-check</button>
@@ -704,7 +687,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    width: 248px;
+    width: 276px;
     background: var(--bg-sidebar);
     border-right: 1px solid var(--border);
     transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1),
@@ -757,8 +740,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 12px 8px;
+    gap: 8px;
+    padding: 14px 12px;
     min-height: 0;
     /* When window is short, sidebar-top's content can't fit in the
        space sidebar-bottom leaves. Without this overflow rule it would
@@ -787,11 +770,6 @@
     flex-direction: column;
     gap: 12px;
     flex-shrink: 0;
-  }
-
-  .sidebar-bottom .replay-onboarding,
-  .sidebar-bottom .sidebar-fox {
-    display: none;
   }
 
   /* Sidebar mascot — watercolor fox sitting in tall grass. Sits centred
@@ -933,7 +911,7 @@
   }
 
   .footer-title {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
@@ -969,16 +947,16 @@
   /* Hotkey reminder block */
   .hotkey-reminder {
     margin-top: 12px;
-    padding: 10px 10px;
+    padding: 12px 13px;
     background: var(--bg-subtle);
     border-radius: 8px;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
   }
 
   .hk-title {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
@@ -1012,22 +990,22 @@
 
   /* Avatar section — icon-only grid (same in both light + dark themes). */
   .section {
-    margin-top: 12px;
+    margin-top: 16px;
     border-top: 1px solid var(--border-subtle);
-    padding-top: 10px;
+    padding-top: 12px;
   }
 
   .section-title-bar {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    padding: 0 8px 6px;
+    padding: 0 8px 7px;
   }
 
   .model-panel {
-    padding-top: 10px;
+    padding-top: 12px;
   }
 
   .model-row {
@@ -1048,7 +1026,7 @@
     justify-content: space-between;
     gap: 8px;
     padding: 0 2px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -1077,13 +1055,13 @@
   .model-selects select {
     min-width: 0;
     width: 100%;
-    height: 28px;
+    height: 30px;
     border: 1px solid var(--border-subtle);
     border-radius: 7px;
     background: var(--bg-card);
     color: var(--text-primary);
-    padding: 0 7px;
-    font-size: 11px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 
   .model-selects select:focus {
@@ -1119,8 +1097,8 @@
 
   .skin-grid {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 3px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
     padding: 0 2px 6px;
   }
 
@@ -1224,10 +1202,10 @@
   /* Progress bars for usage */
   .bar-row {
     display: grid;
-    grid-template-columns: 26px minmax(0, 1fr) max-content;
+    grid-template-columns: 44px minmax(0, 1fr) max-content;
     align-items: center;
     gap: 6px;
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-secondary);
   }
 
@@ -1256,7 +1234,7 @@
   .bar-val {
     font-variant-numeric: tabular-nums;
     color: var(--text-primary);
-    font-size: 10px;
+    font-size: 11px;
     max-width: 76px;
     overflow: hidden;
     text-align: right;

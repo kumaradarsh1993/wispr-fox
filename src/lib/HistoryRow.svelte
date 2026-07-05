@@ -9,13 +9,18 @@
   type Tab = "raw" | "cleaned" | "drafted";
 
   // Active tab. Defaults to the "most refined" version that exists:
-  // drafted > cleaned > raw. User can switch by clicking the tabs.
+  // drafted > cleaned > raw. User can switch by clicking the tabs. The
+  // default is DERIVED from `rec` so it updates when a cleaned/drafted
+  // version is generated in place; `tabOverride` records an explicit user
+  // pick and wins once set. (Deriving avoids the state_referenced_locally
+  // warning from capturing `rec` at init.)
   function defaultTab(r: Recording): Tab {
     if (r.drafted_text) return "drafted";
     if (r.cleaned_text) return "cleaned";
     return "raw";
   }
-  let activeTab = $state<Tab>(defaultTab(rec));
+  let tabOverride = $state<Tab | null>(null);
+  let activeTab = $derived<Tab>(tabOverride ?? defaultTab(rec));
 
   let expanded = $state(false);
   let audioUrl = $state<string | null>(null);
@@ -99,6 +104,15 @@
     }
   }
 
+  // Map the internal mode value (light / drafting / advanced) to the
+  // canonical user-facing name. DB/enum values stay as-is; this is display.
+  function modeLabel(mode: string): string {
+    if (mode === "light") return "Transcribe";
+    if (mode === "drafting") return "Draft";
+    if (mode === "advanced") return "Cleanup";
+    return mode;
+  }
+
   function durationShort(ms: number): string {
     if (!ms) return "—";
     const s = Math.round(ms / 1000);
@@ -156,8 +170,8 @@
   /// surface as a simple alert — the row already shows status info via
   /// the (i) inspector, no need to over-engineer.
   async function onTabClick(kind: "cleaned" | "drafted") {
-    if (kind === "cleaned" && rec.cleaned_text) { activeTab = "cleaned"; return; }
-    if (kind === "drafted" && rec.drafted_text) { activeTab = "drafted"; return; }
+    if (kind === "cleaned" && rec.cleaned_text) { tabOverride = "cleaned"; return; }
+    if (kind === "drafted" && rec.drafted_text) { tabOverride = "drafted"; return; }
     if (!rec.transcript) {
       alert("No raw transcript yet — retry the recording first.");
       return;
@@ -168,7 +182,7 @@
       // Pull the freshly-generated text into our local rec via a refresh.
       // The history-store refresh re-fetches and re-renders the list.
       await history.refresh();
-      activeTab = kind;
+      tabOverride = kind;
     } catch (e) {
       alert(`Could not generate ${kind} version: ${e}`);
     } finally {
@@ -230,7 +244,10 @@
      not the only thing that toggles — clicking anywhere on the body or the
      meta strip also works (matches the user's mental model: "this row is a
      thing I tap to read"). -->
-<article
+<!-- Rendered as a <div role="button"> rather than <article>: <article> is a
+     non-interactive landmark and can't legally carry role="button". A generic
+     <div> can, and keeps the same click/keyboard toggle semantics. -->
+<div
   class="row"
   class:expanded
   class:error-row={isError}
@@ -266,14 +283,16 @@
           <button
             class="tab"
             class:active={activeTab === "raw"}
+            class:quiet={activeTab !== "raw" && !!rec.transcript}
             class:dim={!rec.transcript}
             disabled={!rec.transcript}
-            onclick={() => (activeTab = "raw")}
+            onclick={() => (tabOverride = "raw")}
             title="Raw transcript"
           >Raw</button>
           <button
             class="tab"
             class:active={activeTab === "cleaned"}
+            class:quiet={activeTab !== "cleaned" && !!rec.cleaned_text}
             class:dim={!rec.cleaned_text}
             class:loading={generating === "cleaned"}
             disabled={generating !== null}
@@ -283,6 +302,7 @@
           <button
             class="tab"
             class:active={activeTab === "drafted"}
+            class:quiet={activeTab !== "drafted" && !!rec.drafted_text}
             class:dim={!rec.drafted_text}
             class:loading={generating === "drafted"}
             disabled={generating !== null}
@@ -355,7 +375,11 @@
           </svg>
         </button>
         {#if kebabOpen}
-          <div class="kebab-menu" role="menu" onclick={(e) => e.stopPropagation()}>
+          <!-- role="menu" needs a focus target; tabindex=-1 makes it
+               programmatically focusable. Clicks inside are already stopped
+               from toggling the row by the parent .actions handler, so no
+               onclick (and thus no missing-keyboard-handler warning) here. -->
+          <div class="kebab-menu" role="menu" tabindex="-1">
             <button
               class="kebab-item"
               class:emphasized={isError}
@@ -431,7 +455,7 @@
         <div class="insp-v">{rec.retry_count}</div>
 
         <div class="insp-k">Mode</div>
-        <div class="insp-v">{rec.mode}</div>
+        <div class="insp-v">{modeLabel(rec.mode)}</div>
 
         <div class="insp-k">Duration</div>
         <div class="insp-v">{durationShort(rec.duration_ms)}</div>
@@ -472,7 +496,7 @@
       class="hidden-audio"
     ></audio>
   {/if}
-</article>
+</div>
 
 <style>
   /* Each recording is its own floating card on the cream surface (design
@@ -607,6 +631,25 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    /* Hidden at rest, revealed on row hover / keyboard focus. Kept in the
+       layout (opacity+visibility, not display) so nothing reflows when the
+       buttons appear. */
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 120ms ease;
+  }
+
+  .row:hover .actions,
+  .row:focus-within .actions {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Keep an open kebab menu (and its trigger cluster) visible even if the
+     pointer drifts off the row while the menu is up. */
+  .actions:focus-within {
+    opacity: 1;
+    visibility: visible;
   }
 
   .action-btn {
@@ -872,6 +915,7 @@
   .body.clamped .text {
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -918,6 +962,18 @@
     background: var(--accent-hover, var(--accent));
     border-color: var(--accent-hover, var(--accent));
     color: #ffffff;
+  }
+
+  /* Quiet = version exists but isn't the active tab. Plain outline, no
+     fill — keeps at most one filled-orange element (the active tab) per row. */
+  .tab.quiet {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--border);
+  }
+  .tab.quiet:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
   }
 
   /* Dim = version doesn't exist yet; still a click target. */

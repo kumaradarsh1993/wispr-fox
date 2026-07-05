@@ -68,6 +68,14 @@
     ];
   }
 
+  // Keyring works, yet some keys still sit in a fallback file. That's not an
+  // error — each migrates into the keyring the next time it's used.
+  let pendingMigration = $derived(
+    !!diag &&
+      diag.keyring_works &&
+      rows(diag).some((r) => r.loc === "encrypted_file" || r.loc === "file" || r.loc === "legacy_file"),
+  );
+
   async function refresh() {
     loading = true;
     error = null;
@@ -120,6 +128,12 @@
           </li>
         {/each}
       </ul>
+
+      {#if pendingMigration}
+        <div class="security-note">
+          Keyring is working — keys still in a fallback file move into it automatically the next time each one is used.
+        </div>
+      {/if}
 
       {#if diag.legacy_fallback_exists}
         <div class="security-warning">
@@ -254,6 +268,16 @@
   .status-pill.neutral {
     background: var(--bg-subtle);
     color: var(--text-secondary);
+  }
+
+  .security-note {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    background: rgba(76, 175, 80, 0.1);
+    border-left: 3px solid #4caf50;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-primary);
   }
 
   .security-warning {

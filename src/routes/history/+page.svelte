@@ -157,9 +157,8 @@
     <div class="controls">
       <div class="filter-pills">
         <button class="pill" class:active={filter === "all"} onclick={() => (filter = "all")}>All</button>
-        <button class="pill" class:active={filter === "light"} onclick={() => (filter = "light")}>Light</button>
-        <button class="pill" class:active={filter === "advanced"} onclick={() => (filter = "advanced")}>Advanced</button>
-        <button class="pill" class:active={filter === "drafting"} onclick={() => (filter = "drafting")}>Drafting</button>
+        <button class="pill" class:active={filter === "light"} onclick={() => (filter = "light")}>Transcribe</button>
+        <button class="pill" class:active={filter === "drafting"} onclick={() => (filter = "drafting")}>Draft</button>
         <button class="pill error-pill" class:active={filter === "error"} onclick={() => (filter = "error")}>Errors</button>
       </div>
 
@@ -188,7 +187,10 @@
         >
           <span class="hold-fill"></span>
           <span class="hold-text">
-            {#if clearing}Clearing…{:else if holdActive}Keep holding to delete…{:else}Hold to clear all{/if}
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+              <path d="M 3 4.5 H 13 M 6.5 4.5 V 3.2 A 0.7 0.7 0 0 1 7.2 2.5 H 8.8 A 0.7 0.7 0 0 1 9.5 3.2 V 4.5 M 4.5 4.5 L 5 12.5 A 1 1 0 0 0 6 13.4 H 10 A 1 1 0 0 0 11 12.5 L 11.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {#if clearing}Clearing…{:else if holdActive}Keep holding to delete…{:else}Clear all{/if}
           </span>
         </button>
         {#if clearedMsg}<span class="cleared-msg">{clearedMsg}</span>{/if}
@@ -257,23 +259,20 @@
      elevated white block, no hard border. The page reads as one warm
      canvas with cards floating on it. */
   .history-head {
-    padding: 20px 28px 10px;
+    padding: 16px 28px 8px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 9px;
     flex-shrink: 0;
     position: relative;
     z-index: 1;
   }
 
   .title-row {
-    margin-bottom: 2px;
-  }
-
-  .title-row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    margin-bottom: 0;
   }
 
   h1 {
@@ -418,34 +417,27 @@
     border-color: var(--text-secondary);
   }
 
-  .icon-btn.danger {
-    color: var(--danger);
-  }
-
-  .icon-btn.danger:hover {
-    background: var(--danger-fade);
-    border-color: var(--danger);
-  }
-
-  /* Press-and-hold-to-clear button. A danger-tinted fill sweeps left→right
-     over 3s while held; releasing early cancels. */
+  /* Press-and-hold-to-clear button. Quiet ghost at rest (neutral secondary
+     colour, transparent), turning danger-red only on hover / while holding.
+     A danger fill sweeps left→right over 3s while held; releasing cancels. */
   .hold-clear {
     position: relative;
     overflow: hidden;
     isolation: isolate;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: 8px;
-    padding: 7px 14px;
+    padding: 7px 12px;
     cursor: pointer;
     font-size: 12px;
-    color: var(--danger);
+    color: var(--text-secondary);
     user-select: none;
-    transition: border-color 120ms ease, background 120ms ease;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
   }
   .hold-clear:hover {
     border-color: var(--danger);
     background: var(--danger-fade);
+    color: var(--danger);
   }
   .hold-clear:disabled {
     opacity: 0.7;
@@ -453,6 +445,7 @@
   }
   .hold-clear.armed {
     border-color: var(--danger);
+    background: var(--danger-fade);
     color: #fff;
   }
   .hold-fill {
@@ -466,6 +459,9 @@
   }
   .hold-text {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     white-space: nowrap;
   }
   .cleared-msg {
@@ -517,12 +513,6 @@
     gap: 10px;
     position: relative;
     z-index: 1;
-  }
-
-  .muted {
-    color: #86868b;
-    font-size: 14px;
-    padding: 20px 24px;
   }
 
   .empty {
