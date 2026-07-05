@@ -16,6 +16,14 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 **Current stable: `v2.0.0`** (Latest, 2026-06-30) — user-confirmed working,
 promoted from the Codex `v1.4.0-nightly.12` line plus the final v2.0.0
 floater bubble/readability correction. Single owner, no paid users.
+**Nightly: `v2.1.0-nightly.1`** (2026-07-05, commits `0e29a29`+`e7f6b72`) —
+UX-audit batch (see `docs/UX_AUDIT_2026-07-05.md`; canonical mode names are
+now **Transcribe**/**Draft** everywhere, Raw/Cleaned/Drafted are version tabs
+only; sidebar widened, user explicitly keeps its quick settings) + avatar
+visibility tri-state + the "wave" skin. CI REQUIRES
+`docs/RELEASE_NOTES_<tag>.md` to exist at any tag, and version bumps must hit
+package.json + tauri.conf.json + **Cargo.toml** (missing Cargo.toml at v2.0.0
+caused a permanent phantom "update available" banner).
 
 ## Codex handoff checkpoint (2026-06-29)
 
@@ -100,7 +108,14 @@ src/routes/
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Providers, Modes, Dictation, Avatar, General, Security
-  /clippy/         Always-on-top floater. Skins: off/fox/codex-fox/stylized/real-clippy/cat/duo/oru-gujia/spark-buddy
+  /clippy/         Always-on-top floater. Skins: fox/codex-fox/stylized/real-clippy/cat/duo/oru-gujia/spark-buddy/wave
+                   ("off" is retired as a skin — visibility is its own axis, see below;
+                   "wave" = translucent no-text pill w/ live waveform from `wispr:level`
+                   RMS events (cpal callback → AtomicU32 → 90ms emitter in lib.rs);
+                   wave suppresses ALL bubbles/quips and always uses the REST box;
+                   default position top-center via lib/floater-place.ts, saved
+                   positions are per skin-class (wave vs character), context menu
+                   has Reset position)
                    (duo = "Khaumani & Indy", two-cat team modeled on the user's real cats:
                    white loaf supervises, orange tabby works; codex-fox/oru-gujia/spark-buddy
                    are raster state packs under static/avatars rendered by RasterAvatar)
@@ -114,6 +129,16 @@ src/lib/
   stats-store.svelte.ts   loads stats_summary, refreshes on flow idle
   StatsWidget.svelte      compact home-page strip → links to /stats
   floater-scale.svelte.ts S/M/L scale store + floater-debug toggle store
+  avatar-visibility.svelte.ts  tri-state "always"/"auto"/"hidden" (v2.1.0):
+                          always+hidden applied by the main window
+                          (applyVisibilityWindow); auto is owned by the clippy
+                          webview off wispr:state (enter/exit pop animations,
+                          AUTO_HIDE_GRACE_MS). Old skin "off" migrates to
+                          hidden+fox. Rust still show()s the floater at startup
+                          (can't read localStorage) — hidden/auto self-correct
+                          from a clippy $effect, so a brief launch flash is a
+                          known papercut.
+  floater-place.ts        shared skin-aware default placement + per-class pos keys
 ```
 
 ## Hotkey model (current, v1.0.0)
