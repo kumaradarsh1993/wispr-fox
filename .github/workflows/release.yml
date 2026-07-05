@@ -66,7 +66,7 @@ jobs:
               : '';
             const body = channelHeader + releaseNotes + '\n\n---\n\n' + [
               `Built from commit ${context.sha}.`,
-              'Provenance: Codex-authored build. This is the first release line after the final Claude Code checkpoint.',
+              'Provenance: built by GitHub Actions from the tagged commit. See the release notes header for which agent authored the change set.',
               '',
               '**Pick your installer:**',
               '- **Windows:** `wispr-fox_*_x64-setup.exe` (recommended) or `*_x64_en-US.msi`',
@@ -95,7 +95,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `wispr-fox ${tag} - Codex build`,
+              name: `wispr-fox ${tag}`,
               body,
               draft: true,
               prerelease: isPrerelease,
