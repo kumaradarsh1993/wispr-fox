@@ -93,6 +93,7 @@
     { id: "oru-gujia",   label: "Oru & Gujia" },
     { id: "spark-buddy", label: "Spark Buddy" },
     { id: "wave",        label: "Wave bar" },
+    { id: "siri",        label: "Siri Orb" },
   ];
 
   // Avatar visibility tri-state ("Always show" / "While dictating" / "Hidden").

@@ -43,6 +43,7 @@ export type Skin =
   | "oru-gujia"
   | "spark-buddy"
   | "wave"
+  | "siri"
   | "duo-hd";
 
 const STORAGE_KEY = "wispr.clippy.skin";
@@ -58,6 +59,7 @@ const VALID_SKINS: readonly Skin[] = [
   "oru-gujia",
   "spark-buddy",
   "wave",
+  "siri",
 ] as const;
 
 function readInitial(): Skin {

@@ -61,6 +61,7 @@
     { id: "oru-gujia",   label: "Oru & Gujia",      emoji: "OG" },
     { id: "spark-buddy", label: "Spark Buddy",      emoji: "Sp" },
     { id: "wave",        label: "Wave bar",         emoji: "≈" },
+    { id: "siri",        label: "Siri Orb",         emoji: "◉" },
   ];
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string }[] = [

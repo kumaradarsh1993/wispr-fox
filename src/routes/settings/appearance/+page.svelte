@@ -22,6 +22,7 @@
     { id: "oru-gujia",   label: "Oru & Gujia", desc: "High-fidelity personal duo based on Oru the orange tabby and Gujia the white supervisor" },
     { id: "spark-buddy", label: "Spark Buddy", desc: "Original electric companion with polished raster poses, teal glow, and celebratory sparks" },
     { id: "wave",        label: "Wave bar",  desc: "Minimal pill with a live waveform — no character, no bubbles" },
+    { id: "siri",        label: "Siri Orb",  desc: "A tiny multicolour orb that blooms with your voice — no character, no bubbles" },
   ];
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string; desc: string }[] = [

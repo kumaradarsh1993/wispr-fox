@@ -223,6 +223,24 @@
       <path d="M 40 21 V 27" />
     </g>
   </svg>
+{:else if skin === "siri"}
+  <!-- Siri orb — a small multicolour gradient sphere with a gloss highlight. -->
+  <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true">
+    <defs>
+      <radialGradient id="ski-siri" cx="0.5" cy="0.5" r="0.62">
+        <stop offset="0%" stop-color="#5ac8fa"/>
+        <stop offset="42%" stop-color="#a06bff"/>
+        <stop offset="72%" stop-color="#ff5fa2"/>
+        <stop offset="100%" stop-color="#ff8a4c"/>
+      </radialGradient>
+      <radialGradient id="ski-siri-gloss" cx="0.36" cy="0.28" r="0.4">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle cx="24" cy="24" r="16" fill="url(#ski-siri)"/>
+    <ellipse cx="18" cy="16" rx="8" ry="6" fill="url(#ski-siri-gloss)"/>
+  </svg>
 {/if}
 
 <style>
