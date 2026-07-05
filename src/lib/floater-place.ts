@@ -28,8 +28,8 @@ export function skinClass(skin: Skin): "wave" | "siri" | "character" {
  *  Must track the ART REST box + pads in clippy/+page.svelte. Exported so the
  *  clippy page's saved-position clamping uses the same numbers. */
 export function logicalWinSize(skin: Skin): { w: number; h: number } {
-  // wave ART {132,38} + 8px side / 8px top+bottom pads → 148×54.
-  if (skin === "wave") return { w: 148, h: 54 };
+  // wave ART {120,32} + 8px side / 8px top+bottom pads → 136×48.
+  if (skin === "wave") return { w: 136, h: 48 };
   // siri ART {58,58} + pads → 74×74.
   if (skin === "siri") return { w: 74, h: 74 };
   // character: the classic 190×210 footprint.

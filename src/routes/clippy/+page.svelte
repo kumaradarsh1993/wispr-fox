@@ -252,7 +252,7 @@
     // Minimal skins — NO head (no bubble ever). head=0 collapses the two-box
     // model to a single REST box (see boxFor + isMinimalSkin).
     // Wave bar: small Apple-style pill (~Clippy width). Siri orb: tiny circle.
-    wave:          { w: 132, h: 38,  head: 0 },
+    wave:          { w: 120, h: 32,  head: 0 },
     siri:          { w: 58,  h: 58,  head: 0 },
     ...RASTER_AVATAR_ART,
   };
@@ -1190,77 +1190,95 @@
   });
 
   // ── Wave bar (skin "wave") ──────────────────────────────────────────────
-  // A minimal Wispr-Flow-style pill with a live audio waveform. No text, no
-  // bubbles, no quips — ever. Levels arrive from Rust via `wispr:level`
-  // (f32 0..1, throttled ~90ms while recording). We keep a ring buffer of
-  // recent levels and render ~24 vertical bars, smoothed via rAF so the
-  // motion feels liquid rather than steppy.
-  const WAVE_BARS = 20;
-  // Smoothing factor per rAF tick: how fast a bar chases its target height.
-  const WAVE_LERP = 0.3;
-  // Idle "resting" bar height (0..1) — a faint centered line of small dots.
-  const WAVE_IDLE = 0.05;
+  // A minimal Wispr-Flow-style pill. No text, no bubbles, no quips — ever.
+  // Levels arrive from Rust via `wispr:level` (f32 0..1, ~90ms while
+  // recording). Each bar expands/contracts INDIVIDUALLY around the pill's
+  // vertical center — height = live mic level × that bar's own slowly-
+  // drifting modulation — so the bars dance like Wispr Flow's, rather than
+  // scrolling a history left→right.
+  const WAVE_BARS = 12;
+  // Per-tick smoothing: fast attack so speech onsets snap, slower release so
+  // bars fall gracefully instead of flickering.
+  const WAVE_ATTACK = 0.5;
+  const WAVE_RELEASE = 0.16;
   // How long the success (green) breathe lasts, and the error (red) blink.
   const WAVE_SUCCESS_MS = 900;
   const WAVE_ERROR_MS = 900;
 
-  // Target heights (what we're animating toward) and displayed heights (what's
-  // actually painted, lerped toward target each frame). Both 0..1.
-  let waveTargets = $state<number[]>(new Array(WAVE_BARS).fill(WAVE_IDLE));
-  let waveHeights = $state<number[]>(new Array(WAVE_BARS).fill(WAVE_IDLE));
-  // Ring buffer of the most recent live levels (newest last). Fed by wispr:level.
-  let waveRing: number[] = new Array(WAVE_BARS).fill(WAVE_IDLE);
+  // Per-bar "personality": each bar mixes two sine drifts with its own
+  // frequencies and phases, so no two bars ever move in lockstep. Purely
+  // decorative, so fresh randoms per launch are fine.
+  const WAVE_SEEDS = Array.from({ length: WAVE_BARS }, () => ({
+    f1: 110 + Math.random() * 90,
+    f2: 210 + Math.random() * 160,
+    p1: Math.random() * Math.PI * 2,
+    p2: Math.random() * Math.PI * 2,
+  }));
+
+  // Displayed bar heights, 0..1 (0 = resting dot, 1 = full allowed height).
+  let waveHeights = $state<number[]>(new Array(WAVE_BARS).fill(0));
+  // Newest raw level from Rust (0..1); micLevel chases it with attack/decay.
+  let liveLevel = 0;
   let waveSuccessUntil = 0;
   let waveRaf: number | null = null;
-  // Smoothed 0..1 mic level — drives the Siri orb's bloom/scale. Decays to 0
-  // when no levels arrive so the orb settles between dictations.
+  // Smoothed 0..1 mic level — drives the bars' amplitude and the Siri orb's
+  // bloom. Decays to 0 when no levels arrive so both settle between dictations.
   let micLevel = $state(0);
 
   function pushLevel(v: number) {
-    const clamped = Math.max(0, Math.min(1, v));
-    waveRing.push(clamped);
-    if (waveRing.length > WAVE_BARS) waveRing.shift();
+    liveLevel = Math.max(0, Math.min(1, v));
   }
 
   // Compute the target bar heights from the current display state. Runs each
-  // rAF tick so transcribing/cleaning sweeps and idle shimmer stay animated
-  // without extra timers.
+  // rAF tick so listening/processing/idle motion stays animated without timers.
   function computeWaveTargets(now: number): number[] {
     const s = displayState;
+    const out = new Array(WAVE_BARS);
     if (s === "listening") {
-      // Live waveform: history left→right, newest on the right.
-      return waveRing.slice(-WAVE_BARS);
-    }
-    if (s === "thinking" || s === "writing") {
-      // "Processing" motion — a soft symmetric shimmer that ripples across
-      // the bars (reads as thinking, not as a level meter). Stays mid-height.
-      const out = new Array(WAVE_BARS);
+      // Voice-reactive: every bar is the smoothed mic level shaped by its own
+      // drifting modulation, center-weighted so the pill reads as a waveform.
       for (let i = 0; i < WAVE_BARS; i++) {
         const pos = i / (WAVE_BARS - 1);
-        const wobble = Math.sin(pos * Math.PI * 2 + now / 260)
-          * Math.sin(pos * Math.PI); // taper the ends down
-        out[i] = 0.3 + 0.24 * (0.5 + 0.5 * wobble);
+        const seed = WAVE_SEEDS[i];
+        const drift =
+          0.5 + 0.5 * Math.sin(now / seed.f1 + seed.p1) * Math.sin(now / seed.f2 + seed.p2);
+        const envelope = 0.35 + 0.65 * Math.sin(pos * Math.PI);
+        // tanh soft-knee: quiet speech stays lively, loud peaks compress
+        // instead of pinning every bar at the ceiling.
+        out[i] = Math.tanh(micLevel * (0.4 + 1.2 * drift) * envelope * 2.4);
       }
       return out;
     }
-    // idle / pasting: settle to a low centered line with a slow breath.
-    const breathe = WAVE_IDLE + 0.04 * (0.5 + 0.5 * Math.sin(now / 1500));
-    return new Array(WAVE_BARS).fill(breathe);
+    if (s === "thinking" || s === "writing") {
+      // Processing: a soft pulse travels left→right on loop — clearly "working",
+      // clearly not a level meter.
+      const c = (now / 1100) % 1;
+      for (let i = 0; i < WAVE_BARS; i++) {
+        const pos = i / (WAVE_BARS - 1);
+        let d = Math.abs(pos - c);
+        if (d > 0.5) d = 1 - d; // wrap so the pulse loops seamlessly
+        out[i] = 0.1 + 0.55 * Math.exp(-(d * d) / (2 * 0.1 * 0.1));
+      }
+      return out;
+    }
+    // idle / pasting: rest as a row of still dots with a barely-there breath.
+    const breathe = 0.02 + 0.03 * (0.5 + 0.5 * Math.sin(now / 1400));
+    return out.fill(breathe);
   }
 
   function waveTick(now: number) {
+    // Smoothed mic level: chase the newest Rust level while listening
+    // (fast up, slow down), decay to 0 otherwise.
+    const raw = displayState === "listening" ? liveLevel : 0;
+    micLevel = micLevel + (raw - micLevel) * (raw > micLevel ? WAVE_ATTACK : 0.1);
     const targets = computeWaveTargets(now);
     const next = new Array(WAVE_BARS);
     for (let i = 0; i < WAVE_BARS; i++) {
-      const cur = waveHeights[i] ?? WAVE_IDLE;
-      next[i] = cur + (targets[i] - cur) * WAVE_LERP;
+      const cur = waveHeights[i] ?? 0;
+      const k = targets[i] > cur ? WAVE_ATTACK : WAVE_RELEASE;
+      next[i] = cur + (targets[i] - cur) * k;
     }
-    waveTargets = targets;
     waveHeights = next;
-    // Smoothed mic level for the Siri orb. While listening chase the newest
-    // ring value; otherwise decay toward 0.
-    const latest = displayState === "listening" ? (waveRing[waveRing.length - 1] ?? 0) : 0;
-    micLevel = micLevel + (latest - micLevel) * (latest > micLevel ? 0.5 : 0.12);
     if (isMinimalSkin(skin)) {
       waveRaf = requestAnimationFrame(waveTick);
     } else {
@@ -1297,8 +1315,8 @@
       cancelAnimationFrame(waveRaf);
       waveRaf = null;
       // Reset so a later switch back starts clean.
-      waveRing = new Array(WAVE_BARS).fill(WAVE_IDLE);
-      waveHeights = new Array(WAVE_BARS).fill(WAVE_IDLE);
+      liveLevel = 0;
+      waveHeights = new Array(WAVE_BARS).fill(0);
       micLevel = 0;
     }
   });
@@ -2578,11 +2596,12 @@
     </svg>
   {:else if skin === "wave"}
     <!-- ═══════════════════════════════════════════════════════════════════
-         WAVE BAR — a small Apple-style pill with a live waveform. NO text,
-         NO bubbles, NO quips, ever. Slim white bars on a gray translucent
-         pill; bars stay centred and cap at ~70% of the pill height. Heights
-         are rAF-smoothed (waveHeights[]); colour shifts green on success,
-         red-blinks on error. Scales with the S/M/L slider via --fscale.
+         WAVE BAR — a small Apple-style pill. NO text, NO bubbles, NO quips,
+         ever. 12 slim white bars on a gray translucent pill; each bar rests
+         as a dot and expands/contracts individually with the voice, capped
+         at ~68% of the pill height. Heights are rAF-smoothed (waveHeights[]);
+         colour shifts green on success, red-blinks ×3 on error. Scales with
+         the S/M/L slider via --fscale.
          ═══════════════════════════════════════════════════════════════════ -->
     <div
       class="wave-pill"
@@ -2595,17 +2614,20 @@
       {#each waveHeights as h, i (i)}
         <span
           class="wave-bar"
-          style="height: {Math.round((0.14 + 0.56 * Math.max(0, Math.min(1, h))) * 100)}%;"
+          style="height: {Math.round((0.11 + 0.57 * Math.max(0, Math.min(1, h))) * 100)}%;"
         ></span>
       {/each}
     </div>
   {:else if skin === "siri"}
     <!-- ═══════════════════════════════════════════════════════════════════
-         SIRI ORB — a tiny multicolour 3D orb. NO text, NO bubbles. Idle: a
-         slow drifting gradient + gentle breath. Listening: blooms and scales
-         with the live mic level. Thinking: faster swirl. Success: green ring.
-         Error: red shudder. Default position is right-of-centre (see
-         lib/floater-place.ts). Scales with the slider via --fscale.
+         SIRI ORB — a tiny multicolour fluid orb. NO text, NO bubbles. Six
+         counter-rotating conic gradients under blur+contrast produce the
+         Apple-style liquid colour blobs (technique from SmoothUI's SiriOrb);
+         the glass layer clips the blurred core to a crisp circle and a
+         backdrop-filtered center adds the liquid middle. Idle: slow drift.
+         Listening: blooms + swirls faster with the live mic level. Thinking:
+         fastest swirl. Success: green ring. Error: red shudder. Default
+         position right-of-centre (lib/floater-place.ts); scales via --fscale.
          ═══════════════════════════════════════════════════════════════════ -->
     <div
       class="siri-orb"
@@ -2615,7 +2637,9 @@
       style="--orb-level: {micLevel.toFixed(3)};"
       aria-hidden="true"
     >
-      <span class="siri-core"></span>
+      <span class="siri-glass">
+        <span class="siri-core"></span>
+      </span>
       <span class="siri-gloss"></span>
       <span class="siri-ring"></span>
     </div>
@@ -2838,45 +2862,48 @@
   }
 
   /* ── Wave bar skin ─────────────────────────────────────────────────────
-     Small Apple-style stadium pill, gray translucent, with ~20 slim WHITE
-     bars kept centred and capped well inside the pill height. Colour is
-     driven by --wave-color (white → green on success → red on error). */
+     Small Apple-style stadium pill, gray translucent, with 12 slim WHITE
+     bars. Each bar is a FIXED 3px wide and rests as a perfect dot
+     (min-height = width); heights animate independently from the rAF loop.
+     Colour is driven by --wave-color (white → green on success → red on
+     error). */
   .wave-pill {
-    --wave-color: rgba(255, 255, 255, 0.92);
+    --wave-color: rgba(255, 255, 255, 0.95);
     position: relative;
     display: flex;
     flex: 0 0 auto; /* never shrink below the explicit pill width */
     align-items: center;
     justify-content: center;
-    gap: calc(2px * var(--fscale, 1));
-    width: calc(132px * var(--fscale, 1));
-    height: calc(38px * var(--fscale, 1));
-    padding: 0 calc(11px * var(--fscale, 1));
+    gap: calc(4px * var(--fscale, 1));
+    width: calc(120px * var(--fscale, 1));
+    height: calc(32px * var(--fscale, 1));
+    padding: 0 calc(12px * var(--fscale, 1));
     box-sizing: border-box;
     border-radius: 999px;
-    background: rgba(58, 60, 66, 0.34);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(44, 46, 52, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     backdrop-filter: blur(14px) saturate(1.1);
     -webkit-backdrop-filter: blur(14px) saturate(1.1);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24),
-                inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
     transition: background 260ms ease, border-color 260ms ease;
   }
   .wave-pill.mac {
     background: rgba(120, 124, 132, 0.20);
     border-color: rgba(120, 80, 30, 0.16);
-    box-shadow: 0 6px 16px rgba(120, 80, 30, 0.16),
+    box-shadow: 0 3px 12px rgba(120, 80, 30, 0.16),
                 inset 0 1px 0 rgba(255, 255, 255, 0.35);
   }
   .wave-bar {
-    flex: 1 1 0;
-    min-width: 0;
-    max-width: calc(3px * var(--fscale, 1));
+    flex: 0 0 calc(3px * var(--fscale, 1));
+    width: calc(3px * var(--fscale, 1));
+    /* Resting state is a perfect dot: min-height equals the bar width. */
+    min-height: calc(3px * var(--fscale, 1));
     border-radius: 999px;
     background: var(--wave-color);
-    /* Height set inline (14..70% of the pill's inner height), centred. A short
+    /* Height set inline (11..68% of the pill's inner height), centred. A short
        CSS transition on top of the rAF lerp keeps sub-frame motion silky. */
-    transition: height 70ms linear, background 260ms ease;
+    transition: height 60ms linear, background 260ms ease;
     align-self: center;
   }
   /* Success: bars go Apple-green and breathe once. */
@@ -2897,40 +2924,89 @@
   }
 
   /* ── Siri orb skin ─────────────────────────────────────────────────────
-     Tiny multicolour orb. A drifting conic gradient (siri-core) under a
-     glass gloss, with a state ring on top. The whole orb scales with the
-     live mic level while listening. */
+     The Apple-style fluid orb. Six conic gradients rotate at DIFFERENT
+     multiples of one animated --siri-angle (some counter-rotating), then
+     blur+contrast melt them into organic colour blobs — the same trick
+     Apple-quality CSS orbs use (ref: SmoothUI SiriOrb). The core bleeds
+     6px past the circle so its blur clips crisply inside .siri-glass;
+     a backdrop-filtered glass center gives the liquid middle, and the
+     gloss adds the 3D specular. Swirl speed comes from --spin (per state);
+     bloom/saturation ride --orb-level (live mic). */
+  @property --siri-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+  }
   .siri-orb {
+    /* Palette: near-white heart + Siri pink/blue/purple. */
+    --sbg: #f4f3fb;
+    --sc1: #ff5fa2;
+    --sc2: #5ac8fa;
+    --sc3: #a06bff;
+    --spin: 11s;
     position: relative;
     flex: 0 0 auto; /* never shrink below the explicit orb size */
     width: calc(56px * var(--fscale, 1));
     height: calc(56px * var(--fscale, 1));
     border-radius: 50%;
-    /* Bloom + scale with the mic level; the base breath comes from the core. */
-    transform: scale(calc(1 + 0.10 * var(--orb-level, 0)));
+    /* Bloom + scale with the mic level. */
+    transform: scale(calc(1 + 0.12 * var(--orb-level, 0)));
     transition: transform 90ms ease-out;
-    box-shadow: 0 4px 16px rgba(70, 40, 120, 0.30);
+    box-shadow: 0 2px 14px rgba(110, 80, 190, 0.35);
     isolation: isolate;
   }
-  .siri-core {
+  /* Clips the oversized blurred core to a crisp circle. */
+  .siri-glass {
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: conic-gradient(
-      from 0deg,
-      #5ac8fa, #a06bff, #ff5fa2, #ff8a4c, #ffd84c, #5ae8c8, #5ac8fa
-    );
-    filter: saturate(1.2) brightness(1.05);
-    animation: siri-spin 9s linear infinite;
+    overflow: hidden;
+    display: block;
+  }
+  .siri-core {
+    position: absolute;
+    inset: calc(-6px * var(--fscale, 1)); /* bleed so the blur never shows a soft outer edge */
+    display: block;
+    background:
+      conic-gradient(from calc(var(--siri-angle) * 2) at 25% 70%, var(--sc3), transparent 20% 80%, var(--sc3)),
+      conic-gradient(from calc(var(--siri-angle) * 2) at 45% 75%, var(--sc2), transparent 30% 60%, var(--sc2)),
+      conic-gradient(from calc(var(--siri-angle) * -3) at 80% 20%, var(--sc1), transparent 40% 60%, var(--sc1)),
+      conic-gradient(from calc(var(--siri-angle) * 2) at 15% 5%, var(--sc2), transparent 10% 90%, var(--sc2)),
+      conic-gradient(from var(--siri-angle) at 20% 80%, var(--sc1), transparent 10% 90%, var(--sc1)),
+      conic-gradient(from calc(var(--siri-angle) * -2) at 85% 10%, var(--sc3), transparent 20% 80%, var(--sc3));
+    background-color: var(--sbg);
+    box-shadow: inset var(--sbg) 0 0 calc(8px * var(--fscale, 1)) calc(2px * var(--fscale, 1));
+    filter:
+      blur(calc(4px * var(--fscale, 1)))
+      contrast(1.6)
+      saturate(calc(1.05 + 0.55 * var(--orb-level, 0)))
+      brightness(calc(1 + 0.08 * var(--orb-level, 0)));
+    animation: siri-angle var(--spin) linear infinite;
+  }
+  /* Liquid center: re-blur + re-contrast what's behind, faded out toward
+     the rim, which melts the middle into the signature soft heart. */
+  .siri-glass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    backdrop-filter: blur(calc(8px * var(--fscale, 1))) contrast(1.8);
+    -webkit-backdrop-filter: blur(calc(8px * var(--fscale, 1))) contrast(1.8);
+    mask-image: radial-gradient(black 25%, transparent 72%);
+    -webkit-mask-image: radial-gradient(black 25%, transparent 72%);
+  }
+  @keyframes siri-angle {
+    to { --siri-angle: 360deg; }
   }
   .siri-gloss {
     position: absolute;
     inset: 0;
     border-radius: 50%;
     background:
-      radial-gradient(60% 45% at 34% 26%, rgba(255,255,255,0.75), rgba(255,255,255,0) 60%),
-      radial-gradient(120% 120% at 50% 120%, rgba(0,0,0,0.28), rgba(0,0,0,0) 55%);
-    mix-blend-mode: screen;
+      radial-gradient(55% 40% at 33% 25%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 65%);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+      inset 0 calc(-5px * var(--fscale, 1)) calc(10px * var(--fscale, 1)) rgba(70, 45, 140, 0.18);
     pointer-events: none;
   }
   .siri-ring {
@@ -2941,15 +3017,14 @@
     pointer-events: none;
     transition: border-color 200ms ease, box-shadow 200ms ease;
   }
-  /* Listening: brighter, faster swirl, a soft glow ring. */
-  .siri-orb[data-state="listening"] .siri-core { animation-duration: 3.4s; filter: saturate(1.35) brightness(1.15); }
+  /* Listening: faster swirl + a soft mic-reactive halo. */
+  .siri-orb[data-state="listening"] { --spin: 4.5s; }
   .siri-orb[data-state="listening"] .siri-ring {
-    border-color: rgba(255, 255, 255, 0.55);
-    box-shadow: 0 0 calc(10px * var(--fscale,1)) rgba(150, 180, 255, calc(0.35 + 0.5 * var(--orb-level, 0)));
+    box-shadow: 0 0 calc(12px * var(--fscale, 1)) rgba(160, 130, 255, calc(0.3 + 0.55 * var(--orb-level, 0)));
   }
   /* Thinking / writing: fastest swirl. */
-  .siri-orb[data-state="thinking"] .siri-core,
-  .siri-orb[data-state="writing"] .siri-core { animation-duration: 1.7s; }
+  .siri-orb[data-state="thinking"],
+  .siri-orb[data-state="writing"] { --spin: 2.2s; }
   /* Success: green ring flash. */
   .siri-orb.success .siri-ring {
     border-color: #34c759;
@@ -2966,9 +3041,6 @@
     0%, 100% { transform: translateX(0) scale(1); }
     15%, 45%, 75% { transform: translateX(-2px) scale(1); }
     30%, 60%, 90% { transform: translateX(2px) scale(1); }
-  }
-  @keyframes siri-spin {
-    to { transform: rotate(360deg); }
   }
   @media (prefers-reduced-motion: reduce) {
     .siri-core { animation: none; }
