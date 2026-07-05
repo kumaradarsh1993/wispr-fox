@@ -5,7 +5,12 @@
   import { page } from "$app/state";
   import { listen } from "@tauri-apps/api/event";
   import { usageStore } from "$lib/usage-store.svelte";
-  import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { skinStore, type Skin } from "$lib/skin-store.svelte";
+  import {
+    avatarVisibility,
+    applyVisibilityWindow,
+    type AvatarVisibility,
+  } from "$lib/avatar-visibility.svelte";
   import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { api, type ModelUsage, type SecretCheck } from "$lib/api";
@@ -79,7 +84,6 @@
 
   type SkinOption = { id: Skin; label: string };
   const SKIN_OPTIONS: SkinOption[] = [
-    { id: "off",         label: "Off" },
     { id: "fox",         label: "Fox" },
     { id: "codex-fox",   label: "Codex Fox" },
     { id: "stylized",    label: "Paperclip" },
@@ -88,7 +92,21 @@
     { id: "duo",         label: "Khaumani & Indy" },
     { id: "oru-gujia",   label: "Oru & Gujia" },
     { id: "spark-buddy", label: "Spark Buddy" },
+    { id: "wave",        label: "Wave bar" },
   ];
+
+  // Avatar visibility tri-state ("Always show" / "While dictating" / "Hidden").
+  // The single source of truth for whether the floater is on screen — decoupled
+  // from the skin. Picking a skin never changes this.
+  const VISIBILITY_OPTIONS: { id: AvatarVisibility; short: string; label: string }[] = [
+    { id: "always", short: "On",   label: "Always show" },
+    { id: "auto",   short: "Auto", label: "While dictating" },
+    { id: "hidden", short: "Off",  label: "Hidden" },
+  ];
+  async function pickVisibility(v: AvatarVisibility) {
+    await avatarVisibility.set(v);
+    await applyVisibilityWindow(v);
+  }
 
   let secretCheck = $state<SecretCheck | null>(null);
 
@@ -102,8 +120,9 @@
   }
 
   async function pickSkin(s: Skin) {
+    // Picking a skin must NOT touch visibility — the tri-state is the single
+    // source of truth. The skin grid stays usable even when hidden.
     await skinStore.set(s);
-    await setClippyWindowVisible(s !== "off");
   }
 
   async function changeSttProvider(provider: string) {
@@ -229,6 +248,7 @@
     if (Number.isFinite(savedWidth)) sidebarWidth = clampSidebarWidth(savedWidth);
     usageStore.subscribe();
     skinStore.subscribe();
+    avatarVisibility.subscribe();
     floaterScale.subscribe();
 
     // Init settings, then decide whether to show the main window. The
@@ -524,6 +544,19 @@
         <div class="section">
           {#if !collapsed}
             <div class="section-title-bar">Avatar</div>
+            <!-- Visibility tri-state — the single source of truth for whether
+                 the floater is on screen. Independent of the chosen skin. -->
+            <div class="vis-row" role="group" aria-label="Avatar visibility">
+              {#each VISIBILITY_OPTIONS as v (v.id)}
+                <button
+                  class="vis-btn"
+                  class:active={avatarVisibility.current === v.id}
+                  onclick={() => pickVisibility(v.id)}
+                  title={v.label}
+                  aria-label={v.label}
+                >{v.short}</button>
+              {/each}
+            </div>
             <div class="skin-grid">
               {#each SKIN_OPTIONS as opt (opt.id)}
                 <button
@@ -537,7 +570,7 @@
                 </button>
               {/each}
             </div>
-            {#if skinStore.current !== "off"}
+            {#if avatarVisibility.current !== "hidden"}
               <div class="scale-row" role="group" aria-label="Avatar size">
                 <span class="scale-label">Size</span>
                 {#each SCALE_PRESETS as p (p.id)}
@@ -552,6 +585,16 @@
               </div>
             {/if}
           {:else}
+            <div class="vis-row-collapsed" role="group" aria-label="Avatar visibility">
+              {#each VISIBILITY_OPTIONS as v (v.id)}
+                <button
+                  class="vis-btn"
+                  class:active={avatarVisibility.current === v.id}
+                  onclick={() => pickVisibility(v.id)}
+                  title={v.label}
+                >{v.short}</button>
+              {/each}
+            </div>
             <div class="skin-grid-collapsed">
               {#each SKIN_OPTIONS as opt (opt.id)}
                 <button
@@ -564,7 +607,7 @@
                 </button>
               {/each}
             </div>
-            {#if skinStore.current !== "off"}
+            {#if avatarVisibility.current !== "hidden"}
               <div class="scale-row-collapsed" role="group" aria-label="Avatar size">
                 {#each SCALE_PRESETS as p (p.id)}
                   <button
@@ -1161,6 +1204,47 @@
     color: var(--accent);
   }
   .scale-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+
+  /* Avatar visibility segmented control (On / Auto / Off). */
+  .vis-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .vis-row-collapsed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .vis-btn {
+    flex: 1 1 0;
+    min-width: 22px;
+    padding: 4px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .vis-row-collapsed .vis-btn {
+    flex: 0 0 auto;
+    width: 36px;
+  }
+  .vis-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .vis-btn.active {
     border-color: var(--accent);
     background: var(--accent-fade);
     color: var(--accent);

@@ -211,6 +211,18 @@
     <!-- Sparkle mark -->
     <path d="M 60 12 L 61.4 16 L 65.4 17.4 L 61.4 18.8 L 60 22.8 L 58.6 18.8 L 54.6 17.4 L 58.6 16 Z" fill="#eec25a"/>
   </svg>
+{:else if skin === "wave"}
+  <!-- Wave bar — five rounded waveform bars, currentColor so the icon
+       follows active/hover accents like the nav glyphs do. -->
+  <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true">
+    <g stroke="currentColor" stroke-width="4.5" stroke-linecap="round" fill="none">
+      <path d="M 8 20 V 28" />
+      <path d="M 16 14 V 34" />
+      <path d="M 24 9 V 39" />
+      <path d="M 32 16 V 32" />
+      <path d="M 40 21 V 27" />
+    </g>
+  </svg>
 {/if}
 
 <style>

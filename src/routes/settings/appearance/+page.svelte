@@ -2,13 +2,17 @@
   // Appearance - avatar skin + app theme.
   import { onMount } from "svelte";
   import { settings } from "$lib/settings-store.svelte";
-  import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { skinStore, type Skin } from "$lib/skin-store.svelte";
+  import {
+    avatarVisibility,
+    applyVisibilityWindow,
+    type AvatarVisibility,
+  } from "$lib/avatar-visibility.svelte";
   import { floaterScale, floaterDebug, floaterFixedBox, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
 
   type SkinOption = { id: Skin; label: string; desc: string };
   const SKIN_OPTIONS: SkinOption[] = [
-    { id: "off",         label: "Off",       desc: "Hide the floating character entirely" },
     { id: "codex-fox",   label: "Codex Fox", desc: "High-fidelity 2.5D raster fox companion with Codex-blue glow and state-specific poses" },
     { id: "fox",         label: "Fox",       desc: "Watercolor fox mascot — the Foxy identity, default since v1.0" },
     { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
@@ -17,7 +21,19 @@
     { id: "duo",         label: "Khaumani & Indy", desc: "The two-cat team — a serene white cat loafing on the console supervises while an orange tabby kitten does the actual typing. Paw bump on every successful paste" },
     { id: "oru-gujia",   label: "Oru & Gujia", desc: "High-fidelity personal duo based on Oru the orange tabby and Gujia the white supervisor" },
     { id: "spark-buddy", label: "Spark Buddy", desc: "Original electric companion with polished raster poses, teal glow, and celebratory sparks" },
+    { id: "wave",        label: "Wave bar",  desc: "Minimal pill with a live waveform — no character, no bubbles" },
   ];
+
+  const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string; desc: string }[] = [
+    { id: "always", label: "Always show",     desc: "The avatar stays on screen at all times." },
+    { id: "auto",   label: "While dictating", desc: "Appears when you start dictating, tucks away when done." },
+    { id: "hidden", label: "Hidden",          desc: "Never shown. Dictation still works." },
+  ];
+
+  async function pickVisibility(v: AvatarVisibility) {
+    await avatarVisibility.set(v);
+    await applyVisibilityWindow(v);
+  }
 
   const THEME_OPTIONS = [
     { id: "auto",  label: "Auto",  desc: "Follow your system theme" },
@@ -27,8 +43,9 @@
   ] as const;
 
   async function pickSkin(s: Skin) {
+    // Skin selection is independent of visibility — picking a skin never
+    // shows or hides the floater.
     await skinStore.set(s);
-    await setClippyWindowVisible(s !== "off");
   }
 
   function onScaleInput(e: Event) {
@@ -38,6 +55,7 @@
 
   onMount(() => {
     skinStore.subscribe();
+    avatarVisibility.subscribe();
     floaterScale.subscribe();
     floaterDebug.subscribe();
     floaterFixedBox.subscribe();
@@ -78,6 +96,24 @@
         {#if skinStore.current === opt.id}
           <div class="skin-tile-check">✓</div>
         {/if}
+      </button>
+    {/each}
+  </div>
+
+  <h3>Visibility</h3>
+  <p class="lede">When the avatar appears on screen.</p>
+  <div class="radio-grid">
+    {#each VISIBILITY_OPTIONS as opt (opt.id)}
+      <button
+        class="radio-card"
+        class:active={avatarVisibility.current === opt.id}
+        onclick={() => pickVisibility(opt.id)}
+      >
+        <div class="radio-card-head">
+          <span class="radio-dot">{avatarVisibility.current === opt.id ? "●" : "○"}</span>
+          <span class="radio-label">{opt.label}</span>
+        </div>
+        <div class="radio-desc">{opt.desc}</div>
       </button>
     {/each}
   </div>

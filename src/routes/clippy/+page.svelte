@@ -5,6 +5,9 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
+  import { avatarVisibility } from "$lib/avatar-visibility.svelte";
+  import { isMac } from "$lib/hotkey-display";
+  import { placeFloaterDefault, posKeyFor } from "$lib/floater-place";
   import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
@@ -203,6 +206,11 @@
   // Skin comes from the shared store (driven by sidebar picker via events).
   let skin = $derived(skinStore.current);
 
+  // macOS renders the floater on an OPAQUE window (transparency ghost-window
+  // workaround), so the wave pill uses the cream card look there instead of a
+  // translucent dark pill. Detected once from the user agent.
+  const isMacPlatform = isMac();
+
   // ── Per-skin window sizing: TWO boxes per avatar (rest / talking) ─────
   //
   // v1.4.0: the v1.3.0 "ONE fixed box" model permanently reserved the
@@ -241,6 +249,9 @@
     duo:           { w: 198, h: 117, head: 107 }, // two cats side by side — wide, deliberately LOW
     "duo-hd":      { w: 200, h: 130, head: 120 }, // remastered duo — a touch taller for the pounce headroom
     off:           { w: 116, h: 116, head: 110 },
+    // Wave bar: compact pill, NO head (no bubble ever). head=0 collapses the
+    // two-box model to a single REST box (see boxFor).
+    wave:          { w: 230, h: 52,  head: 0 },
     ...RASTER_AVATAR_ART,
   };
   const SIDE_PAD = 8; // L/R breathing room around the character
@@ -278,6 +289,9 @@
       w: Math.ceil((a.w + 2 * SIDE_PAD) * avatarScale),
       h: Math.ceil((a.h + BOTTOM_PAD + TOP_MARGIN) * avatarScale),
     };
+    // Wave bar never shows a bubble — always the tight REST box regardless of
+    // the `talking` flag.
+    if (skin === "wave") return rest;
     if (!talking) return rest;
     return {
       w: Math.max(rest.w, Math.ceil(BUBBLE_W * bubbleScale)),
@@ -293,8 +307,10 @@
   // bubble's 200ms fade-in paints); shrinking waits a beat so the fade-OUT
   // finishes inside the still-tall window and quick state churn (e.g.
   // thinking→writing) never causes a shrink-grow stutter.
+  // Wave bar shows NO bubbles/toasts/quips ever — so it never grows the box.
   let bubbleUp = $derived(
-    toastMessage !== "" || hoverQuip !== "" || (skin !== "off" && displayState !== "idle"),
+    skin !== "wave" &&
+      (toastMessage !== "" || hoverQuip !== "" || (skin !== "off" && displayState !== "idle")),
   );
   let talking = $state(false);
   let _shrinkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -445,12 +461,25 @@
   // window) to avoid a needless nudge.
   let _skinInit = false;
   $effect(() => {
-    skin; // track
+    const s = skin; // track
     if (!_skinInit) {
       _skinInit = true;
       return;
     }
     recoverFloater("skin changed");
+    // On skin change, if this skin's positioning class has no saved position,
+    // place it at its class default (wave → top-center; character → corner).
+    // This is what makes switching TO wave land the pill at top-center the
+    // first time, without stomping a saved wave/character position.
+    (async () => {
+      try {
+        if (!localStorage.getItem(posKeyFor(s))) {
+          await placeFloaterDefault(s);
+        }
+      } catch (e) {
+        console.warn("[clippy] skin-change placement failed", e);
+      }
+    })();
   });
 
   // For "real-clippy" — the actual Microsoft Clippy via vendored clippyts.
@@ -647,9 +676,18 @@
 
   onMount(() => {
     skinStore.subscribe();
+    avatarVisibility.subscribe();
     floaterScale.subscribe();
     floaterDebug.subscribe();
     floaterFixedBox.subscribe();
+
+    // Warm arrival on first mount. In `always` mode the window is already
+    // shown by Rust; play the ENTER so the avatar pops in. In `auto` mode the
+    // auto state machine drives enter/exit instead (and the window may be
+    // hidden), so skip here.
+    if (avatarVisibility.current === "always") {
+      playEnter();
+    }
     // Belt-and-suspenders: guarantee the window is resizable so programmatic
     // setSize actually applies. A non-resizable Tauri window silently ignores
     // setSize on Windows — the root cause of "the box never changes size".
@@ -668,6 +706,7 @@
     let unlistenSttProv: (() => void) | undefined;
     let unlistenLlmProv: (() => void) | undefined;
     let unlistenWarn: (() => void) | undefined;
+    let unlistenLevel: (() => void) | undefined;
     listen<string>("wispr:clippy_message", (e) => {
       console.log("[clippy] wispr:clippy_message", e.payload);
       showToast(e.payload, "info", 3000);
@@ -739,6 +778,13 @@
       console.warn("[clippy] wispr:clippy_warning", e.payload);
       showToast(e.payload, "error", 5000);
     }).then((u) => (unlistenWarn = u));
+    // Live mic level for the wave-bar skin (f32 0..1, throttled while
+    // recording). Cheap to keep listening on all skins; only the wave skin
+    // renders it.
+    listen<number>("wispr:level", (e) => {
+      const v = typeof e.payload === "number" ? e.payload : Number(e.payload);
+      if (!Number.isNaN(v)) pushLevel(v);
+    }).then((u) => (unlistenLevel = u));
 
     // Blinks during idle AND listening so Clippy feels alive while attentive.
     // Uses displayState (the visible state) so blinks follow what's drawn.
@@ -812,44 +858,25 @@
     // We also persist via the new persist() that always saves physical.
     (async () => {
       const win = getCurrentWindow();
-      // The webview's CSS world is in logical px; the floater design is 190x210
-      // logical. We need them in physical to compare against monitor bounds.
-      const logicalWinW = 190;
-      const logicalWinH = 210;
+      // Position storage is PER SKIN-CLASS (wave vs character) so switching
+      // between the top-center wave pill and a bottom-corner character doesn't
+      // make them fight over one saved slot. posKeyFor()/placeFloaterDefault()
+      // (lib/floater-place.ts) own the monitor math — single source of truth.
+      // The wave window is short/wide; characters are ~190×210 logical.
+      const curSkin = skinStore.current;
+      const posKey = posKeyFor(curSkin);
+      const logicalWinW = curSkin === "wave" ? 246 : 190;
+      const logicalWinH = curSkin === "wave" ? 72 : 210;
 
       const placeDefault = async () => {
         try {
-          const { availableMonitors, primaryMonitor } = await import(
-            "@tauri-apps/api/window"
-          );
-          const monitors = await availableMonitors();
-          let m = monitors[0];
-          try {
-            const p = await primaryMonitor();
-            if (p) m = p;
-          } catch {
-            /* fall back to monitors[0] */
-          }
-          if (!m) return;
-          const sf = m.scaleFactor ?? 1;
-          const winWPhys = Math.round(logicalWinW * sf);
-          const winHPhys = Math.round(logicalWinH * sf);
-          // Leave a sensible margin from the right + bottom edges, in physical px.
-          const marginXPhys = Math.round(24 * sf);
-          const marginYPhys = Math.round(60 * sf);
-          const x = m.position.x + m.size.width - winWPhys - marginXPhys;
-          const y = m.position.y + m.size.height - winHPhys - marginYPhys;
-          console.info(
-            "[clippy] placeDefault →",
-            { x, y, sf, monitor: { pos: m.position, size: m.size } },
-          );
-          await win.setPosition(new PhysicalPosition(x, y));
+          await placeFloaterDefault(curSkin);
         } catch (e) {
           console.warn("[clippy] default-position placement failed", e);
         }
       };
 
-      const saved = localStorage.getItem("wispr.clippy.pos");
+      const saved = localStorage.getItem(posKey);
       if (!saved) {
         await placeDefault();
         return;
@@ -858,7 +885,7 @@
       try {
         parsed = JSON.parse(saved);
       } catch {
-        localStorage.removeItem("wispr.clippy.pos");
+        localStorage.removeItem(posKey);
         await placeDefault();
         return;
       }
@@ -900,7 +927,7 @@
             parsed,
             "is offscreen; dropping it and using default",
           );
-          localStorage.removeItem("wispr.clippy.pos");
+          localStorage.removeItem(posKey);
           await placeDefault();
         }
       } catch (e) {
@@ -915,9 +942,10 @@
         const pos = await getCurrentWindow().outerPosition();
         // outerPosition() is PHYSICAL px; persist as physical and restore as
         // physical so the two sides agree. Mixing logical/physical here was
-        // the M4 Pro invisible-floater bug.
+        // the M4 Pro invisible-floater bug. Keyed by the CURRENT skin's class
+        // so wave and character positions are remembered separately.
         localStorage.setItem(
-          "wispr.clippy.pos",
+          posKeyFor(skinStore.current),
           JSON.stringify({ x: pos.x, y: pos.y }),
         );
       } catch {
@@ -939,6 +967,10 @@
       unlistenSttProv?.();
       unlistenLlmProv?.();
       unlistenWarn?.();
+      unlistenLevel?.();
+      if (waveRaf != null) cancelAnimationFrame(waveRaf);
+      cancelPendingAutoHide();
+      if (_enterTimer) clearTimeout(_enterTimer);
       disarmWatchdog();
       clearInterval(blinkTimer);
       clearInterval(lookTimer);
@@ -1115,7 +1147,8 @@
   let _quipShowTimer: ReturnType<typeof setTimeout> | null = null;
   let _quipHideTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
-    const idleHover = hovering && displayState === "idle";
+    // Wave bar never quips.
+    const idleHover = skin !== "wave" && hovering && displayState === "idle";
     const pool =
       skin === "codex-fox" ? IDLE_QUIPS_CODEX_FOX :
       skin === "oru-gujia" ? IDLE_QUIPS_ORU_GUJIA :
@@ -1145,6 +1178,223 @@
       hoverQuip = "";
     }
   });
+
+  // ── Wave bar (skin "wave") ──────────────────────────────────────────────
+  // A minimal Wispr-Flow-style pill with a live audio waveform. No text, no
+  // bubbles, no quips — ever. Levels arrive from Rust via `wispr:level`
+  // (f32 0..1, throttled ~90ms while recording). We keep a ring buffer of
+  // recent levels and render ~24 vertical bars, smoothed via rAF so the
+  // motion feels liquid rather than steppy.
+  const WAVE_BARS = 24;
+  // Smoothing factor per rAF tick: how fast a bar chases its target height.
+  const WAVE_LERP = 0.28;
+  // Idle "resting" bar height (0..1) — a faint shimmer line of dots.
+  const WAVE_IDLE = 0.06;
+  // How long a success brighten-pulse lasts.
+  const WAVE_SUCCESS_MS = 650;
+
+  // Target heights (what we're animating toward) and displayed heights (what's
+  // actually painted, lerped toward target each frame). Both 0..1.
+  let waveTargets = $state<number[]>(new Array(WAVE_BARS).fill(WAVE_IDLE));
+  let waveHeights = $state<number[]>(new Array(WAVE_BARS).fill(WAVE_IDLE));
+  // Ring buffer of the most recent live levels (newest last). Fed by wispr:level.
+  let waveRing: number[] = new Array(WAVE_BARS).fill(WAVE_IDLE);
+  let waveSuccessUntil = 0;
+  let waveRaf: number | null = null;
+
+  function pushLevel(v: number) {
+    const clamped = Math.max(0, Math.min(1, v));
+    waveRing.push(clamped);
+    if (waveRing.length > WAVE_BARS) waveRing.shift();
+  }
+
+  // Compute the target bar heights from the current display state. Runs each
+  // rAF tick so transcribing/cleaning sweeps and idle shimmer stay animated
+  // without extra timers.
+  function computeWaveTargets(now: number): number[] {
+    const s = displayState;
+    if (s === "listening") {
+      // Live waveform: history left→right, newest on the right.
+      return waveRing.slice(-WAVE_BARS);
+    }
+    if (s === "thinking" || s === "writing") {
+      // Gentle left-to-right pulse sweep at mid height.
+      const out = new Array(WAVE_BARS);
+      const phase = (now / 900) % 1;
+      for (let i = 0; i < WAVE_BARS; i++) {
+        const pos = i / (WAVE_BARS - 1);
+        const d = Math.abs(pos - phase);
+        const bump = Math.max(0, 1 - d * 6);
+        out[i] = 0.22 + bump * 0.5;
+      }
+      return out;
+    }
+    // idle / pasting: settle to the low shimmer with a slow breathing.
+    const breathe = WAVE_IDLE + 0.03 * (0.5 + 0.5 * Math.sin(now / 1400));
+    return new Array(WAVE_BARS).fill(breathe);
+  }
+
+  function waveTick(now: number) {
+    const targets = computeWaveTargets(now);
+    const next = new Array(WAVE_BARS);
+    for (let i = 0; i < WAVE_BARS; i++) {
+      const cur = waveHeights[i] ?? WAVE_IDLE;
+      next[i] = cur + (targets[i] - cur) * WAVE_LERP;
+    }
+    waveTargets = targets;
+    waveHeights = next;
+    if (skin === "wave") {
+      waveRaf = requestAnimationFrame(waveTick);
+    } else {
+      waveRaf = null;
+    }
+  }
+
+  // Success brighten flag (drives a CSS class). One brief pulse on paste.
+  let waveSuccess = $state(false);
+  $effect(() => {
+    if (skin === "wave" && displayState === "pasting") {
+      waveSuccess = true;
+      waveSuccessUntil = Date.now() + WAVE_SUCCESS_MS;
+      setTimeout(() => {
+        if (Date.now() >= waveSuccessUntil) waveSuccess = false;
+      }, WAVE_SUCCESS_MS);
+    }
+  });
+
+  // Start/stop the rAF loop with the wave skin.
+  $effect(() => {
+    if (skin === "wave") {
+      if (waveRaf == null) waveRaf = requestAnimationFrame(waveTick);
+    } else if (waveRaf != null) {
+      cancelAnimationFrame(waveRaf);
+      waveRaf = null;
+      // Reset so a later switch back starts clean.
+      waveRing = new Array(WAVE_BARS).fill(WAVE_IDLE);
+      waveHeights = new Array(WAVE_BARS).fill(WAVE_IDLE);
+    }
+  });
+
+  // ── Enter / exit arrival animations ─────────────────────────────────────
+  // The avatar always "arrives" warmly (the old Clippy touch). In `auto` mode
+  // these bracket each show/hide; in `always` mode the enter plays once on
+  // first mount so the avatar pops in rather than blinking into existence.
+  const ENTER_MS = 380;
+  const EXIT_MS = 240;
+  // After the flow returns to idle, wait this long (letting the success/status
+  // bubble finish) before playing the exit + hiding in `auto` mode.
+  const AUTO_HIDE_GRACE_MS = 1800;
+
+  let arriveClass = $state<"enter" | "exit" | "">("");
+  let _enterTimer: ReturnType<typeof setTimeout> | null = null;
+  function playEnter() {
+    if (_enterTimer) clearTimeout(_enterTimer);
+    arriveClass = "enter";
+    _enterTimer = setTimeout(() => {
+      arriveClass = "";
+      _enterTimer = null;
+    }, ENTER_MS);
+  }
+  function playExit(): Promise<void> {
+    if (_enterTimer) {
+      clearTimeout(_enterTimer);
+      _enterTimer = null;
+    }
+    arriveClass = "exit";
+    return new Promise((resolve) => setTimeout(resolve, EXIT_MS));
+  }
+
+  // ── Auto-mode visibility state machine ──────────────────────────────────
+  // When visibility === "auto", THIS webview owns show/hide (the window keeps
+  // running JS even while hidden). Show (no focus steal) + ENTER on the first
+  // non-idle state; after returning to idle, wait AUTO_HIDE_GRACE_MS, play
+  // EXIT, then hide. A re-trigger during the grace/exit cancels the pending
+  // hide cleanly.
+  let _autoHideTimer: ReturnType<typeof setTimeout> | null = null;
+  let _autoShown = false; // our belief about whether we've shown the window
+  let _autoExiting = false;
+
+  function cancelPendingAutoHide() {
+    if (_autoHideTimer) {
+      clearTimeout(_autoHideTimer);
+      _autoHideTimer = null;
+    }
+    _autoExiting = false;
+  }
+
+  async function autoShow() {
+    cancelPendingAutoHide();
+    if (_autoShown) {
+      // Already visible; if we were mid-exit, cancel it and re-enter warmly.
+      playEnter();
+      return;
+    }
+    _autoShown = true;
+    try {
+      await getCurrentWindow().show(); // NO setFocus — never steal focus.
+    } catch (e) {
+      console.warn("[clippy] auto show failed", e);
+    }
+    playEnter();
+  }
+
+  function scheduleAutoHide() {
+    cancelPendingAutoHide();
+    _autoHideTimer = setTimeout(async () => {
+      _autoHideTimer = null;
+      _autoExiting = true;
+      await playExit();
+      // Re-check: a re-trigger during the exit animation may have flipped us
+      // back to a non-idle state — bail without hiding.
+      if (!_autoExiting) return;
+      _autoExiting = false;
+      _autoShown = false;
+      arriveClass = "";
+      try {
+        await getCurrentWindow().hide();
+      } catch (e) {
+        console.warn("[clippy] auto hide failed", e);
+      }
+    }, AUTO_HIDE_GRACE_MS);
+  }
+
+  // React to flow state + visibility changes for auto mode.
+  $effect(() => {
+    const vis = avatarVisibility.current;
+    const st = flowState;
+    if (vis === "hidden") {
+      // Self-enforce hidden from this side too. Rust unconditionally shows
+      // the floater at startup (it can't read localStorage), so without this
+      // a "hidden" user would get a permanently-revived avatar every launch.
+      cancelPendingAutoHide();
+      _autoShown = false;
+      getCurrentWindow().hide().catch(() => {});
+      return;
+    }
+    if (vis !== "auto") {
+      // Leaving auto: cancel any pending hide; the main window now owns the
+      // window state via applyVisibilityWindow.
+      cancelPendingAutoHide();
+      return;
+    }
+    if (st !== "idle") {
+      // Active pipeline → make sure we're shown (cancels any pending hide).
+      void autoShow();
+    } else if (_autoShown) {
+      // Returned to idle while shown → schedule the graceful hide.
+      scheduleAutoHide();
+    } else {
+      // Idle and not shown (e.g. just flipped to auto while idle) → hide after
+      // a short grace so the user sees it take effect.
+      cancelPendingAutoHide();
+      _autoHideTimer = setTimeout(async () => {
+        _autoHideTimer = null;
+        try {
+          await getCurrentWindow().hide();
+        } catch {}
+      }, 600);
+    }
+  });
 </script>
 
 <svelte:window oncontextmenu={suppressDocCtx} />
@@ -1152,6 +1402,9 @@
 <div
   class="clippy-stage"
   class:stage-hidden={!stageVisible}
+  class:arrive-enter={arriveClass === "enter"}
+  class:arrive-exit={arriveClass === "exit"}
+  data-arrive-origin={skin === "wave" ? "center" : "bottom"}
   style="--fscale:{fscale}; --bubble-scale:{bubbleScale}; --bubble-bottom:{bubbleBottom}px;"
   role="button"
   tabindex="0"
@@ -1180,7 +1433,7 @@
   <!-- Toast bubble (cross-skin). Renders for transient Rust-emitted
        messages like "Copied to clipboard" — important enough that real-Clippy
        users see it too, not just the SVG skins. -->
-  {#if toastMessage}
+  {#if toastMessage && skin !== "wave"}
     <div class="bubble show" data-state={toastKind === "error" ? "toast-error" : "toast"}>
       <span class="bubble-text">{toastMessage}</span>
       <span class="bubble-emoji">{toastKind === "error" ? "⚠" : "📋"}</span>
@@ -1190,7 +1443,7 @@
   <!-- Soft floor glow/shadow under Clippy — renders for ALL skins (not just
        the SVG paperclip) because it grounds the character visually. Pulses
        gently while listening to reinforce the "alive and attentive" feel. -->
-  {#if skin !== "off"}
+  {#if skin !== "off" && skin !== "wave"}
     <div class="shadow" class:pulse={displayState === "listening"}></div>
   {/if}
 
@@ -2295,6 +2548,27 @@
         </g>
       {/if}
     </svg>
+  {:else if skin === "wave"}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         WAVE BAR — a minimal Wispr-Flow-style pill with a live waveform.
+         NO text, NO bubbles, NO quips, ever. Bars are pure CSS (heights driven
+         by the rAF-smoothed waveHeights[]); accent-orange on a translucent
+         dark pill (cream card on macOS's opaque window).
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div
+      class="wave-pill"
+      class:mac={isMacPlatform}
+      class:success={waveSuccess}
+      data-state={displayState}
+      aria-hidden="true"
+    >
+      {#each waveHeights as h, i (i)}
+        <span
+          class="wave-bar"
+          style="height: {Math.round((0.12 + 0.88 * h) * 100)}%;"
+        ></span>
+      {/each}
+    </div>
   {/if}
 </div>
 
@@ -2484,6 +2758,82 @@
   .clippy-stage.stage-hidden {
     opacity: 0;
     transition: none;
+  }
+
+  /* ── Enter / exit arrival animations ──────────────────────────────────
+     The avatar always "arrives" warmly. Enter = fade + scale-up from 0.6
+     with a slight overshoot pop; exit = fade + scale down to 0.75. Origin
+     is bottom-center for characters (they sit at the window bottom) and
+     center for the wave pill. These are `animation`s (not the `transition`
+     the resize mask uses) so they don't fight the stage-hidden opacity mask. */
+  .clippy-stage[data-arrive-origin="bottom"] {
+    transform-origin: bottom center;
+  }
+  .clippy-stage[data-arrive-origin="center"] {
+    transform-origin: center center;
+  }
+  .clippy-stage.arrive-enter {
+    animation: arrive-enter 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .clippy-stage.arrive-exit {
+    animation: arrive-exit 240ms ease-in both;
+  }
+  @keyframes arrive-enter {
+    0%   { opacity: 0; transform: scale(0.6); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  @keyframes arrive-exit {
+    0%   { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(0.75); }
+  }
+
+  /* ── Wave bar skin ─────────────────────────────────────────────────────
+     Rounded-full translucent dark pill with ~24 accent-orange bars. On macOS
+     (opaque window) it uses the cream card look instead. */
+  .wave-pill {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(3px * var(--fscale, 1));
+    width: calc(230px * var(--fscale, 1));
+    height: calc(52px * var(--fscale, 1));
+    padding: 0 calc(14px * var(--fscale, 1));
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: rgba(20, 14, 8, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  }
+  .wave-pill.mac {
+    background: var(--bg-card, #faf6ec);
+    border-color: rgba(120, 80, 30, 0.18);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: 0 4px 12px rgba(120, 80, 30, 0.18);
+  }
+  .wave-bar {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: calc(4px * var(--fscale, 1));
+    border-radius: 999px;
+    background: var(--accent, #ec7c34);
+    opacity: 0.9;
+    /* Height set inline (0..100% of the pill's inner height). A short CSS
+       transition on top of the rAF lerp keeps sub-frame motion silky. */
+    transition: height 60ms linear;
+    align-self: center;
+  }
+  /* Success brighten pulse: one brief brighten, then settle. */
+  .wave-pill.success .wave-bar {
+    animation: wave-success 650ms ease-out both;
+  }
+  @keyframes wave-success {
+    0%   { opacity: 0.9; filter: brightness(1); }
+    30%  { opacity: 1;   filter: brightness(1.5); }
+    100% { opacity: 0.9; filter: brightness(1); }
   }
 
   /* Floor shadow */

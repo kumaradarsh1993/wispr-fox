@@ -17,7 +17,13 @@
   // visible regardless of where the user right-clicks within the window.
 
   import { api } from "$lib/api";
-  import { skinStore, setClippyWindowVisible, type Skin } from "$lib/skin-store.svelte";
+  import { skinStore, type Skin } from "$lib/skin-store.svelte";
+  import {
+    avatarVisibility,
+    applyVisibilityWindow,
+    type AvatarVisibility,
+  } from "$lib/avatar-visibility.svelte";
+  import { placeFloaterDefault } from "$lib/floater-place";
 
   type RecState =
     | "idle"
@@ -54,8 +60,20 @@
     { id: "duo",         label: "Khaumani & Indy",  emoji: "KI" },
     { id: "oru-gujia",   label: "Oru & Gujia",      emoji: "OG" },
     { id: "spark-buddy", label: "Spark Buddy",      emoji: "Sp" },
-    { id: "off",         label: "Hide",             emoji: "Off" },
+    { id: "wave",        label: "Wave bar",         emoji: "≈" },
   ];
+
+  const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string }[] = [
+    { id: "always", label: "Always show" },
+    { id: "auto",   label: "While dictating" },
+    { id: "hidden", label: "Hidden" },
+  ];
+
+  async function pickVisibility(v: AvatarVisibility) {
+    onClose();
+    await avatarVisibility.set(v);
+    await applyVisibilityWindow(v);
+  }
 
   async function startDictation(mode: "light" | "drafting") {
     onClose();
@@ -79,13 +97,14 @@
 
   async function pickAvatar(s: Skin) {
     onClose();
+    // Skin selection is independent of visibility now.
     await skinStore.set(s);
-    await setClippyWindowVisible(s !== "off");
   }
 
   async function hideFloater() {
     onClose();
-    await setClippyWindowVisible(false);
+    await avatarVisibility.set("hidden");
+    await applyVisibilityWindow("hidden");
   }
 
   // Recover from a "where did the floater go?" situation. Forgets the saved
@@ -96,31 +115,12 @@
   async function resetPosition() {
     onClose();
     try {
-      localStorage.removeItem("wispr.clippy.pos");
-      const { getCurrentWindow, availableMonitors, primaryMonitor, PhysicalPosition } =
-        await import("@tauri-apps/api/window");
-      const monitors = await availableMonitors();
-      // primaryMonitor() is the authoritative answer on multi-display setups;
-      // monitors[0] can be a secondary monitor depending on enumeration order.
-      let m = monitors[0];
-      try {
-        const p = await primaryMonitor();
-        if (p) m = p;
-      } catch {/* fall back to monitors[0] */}
-      if (!m) return;
-      // CRITICAL: mixing PhysicalPosition (from monitor.position/size) with
-      // LogicalPosition (in setPosition) produces a 2× error on Retina Macs
-      // and shoves the floater off-screen — this was the M4 Pro invisible-
-      // floater bug. Use physical px on both sides. Window is 190x210 LOGICAL,
-      // so convert to physical via the monitor's scale factor.
-      const sf = m.scaleFactor ?? 1;
-      const winWPhys = Math.round(190 * sf);
-      const winHPhys = Math.round(210 * sf);
-      const marginXPhys = Math.round(24 * sf);
-      const marginYPhys = Math.round(60 * sf);
-      const x = m.position.x + m.size.width - winWPhys - marginXPhys;
-      const y = m.position.y + m.size.height - winHPhys - marginYPhys;
-      await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
+      const skin = skinStore.current;
+      // Clear the saved position for THIS skin's positioning class, then move
+      // to that class's default (wave → top-center; character → bottom-right).
+      const { posKeyFor } = await import("$lib/floater-place");
+      localStorage.removeItem(posKeyFor(skin));
+      await placeFloaterDefault(skin);
     } catch (e) {
       console.warn("resetPosition failed", e);
     }
@@ -184,6 +184,23 @@
       <span class="ctx-label">Avatar…</span>
       <span class="ctx-arrow">▸</span>
     </button>
+
+    <div class="ctx-sep"></div>
+
+    <div class="ctx-subhead">Show avatar</div>
+    {#each VISIBILITY_OPTIONS as v (v.id)}
+      <button
+        class="ctx-item"
+        class:active={avatarVisibility.current === v.id}
+        onclick={() => pickVisibility(v.id)}
+      >
+        <span class="ctx-glyph">{avatarVisibility.current === v.id ? "●" : "○"}</span>
+        <span class="ctx-label">{v.label}</span>
+        {#if avatarVisibility.current === v.id}
+          <span class="ctx-check">✓</span>
+        {/if}
+      </button>
+    {/each}
 
     <div class="ctx-sep"></div>
 
@@ -311,6 +328,15 @@
     margin: 3px 4px;
   }
 
+  .ctx-subhead {
+    padding: 3px 8px 1px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8a8a8e;
+  }
+
   /* Dark mode picks up OS theme — most apps look this way in dark mode. */
   @media (prefers-color-scheme: dark) {
     .ctxmenu {
@@ -326,6 +352,9 @@
     }
     .ctx-sep {
       background: rgba(255, 255, 255, 0.1);
+    }
+    .ctx-subhead {
+      color: #9a9a9e;
     }
   }
 </style>

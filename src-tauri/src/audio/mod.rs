@@ -20,6 +20,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -55,16 +56,27 @@ enum AudioCmd {
 #[derive(Clone)]
 pub struct AudioController {
     tx: mpsc::Sender<AudioCmd>,
+    /// Live input level (f32 bits, 0.0–1.0), written by the cpal callback
+    /// while a recording is in flight and pinned to 0.0 otherwise. Read by
+    /// the `wispr:level` emitter task that feeds the wave-bar avatar.
+    level: Arc<AtomicU32>,
 }
 
 impl AudioController {
     pub fn spawn() -> Self {
         let (tx, rx) = mpsc::channel::<AudioCmd>();
+        let level = Arc::new(AtomicU32::new(0));
+        let level_for_worker = level.clone();
         std::thread::Builder::new()
             .name("wispr-audio".into())
-            .spawn(move || worker_loop(rx))
+            .spawn(move || worker_loop(rx, level_for_worker))
             .expect("spawn audio thread");
-        Self { tx }
+        Self { tx, level }
+    }
+
+    /// Shared handle to the live mic level for the emitter task.
+    pub fn level_handle(&self) -> Arc<AtomicU32> {
+        self.level.clone()
     }
 
     pub async fn start(&self, path: PathBuf) -> Result<()> {
@@ -94,7 +106,7 @@ struct ActiveRecording {
     _stream: Stream,
 }
 
-fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
+fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
     // True cold-start: build a fresh cpal stream on every F8 press, drop it
     // on release. This handles device changes (user toggling Windows audio
     // settings, plugging headphones, etc.) without needing to restart the app.
@@ -122,7 +134,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
                 }
 
                 // Build a fresh stream + open WAV writer.
-                match begin_cold_recording(&path, &writer) {
+                match begin_cold_recording(&path, &writer, level.clone()) {
                     Ok((stream, sample_rate)) => {
                         let setup_ms = t0.elapsed().as_millis();
                         tracing::info!(?path, setup_ms, sample_rate, "recording started (cold)");
@@ -136,6 +148,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
                     Err(e) => {
                         // Ensure gate is closed if begin_cold_recording partially set it.
                         *writer.lock() = None;
+                        level.store(0, Ordering::Relaxed);
                         tracing::error!("begin_cold_recording failed: {e:#}");
                         let _ = reply.send(Err(e));
                     }
@@ -170,6 +183,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
                 }
                 let ActiveRecording { path, _stream, .. } = rec;
                 drop(_stream);
+                level.store(0, Ordering::Relaxed);
 
                 let _ = reply.send(Ok(FinishedRecording { path, duration_ms }));
             }
@@ -180,7 +194,11 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>) {
 }
 
 /// Build cpal stream, query device fresh, play it. Returns the live stream.
-fn begin_cold_recording(out_path: &Path, writer: &SharedWriter) -> Result<(Stream, u32)> {
+fn begin_cold_recording(
+    out_path: &Path,
+    writer: &SharedWriter,
+    level: Arc<AtomicU32>,
+) -> Result<(Stream, u32)> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -217,9 +235,9 @@ fn begin_cold_recording(out_path: &Path, writer: &SharedWriter) -> Result<(Strea
     };
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, err_fn),
-        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, err_fn),
-        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, err_fn),
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, err_fn),
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     }?;
 
@@ -246,12 +264,13 @@ fn build_stream<T>(
     config: &cpal::StreamConfig,
     writer: SharedWriter,
     input_channels: u16,
+    level: Arc<AtomicU32>,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
     T: cpal::SizedSample + ToI16Sample + Send + 'static,
 {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::AtomicU64;
     use std::time::Instant;
 
     let first_callback = Arc::new(Mutex::new(None::<Instant>));
@@ -290,6 +309,21 @@ where
                 // Fast path: if not recording, discard immediately.
                 let mut guard = writer.lock();
                 let Some(wav) = guard.as_mut() else { return };
+
+                // Live level for the wave-bar avatar: RMS over this ~10ms
+                // buffer, perceptually stretched (sqrt) so normal speech
+                // spans roughly 0.2–0.9. Written only while the gate is
+                // open; worker_loop pins it back to 0 on stop.
+                if !data.is_empty() {
+                    let mut sum_sq = 0.0f32;
+                    for &s in data {
+                        let v = s.to_i16_sample() as f32 / 32768.0;
+                        sum_sq += v * v;
+                    }
+                    let rms = (sum_sq / data.len() as f32).sqrt();
+                    let perceptual = (rms.sqrt() * 2.4).min(1.0);
+                    level.store(perceptual.to_bits(), Ordering::Relaxed);
+                }
 
                 if input_channels <= 1 {
                     for &s in data {

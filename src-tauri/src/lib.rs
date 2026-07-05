@@ -86,6 +86,32 @@ pub fn run() {
 
             let settings = AppSettings::default();
             let audio_ctrl = AudioController::spawn();
+
+            // `wispr:level` feed for the wave-bar avatar. The cpal callback
+            // writes an RMS level into a shared atomic while recording (0.0
+            // otherwise); this task samples it every 90ms and emits only
+            // around activity — one trailing 0.0 lets the wave settle, then
+            // it goes quiet, so idle costs nothing on the event bus.
+            {
+                use tauri::Emitter;
+                let level = audio_ctrl.level_handle();
+                let app_for_level = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut ticker =
+                        tokio::time::interval(std::time::Duration::from_millis(90));
+                    let mut last = 0.0f32;
+                    loop {
+                        ticker.tick().await;
+                        let v = f32::from_bits(
+                            level.load(std::sync::atomic::Ordering::Relaxed),
+                        );
+                        if v > 0.0 || last > 0.0 {
+                            let _ = app_for_level.emit("wispr:level", v);
+                        }
+                        last = v;
+                    }
+                });
+            }
             let usage = UsageTracker::open().unwrap_or_else(|e| {
                 tracing::warn!("usage tracker init failed: {e:#} (continuing)");
                 UsageTracker::open().expect("retry usage tracker init")

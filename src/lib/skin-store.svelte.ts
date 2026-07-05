@@ -14,6 +14,15 @@
 //                   cat loafing on a console slab + an orange tabby kitten
 //                   doing the actual work. Modeled on the user's real cats.
 //   "duo-hd"      — retired pre-stable experiment; saved values migrate to "duo".
+//   "wave"        — minimal Wispr-Flow-style pill with a live audio waveform;
+//                   no character, no bubbles, no quips (feature: wave bar).
+//
+// NOTE: "off" is no longer a user-facing SKIN. Visibility ("always" / "auto" /
+// "hidden") moved to its own axis in avatar-visibility.svelte.ts. The value is
+// kept ONLY so we can parse legacy persisted skins and migrate them: an "off"
+// skin becomes skin "fox" + visibility "hidden" (handled in the visibility
+// store's one-time migration). This store also defensively rewrites any "off"
+// it reads to "fox" so the picker/floater never render an "off" placeholder.
 //
 // Removed in v1.0.0-nightly.5: "beige" — the cream-variant paperclip.
 // Removed in v1.1.0-nightly.5: "duck" — the rubber-duck design didn't
@@ -33,13 +42,13 @@ export type Skin =
   | "duo"
   | "oru-gujia"
   | "spark-buddy"
+  | "wave"
   | "duo-hd";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
 
 const VALID_SKINS: readonly Skin[] = [
-  "off",
   "fox",
   "codex-fox",
   "stylized",
@@ -48,12 +57,16 @@ const VALID_SKINS: readonly Skin[] = [
   "duo",
   "oru-gujia",
   "spark-buddy",
+  "wave",
 ] as const;
 
 function readInitial(): Skin {
   const raw = (typeof localStorage !== "undefined"
     ? localStorage.getItem(STORAGE_KEY)
     : null) as string | null;
+  // Migrate retired "off" skin → "fox". "off" is no longer a skin; its hide
+  // intent is carried onto the visibility axis by avatar-visibility.svelte.ts.
+  if (raw === "off") return "fox";
   // Migrate retired "beige" → "stylized" (same paperclip shape, different theme).
   if (raw === "beige") return "stylized";
   // Migrate retired "duck" → "fox" (closest "cute mascot" cousin).
@@ -79,7 +92,8 @@ class SkinStore {
     this.subscribed = true;
     await listen<string>(EVENT, (e) => {
       let v = e.payload as Skin;
-      // Migrate stale "beige" / "duck" emissions from older windows still running.
+      // Migrate stale "off" / "beige" / "duck" emissions from older windows.
+      if ((v as string) === "off") v = "fox";
       if ((v as string) === "beige") v = "stylized";
       if ((v as string) === "duck") v = "fox";
       if ((v as string) === "cat-lab") v = "cat";
@@ -95,6 +109,7 @@ class SkinStore {
 
   /** Set the skin and broadcast — call from the sidebar picker. */
   async set(s: Skin) {
+    if ((s as string) === "off") s = "fox";
     if ((s as string) === "cat-lab") s = "cat";
     if ((s as string) === "duo-hd") s = "duo";
     this.current = s;
@@ -109,7 +124,11 @@ class SkinStore {
 
 export const skinStore = new SkinStore();
 
-/** Show or hide the Clippy floater window from main-window code. */
+/**
+ * Low-level show/hide of the Clippy floater window from main-window code.
+ * Prefer `applyVisibilityWindow()` in avatar-visibility.svelte.ts — that's
+ * the tri-state-aware entry point. This raw helper is kept for internal use.
+ */
 export async function setClippyWindowVisible(visible: boolean) {
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
