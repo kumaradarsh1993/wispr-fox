@@ -272,14 +272,43 @@
       <span class="when">{timeShort(rec.created_at)}</span>
       <span class="dot">·</span>
       <span class="dur">{durationShort(rec.duration_ms)}</span>
+      <!-- LLM-generated one-line name (auto-title). Arrives a beat after the
+           run finishes; until then the time + duration carry the header. -->
+      {#if rec.title}
+        <span class="dot">·</span>
+        <span class="rec-title" title={rec.title}>{rec.title}</span>
+      {/if}
 
-      <!-- Version tabs inline with the metadata row. Compact, iOS-style
-           segmented control. The original mode badge ("light"/"drafting")
-           is gone — the active tab tells you the same thing without
-           wasting vertical space below the body. Click stops propagation
-           so a tab click doesn't also toggle row expansion. -->
+      {#if rec.retry_count > 0}
+        <span class="retry-count" title="Number of retry attempts">↻ {rec.retry_count}</span>
+      {/if}
+      {#if isError}
+        <span class="err-pill">Failed — see details</span>
+      {/if}
+
+      <!-- (i) details button. Always present; pulses a red dot when
+           there's an error to surface so the user notices without
+           clicking. Clicking expands an inline details panel below
+           the body. -->
+      <button
+        class="info-btn"
+        class:has-news={inspectorHasNews}
+        onclick={(e) => { e.stopPropagation(); showInspector = !showInspector; }}
+        aria-label="Show recording details and event log"
+        aria-expanded={showInspector}
+        title={inspectorHasNews ? "Details (error logged)" : "Details"}
+      >
+        i
+      </button>
+    </div>
+
+    <!-- Right rail: version tabs (always visible, so every card's Raw /
+         Cleaned / Drafted sits at the same aligned x-position) followed by
+         the hover-revealed action buttons. Clicks stop propagation so they
+         don't toggle row expansion. -->
+    <div class="tail" onclick={(e) => e.stopPropagation()} role="presentation">
       {#if rec.transcript || rec.cleaned_text || rec.drafted_text}
-        <span class="tabs-inline" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <span class="tabs-inline">
           <button
             class="tab"
             class:active={activeTab === "raw"}
@@ -312,30 +341,7 @@
         </span>
       {/if}
 
-      {#if rec.retry_count > 0}
-        <span class="retry-count" title="Number of retry attempts">↻ {rec.retry_count}</span>
-      {/if}
-      {#if isError}
-        <span class="err-pill">Failed — see details</span>
-      {/if}
-
-      <!-- (i) details button. Always present; pulses a red dot when
-           there's an error to surface so the user notices without
-           clicking. Clicking expands an inline details panel below
-           the body. -->
-      <button
-        class="info-btn"
-        class:has-news={inspectorHasNews}
-        onclick={(e) => { e.stopPropagation(); showInspector = !showInspector; }}
-        aria-label="Show recording details and event log"
-        aria-expanded={showInspector}
-        title={inspectorHasNews ? "Details (error logged)" : "Details"}
-      >
-        i
-      </button>
-    </div>
-
-    <div class="actions" onclick={(e) => e.stopPropagation()} role="presentation">
+      <div class="actions">
       <button class="action-btn play" onclick={togglePlay} disabled={busy} title="Play / pause audio">
         {#if playing}
           <svg viewBox="0 0 16 16" width="14" height="14"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg>
@@ -406,6 +412,7 @@
             </button>
           </div>
         {/if}
+      </div>
       </div>
     </div>
   </header>
@@ -485,6 +492,18 @@
 
   <!-- (Old "Polished / Base" toggle removed — replaced by the 3-tab bar
        at the top of the body.) -->
+
+  <!-- Expansion affordance: cards look identical collapsed, so hovering a
+       collapsed row surfaces a soft glimmering chevron chip in the bottom-
+       right corner — "there's more here, click to open". Pure decoration
+       (the whole row is already the click target), vanishes on expand. -->
+  {#if !expanded}
+    <span class="expand-hint" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="12" height="12">
+        <path d="M 3 6 L 8 11 L 13 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+  {/if}
 
   {#if audioUrl}
     <audio
@@ -570,12 +589,63 @@
     font-size: 12px;
     color: var(--text-secondary);
     min-width: 0;
-    flex-wrap: wrap;
+    /* nowrap + ellipsis on the title keeps every card's header a single
+       aligned line — no staggered second rows. */
+    flex-wrap: nowrap;
   }
 
   .when {
     font-weight: 500;
     color: var(--text-primary);
+    flex-shrink: 0;
+  }
+
+  /* Auto-title — the "what did I talk about" one-liner. Slightly bolded,
+     truncates with an ellipsis rather than wrapping. */
+  .rec-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  /* Right rail: always-visible version tabs + hover-revealed actions. */
+  .tail {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  /* Glimmering expand affordance (bottom-right, hover-only, collapsed rows). */
+  .expand-hint {
+    position: absolute;
+    right: 10px;
+    bottom: 7px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    background: var(--accent-fade);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+  }
+  .row:hover .expand-hint,
+  .row:focus-visible .expand-hint {
+    opacity: 1;
+    animation: hint-glimmer 1.6s ease-in-out infinite;
+  }
+  @keyframes hint-glimmer {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(236, 124, 52, 0); transform: translateY(0); }
+    50%      { box-shadow: 0 0 10px 1px rgba(236, 124, 52, 0.35); transform: translateY(1.5px); }
   }
 
   .dur, .retry-count {
@@ -929,7 +999,6 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    margin-left: 8px;
   }
 
   .tab {

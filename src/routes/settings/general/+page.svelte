@@ -185,6 +185,19 @@
     </label>
   </div>
 
+  <h3>History</h3>
+
+  <div class="behavior-block">
+    <label class="check-row" title="After each recording, a light Groq model writes a 3-7 word name for it (a separate, parallel call — never delays your paste). Costs roughly a sentence of tokens per recording.">
+      <input
+        type="checkbox"
+        checked={settings.s.auto_title}
+        onchange={(e) => settings.set("auto_title", (e.currentTarget as HTMLInputElement).checked as any)}
+      />
+      <span><strong>Name recordings automatically</strong> — a one-line title on each history card</span>
+    </label>
+  </div>
+
   <h3>Audio cues</h3>
   <p class="lede">A short sound plays when recording starts and stops.</p>
 

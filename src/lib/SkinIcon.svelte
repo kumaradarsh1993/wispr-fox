@@ -133,6 +133,12 @@
     <line x1="42" y1="33" x2="52" y2="32" stroke="#aaa" stroke-width="0.6"/>
     <line x1="42" y1="35" x2="52" y2="36" stroke="#aaa" stroke-width="0.6"/>
   </svg>
+{:else if skin.startsWith("pet-")}
+  <!-- Terminal pets — the sheet's first idle frame, clipped by the viewBox
+       (the <image> is laid out at full sheet size; only frame 0 shows). -->
+  <svg viewBox="0 0 192 208" width={size} height={size} aria-hidden="true">
+    <image href="/pets/{skin.slice(4)}.webp" x="0" y="0" width="1536" height="1872" />
+  </svg>
 {:else if skin === "wave"}
   <!-- Wave bar — five rounded waveform bars, currentColor so the icon
        follows active/hover accents like the nav glyphs do. -->

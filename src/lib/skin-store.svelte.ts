@@ -42,7 +42,16 @@ export type Skin =
   | "oru-gujia"
   | "spark-buddy"
   | "wave"
-  | "siri";
+  | "siri"
+  // Terminal pets — Codex CLI sprite-sheet companions (lib/pets.ts).
+  | "pet-codex"
+  | "pet-dewey"
+  | "pet-fireball"
+  | "pet-rocky"
+  | "pet-seedy"
+  | "pet-stacky"
+  | "pet-bsod"
+  | "pet-null-signal";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
@@ -57,6 +66,14 @@ const VALID_SKINS: readonly Skin[] = [
   "spark-buddy",
   "wave",
   "siri",
+  "pet-codex",
+  "pet-dewey",
+  "pet-fireball",
+  "pet-rocky",
+  "pet-seedy",
+  "pet-stacky",
+  "pet-bsod",
+  "pet-null-signal",
 ] as const;
 
 function readInitial(): Skin {

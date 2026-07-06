@@ -27,7 +27,16 @@ class HistoryStore {
       // Refresh on terminal states only, to avoid query thrash mid-flow.
       if (s === "idle") this.refresh();
     });
-    this.unsub = unlisten;
+    // Auto-titles land a beat AFTER the flow goes idle (parallel LLM call) —
+    // Rust emits this when a title (or other out-of-band edit) is written.
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlistenChanged = await listen("wispr:history_changed", () => {
+      void this.refresh();
+    });
+    this.unsub = () => {
+      unlisten();
+      unlistenChanged();
+    };
   }
 
   async remove(id: string) {

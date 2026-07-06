@@ -33,7 +33,7 @@
   let { children } = $props();
 
   let collapsed = $state(false);
-  let sidebarWidth = $state(276);
+  let sidebarWidth = $state(320);
   let appVersion = $state<string>("");
   let flowBusy = $state(false);
   let resizingSidebar = $state(false);
@@ -93,7 +93,30 @@
     { id: "spark-buddy", label: "Spark Buddy" },
     { id: "wave",        label: "Wave bar" },
     { id: "siri",        label: "Siri Orb" },
+    { id: "pet-codex",       label: "Codex Pet" },
+    { id: "pet-dewey",       label: "Dewey" },
+    { id: "pet-fireball",    label: "Fireball" },
+    { id: "pet-rocky",       label: "Rocky" },
+    { id: "pet-seedy",       label: "Seedy" },
+    { id: "pet-stacky",      label: "Stacky" },
+    { id: "pet-bsod",        label: "BSOD" },
+    { id: "pet-null-signal", label: "Null Signal" },
   ];
+
+  // The sidebar shows a curated handful of avatars, NOT the full roster —
+  // the roster kept growing (pets!) and was making the sidebar scroll. The
+  // full picker lives in Settings → Appearance behind the "…" More tile.
+  // If the current skin isn't featured it takes the last featured slot, so
+  // the active avatar is always visible + highlighted here.
+  const FEATURED_SKINS: Skin[] = ["fox", "codex-fox", "oru-gujia", "pet-codex", "wave", "siri"];
+  let sidebarSkins = $derived.by<Skin[]>(() => {
+    const cur = skinStore.current;
+    if (FEATURED_SKINS.includes(cur)) return FEATURED_SKINS;
+    return [...FEATURED_SKINS.slice(0, FEATURED_SKINS.length - 1), cur];
+  });
+  function skinLabel(id: Skin): string {
+    return SKIN_OPTIONS.find((o) => o.id === id)?.label ?? id;
+  }
 
   // Avatar visibility tri-state ("Always show" / "While dictating" / "Hidden").
   // The single source of truth for whether the floater is on screen — decoupled
@@ -312,7 +335,7 @@
   }
 
   function clampSidebarWidth(width: number): number {
-    return Math.min(380, Math.max(256, Math.round(width)));
+    return Math.min(460, Math.max(256, Math.round(width)));
   }
 
   function setSidebarWidth(width: number) {
@@ -558,17 +581,23 @@
               {/each}
             </div>
             <div class="skin-grid">
-              {#each SKIN_OPTIONS as opt (opt.id)}
+              {#each sidebarSkins as id (id)}
                 <button
                   class="skin-icon-btn"
-                  class:active={skinStore.current === opt.id}
-                  onclick={() => pickSkin(opt.id)}
-                  title={opt.label}
-                  aria-label={opt.label}
+                  class:active={skinStore.current === id}
+                  onclick={() => pickSkin(id)}
+                  title={skinLabel(id)}
+                  aria-label={skinLabel(id)}
                 >
-                  <SkinIcon skin={opt.id} size={22} />
+                  <SkinIcon skin={id} size={22} />
                 </button>
               {/each}
+              <button
+                class="skin-icon-btn skin-more-btn"
+                onclick={() => goto("/settings/appearance")}
+                title="All avatars…"
+                aria-label="All avatars"
+              >…</button>
             </div>
             {#if avatarVisibility.current !== "hidden"}
               <div class="scale-row" role="group" aria-label="Avatar size">
@@ -596,16 +625,22 @@
               {/each}
             </div>
             <div class="skin-grid-collapsed">
-              {#each SKIN_OPTIONS as opt (opt.id)}
+              {#each sidebarSkins as id (id)}
                 <button
                   class="skin-icon-btn"
-                  class:active={skinStore.current === opt.id}
-                  onclick={() => pickSkin(opt.id)}
-                  title={opt.label}
+                  class:active={skinStore.current === id}
+                  onclick={() => pickSkin(id)}
+                  title={skinLabel(id)}
                 >
-                  <SkinIcon skin={opt.id} size={22} />
+                  <SkinIcon skin={id} size={22} />
                 </button>
               {/each}
+              <button
+                class="skin-icon-btn skin-more-btn"
+                onclick={() => goto("/settings/appearance")}
+                title="All avatars…"
+                aria-label="All avatars"
+              >…</button>
             </div>
             {#if avatarVisibility.current !== "hidden"}
               <div class="scale-row-collapsed" role="group" aria-label="Avatar size">
@@ -730,7 +765,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    width: 276px;
+    width: 320px;
     background: var(--bg-sidebar);
     border-right: 1px solid var(--border);
     transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1),
@@ -1281,6 +1316,18 @@
     background: var(--accent-fade);
     color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+
+  /* "More" tile → Settings → Appearance (the full avatar roster incl. pets). */
+  .skin-more-btn {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    line-height: 1;
+  }
+  .skin-more-btn:hover {
+    color: var(--accent);
   }
 
   /* Progress bars for usage */

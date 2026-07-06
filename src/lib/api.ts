@@ -30,6 +30,7 @@ export interface AppSettings {
   auto_clean_in_light: boolean;
   auto_clean_in_advanced: boolean;
   auto_clean_in_drafting: boolean;
+  auto_title: boolean;
   stt_provider: string;
   stt_model: string;
   llm_provider: string;
@@ -76,6 +77,8 @@ export interface Recording {
   clippy_note: string | null;
   retry_count: number;
   error: string | null;
+  /** LLM-generated one-line name; arrives asynchronously after the run. */
+  title: string | null;
 }
 
 export interface SecretCheck {

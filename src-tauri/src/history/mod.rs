@@ -126,6 +126,10 @@ pub struct Recording {
     pub clippy_note: Option<String>,
     pub retry_count: i32,
     pub error: Option<String>,
+    /// LLM-generated one-line descriptor ("what did I talk about here").
+    /// Filled asynchronously after the pipeline completes; None until then
+    /// (or forever, if auto-titling is off / the call failed).
+    pub title: Option<String>,
 }
 
 #[derive(Clone)]
@@ -160,7 +164,8 @@ impl History {
               clippy_used   INTEGER NOT NULL DEFAULT 0,
               clippy_note   TEXT,
               retry_count   INTEGER NOT NULL DEFAULT 0,
-              error         TEXT
+              error         TEXT,
+              title         TEXT
             );
             CREATE INDEX IF NOT EXISTS recordings_created_at_idx
               ON recordings(created_at);
@@ -185,6 +190,8 @@ impl History {
         // column name" if the column already exists — that's expected on
         // every launch after the first, so we ignore the result.
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN drafted_text TEXT", []);
+        // v2.1.0: LLM-generated one-line name for each recording (auto-title).
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN title TEXT", []);
 
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
@@ -319,6 +326,15 @@ impl History {
         Ok(())
     }
 
+    pub fn set_title(&self, id: &str, title: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_error(&self, id: &str, error: &str) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
@@ -353,7 +369,7 @@ impl History {
         let mut stmt = conn.prepare(
             r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
                       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
-                      clippy_used, clippy_note, retry_count, error
+                      clippy_used, clippy_note, retry_count, error, title
                FROM recordings
                ORDER BY created_at DESC
                LIMIT ?1"#,
@@ -502,7 +518,7 @@ impl History {
 const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
        transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
-       clippy_used, clippy_note, retry_count, error
+       clippy_used, clippy_note, retry_count, error, title
 FROM recordings WHERE id = ?1"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
@@ -528,6 +544,7 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         clippy_note: row.get(12)?,
         retry_count: row.get(13)?,
         error: row.get(14)?,
+        title: row.get(15)?,
     })
 }
 

@@ -220,6 +220,46 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
     }
 }
 
+/// Model + prompt for the auto-title nicety. Deliberately a light Groq model
+/// regardless of the user's main LLM pick — naming a note should be fast and
+/// near-free, and Groq is the one key every install has.
+const TITLE_MODEL: &str = "llama-3.1-8b-instant";
+const TITLE_SYSTEM: &str = "You title voice notes. Reply with ONLY a short title \
+for the user's dictation: 3-7 words, plain language, no quotes, no trailing \
+punctuation, written in the same language as the dictation.";
+
+/// One-line descriptor for a finished recording. Ok(None) = transcript too
+/// short to be worth an LLM call (the time/duration header is enough).
+async fn generate_title(text: &str) -> Result<Option<String>> {
+    let trimmed = text.trim();
+    if trimmed.split_whitespace().count() < 8 {
+        return Ok(None);
+    }
+    let key = secrets::get(SecretKey::GroqLlm)?
+        .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
+        .ok_or_else(|| anyhow!("no Groq key for auto-title"))?;
+    // The opening of a dictation carries its topic; don't ship a 15-minute
+    // monologue to the model just to get five words back.
+    let snippet: String = trimmed.chars().take(1200).collect();
+    let llm = GroqLlm::new(key, TITLE_MODEL.to_string());
+    let out = llm.complete(TITLE_SYSTEM, &snippet, 0.3).await?;
+    let title = out
+        .text
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        return Ok(None);
+    }
+    // Hard cap so a rambling model can't blow up the card header.
+    Ok(Some(title.chars().take(80).collect()))
+}
+
 fn selected_model_or(default_model: &str, current: &str, provider_models: &[&str]) -> String {
     if provider_models.iter().any(|m| *m == current) {
         current.to_string()
@@ -770,6 +810,30 @@ impl Flow {
             {
                 tracing::warn!("daily-stats record_session failed (non-fatal): {e:#}");
             }
+        }
+
+        // Auto-title (parallel track): name the recording with a one-line LLM
+        // descriptor so the history card headers read like a table of contents.
+        // Fire-and-forget on a light Groq model — never blocks the paste,
+        // failures are a log line, not a user-visible error.
+        if self.settings.lock().auto_title {
+            let history = self.history.clone();
+            let app_for_title = app.clone();
+            let rid = record_id.clone();
+            let text_for_title = final_text.clone();
+            tauri::async_runtime::spawn(async move {
+                match generate_title(&text_for_title).await {
+                    Ok(Some(title)) => {
+                        if let Err(e) = history.set_title(&rid, &title) {
+                            tracing::warn!("auto-title: db write failed (non-fatal): {e:#}");
+                        } else {
+                            let _ = app_for_title.emit("wispr:history_changed", ());
+                        }
+                    }
+                    Ok(None) => {} // too short to be worth naming
+                    Err(e) => tracing::warn!("auto-title failed (non-fatal): {e:#}"),
+                }
+            });
         }
 
         let _ = app.emit("wispr:state", "injecting");

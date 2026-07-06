@@ -61,6 +61,14 @@
     { id: "spark-buddy", label: "Spark Buddy",      emoji: "Sp" },
     { id: "wave",        label: "Wave bar",         emoji: "≈" },
     { id: "siri",        label: "Siri Orb",         emoji: "◉" },
+    { id: "pet-codex",       label: "Codex Pet",    emoji: "Px" },
+    { id: "pet-dewey",       label: "Dewey",        emoji: "Dw" },
+    { id: "pet-fireball",    label: "Fireball",     emoji: "Fb" },
+    { id: "pet-rocky",       label: "Rocky",        emoji: "Rk" },
+    { id: "pet-seedy",       label: "Seedy",        emoji: "Sd" },
+    { id: "pet-stacky",      label: "Stacky",       emoji: "St" },
+    { id: "pet-bsod",        label: "BSOD",         emoji: "Bs" },
+    { id: "pet-null-signal", label: "Null Signal",  emoji: "Ns" },
   ];
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string }[] = [

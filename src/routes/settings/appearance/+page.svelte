@@ -22,6 +22,18 @@
     { id: "spark-buddy", label: "Spark Buddy", desc: "Original electric companion with polished raster poses, teal glow, and celebratory sparks" },
     { id: "wave",        label: "Wave bar",  desc: "Minimal pill with a live waveform — no character, no bubbles" },
     { id: "siri",        label: "Siri Orb",  desc: "A tiny multicolour orb that blooms with your voice — no character, no bubbles" },
+    // Terminal pets — animated pixel companions (Codex CLI pets; fan-use,
+    // see static/pets/README.md). They wave while listening, ponder while
+    // transcribing, type at a tiny laptop while polishing, and celebrate
+    // every paste.
+    { id: "pet-codex",       label: "Codex Pet",   desc: "The original Codex companion — a cloud-headed terminal robot" },
+    { id: "pet-dewey",       label: "Dewey",       desc: "A tidy duck for calm workspace days" },
+    { id: "pet-fireball",    label: "Fireball",    desc: "Hot path energy for fast dictation" },
+    { id: "pet-rocky",       label: "Rocky",       desc: "A steady rock when the monologue gets long" },
+    { id: "pet-seedy",       label: "Seedy",       desc: "Small green shoots for new ideas" },
+    { id: "pet-stacky",      label: "Stacky",      desc: "A balanced stack for deep work" },
+    { id: "pet-bsod",        label: "BSOD",        desc: "A tiny blue-screen gremlin" },
+    { id: "pet-null-signal", label: "Null Signal", desc: "Quiet signal from the void" },
   ];
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string; desc: string }[] = [

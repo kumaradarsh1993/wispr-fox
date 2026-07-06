@@ -49,6 +49,13 @@ pub struct AppSettings {
     pub auto_clean_in_advanced: bool,
     pub auto_clean_in_drafting: bool,
 
+    /// Auto-name each recording with a one-line LLM descriptor after the
+    /// pipeline finishes (parallel track — never blocks paste). Uses a light
+    /// Groq model regardless of the main LLM selection; costs ~a sentence
+    /// of tokens per recording.
+    #[serde(default = "default_true")]
+    pub auto_title: bool,
+
     // ── Models ────────────────────────────────────────────────────────────
     // Simplified May 2026: ONE STT choice + ONE LLM choice. All three modes
     // (F8 / F9 / F10) use the same LLM client; only the system prompt
@@ -175,6 +182,7 @@ impl Default for AppSettings {
             auto_clean_in_light: false,
             auto_clean_in_advanced: true,
             auto_clean_in_drafting: true,
+            auto_title: true,
             // Simplified globals.
             stt_provider: "groq".to_string(),
             stt_model: "whisper-large-v3-turbo".to_string(),
@@ -232,6 +240,10 @@ fn default_open_silently() -> bool {
 
 fn default_force_clean_hotkey() -> String {
     if cfg!(target_os = "macos") { "Shift+Alt+Space" } else { "Shift+F8" }.to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_force_clean_sticky_hotkey() -> String {

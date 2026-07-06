@@ -11,6 +11,8 @@
   import { floaterScale, floaterDebug, floaterFixedBox } from "$lib/floater-scale.svelte";
   import clippyJs from "$lib/clippyjs-vendor/clippy.js";
   import FloaterContextMenu from "$lib/FloaterContextMenu.svelte";
+  import SpritePet from "$lib/SpritePet.svelte";
+  import { PET_SKINS, isPetSkin, petIdFromSkin, type PetAnimName } from "$lib/pets";
   import RasterAvatar from "$lib/RasterAvatar.svelte";
   import { RASTER_AVATAR_ART, isRasterAvatarSkin } from "$lib/avatar-packs";
 
@@ -254,6 +256,9 @@
     siri:          { w: 58,  h: 58,  head: 0 },
     ...RASTER_AVATAR_ART,
   };
+  // Terminal pets: 192×208 frames at SpritePet's 0.58 zoom → ~111×121.
+  // One shared box; keep in sync with PET_ZOOM in SpritePet.svelte.
+  for (const s of PET_SKINS) ART[s] = { w: 112, h: 122, head: 112 };
   const SIDE_PAD = 8; // L/R breathing room around the character
   const BOTTOM_PAD = 8; // gap below the character (shadow lives at 6px)
   const TOP_MARGIN = 8; // gap above the character/bubble to the window top
@@ -1132,6 +1137,14 @@
     "cream tax payable in words",
     "we caught the thought. mostly",
   ];
+  const IDLE_QUIPS_PETS = [
+    "beep. ready when you are",
+    "your words feed the pet",
+    "I run on dictation",
+    "press F8, I'll do a little dance",
+    "pixel ears, real listening",
+    "idle animation, active heart",
+  ];
   const IDLE_QUIPS_SPARK = [
     "zap me with a thought",
     "battery full. patience medium",
@@ -1148,6 +1161,7 @@
       skin === "codex-fox" ? IDLE_QUIPS_CODEX_FOX :
       skin === "oru-gujia" ? IDLE_QUIPS_ORU_GUJIA :
       skin === "spark-buddy" ? IDLE_QUIPS_SPARK :
+      isPetSkin(skin) ? IDLE_QUIPS_PETS :
       IDLE_QUIPS;
     if (idleHover) {
       if (!_quipShowTimer && !hoverQuip) {
@@ -1304,6 +1318,20 @@
       micLevel = 0;
     }
   });
+
+  // ── Terminal pets: floater state → sprite animation ─────────────────────
+  // The Codex pet sheets map almost 1:1 onto our pipeline states. Error rides
+  // the shared waveError flag (set by the flow_error listener) so a failed
+  // run shows the sad row for a beat; hover while idle gets a playful hop.
+  let petAnim = $derived<PetAnimName>(
+    waveError ? "sad" :
+    displayState === "listening" ? "waving" :
+    displayState === "thinking" ? "waiting" :
+    displayState === "writing" ? "typing" :
+    displayState === "pasting" ? "celebration" :
+    hovering ? "jumping" :
+    "idle",
+  );
 
   // ── Enter / exit arrival animations ─────────────────────────────────────
   // The avatar always "arrives" warmly (the old Clippy touch). In `auto` mode
@@ -1493,7 +1521,7 @@
     </div>
   {/if}
 
-  {#if skin === "stylized" || skin === "fox" || isRasterAvatarSkin(skin) || skin === "cat" || skin === "real-clippy"}
+  {#if skin === "stylized" || skin === "fox" || isRasterAvatarSkin(skin) || isPetSkin(skin) || skin === "cat" || skin === "real-clippy"}
 
     <!-- State-driven bubble — our own consistent dialog box, shown for ALL
          skins including real Clippy (user asked for the same dialog box on
@@ -2053,6 +2081,13 @@
       {/if}
     </svg>
 
+  {:else if isPetSkin(skin)}
+    <!-- ═══════════════════════════════════════════════════════════════════
+         TERMINAL PETS — Codex CLI sprite-sheet companions (lib/pets.ts,
+         SpritePet.svelte). Full character semantics: bubbles, quips, floor
+         shadow, character enter/exit. State mapping via petAnim above.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <SpritePet petId={petIdFromSkin(skin)} anim={petAnim} />
   {:else if skin === "wave"}
     <!-- ═══════════════════════════════════════════════════════════════════
          WAVE BAR — a small Apple-style pill. NO text, NO bubbles, NO quips,
