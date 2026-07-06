@@ -64,9 +64,11 @@ Add `Win` (or `Shift` on Mac) to any combo to make it sticky — tap once to sta
 
 **1. Install.** Download the installer above and run it.
 
-**2. Get a free API key.** Onboarding will deep-link you to <https://console.groq.com/keys> — sign in with Google or GitHub, click "Create API Key", paste it back into wispr-fox.
+**2. Get a free API key.** Onboarding walks you through it with deep links to the right signup and keys pages — pick **Deepgram** (recommended: Nova-3, **$200 free credit**, no card) or **Groq** (free forever). Sign in with Google, create a key, paste it back into wispr-fox. Two minutes.
 
 **3. Press your hotkey and talk.** That's it.
+
+> 💡 **Why Deepgram is the recommended engine:** Nova-3 beats Whisper on both accuracy and speed (noticeably so for Indian-English accents), and heavy daily dictation costs roughly **$1/week**, so the free credit lasts a year or more. Keep Groq as the LLM "brain" for cleanup and drafting — it stays free.
 
 <p align="center">
   <img src="docs/images/onboarding.png" alt="Onboarding flow — Foxy walks you through three steps" width="560" />
@@ -76,7 +78,12 @@ Add `Win` (or `Shift` on Mac) to any combo to make it sticky — tap once to sta
 
 ## 💸 How is this free?
 
-You bring your own AI provider key. Groq's free tier gives you **14,400 transcription requests/day** — that's about 20 hours of dictation, daily. Most people never hit the limit. Heavy daily use: **$3–8/month** if you exceed the free tier. Most users pay **$0**.
+You bring your own AI provider key, and services like Groq and Deepgram offer generous free tiers and credits:
+
+- **Groq** — free forever. The free tier gives you **14,400 transcription requests/day** (about 20 hours of dictation, daily). Most people never hit the limit. It also powers the LLM cleanup/drafting for free.
+- **Deepgram** — **$200 free credit on signup, no credit card**. Even heavy daily dictation runs about **$1/week** on Nova-3, so the credit typically lasts a year or more.
+
+Either way, most users pay **$0**. There's no wispr-fox subscription — your usage bills (if any) go straight to your own provider account.
 
 ---
 
@@ -84,7 +91,7 @@ You bring your own AI provider key. Groq's free tier gives you **14,400 transcri
 
 - 🔐 **API keys** live in your OS keychain — Windows Credential Manager / macOS Keychain. Never logged, never synced.
 - 🎧 **Audio recordings** stay on your machine. Default: 7-day retention, 500 MB cap, both configurable.
-- ☁️ **Only the audio you choose to dictate** is sent to your chosen provider (Groq / Gemini) for transcription. Read their privacy policies — they're the parties that see the audio.
+- ☁️ **Only the audio you choose to dictate** is sent to your chosen provider (Groq, Deepgram, OpenAI, or ElevenLabs for transcription; Groq, Gemini, or OpenAI for cleanup). Read their privacy policies — they're the parties that see your data.
 - 📡 **wispr-fox phones nothing home.** No analytics. No crash reporting. No account. There is no "us" with a server. The repo, the binary, your machine — that's the whole stack.
 
 ---
@@ -111,21 +118,21 @@ That's macOS treating the function row as media keys by default. The Mac default
 <details>
 <summary><strong>Transcription starts with random "Thank you" or other phrases</strong></summary>
 
-Whisper hallucinates on a silent buffer. On Windows, Realtek audio enhancements can put your mic to sleep between recordings — open `mmsys.cpl`, find your mic, uncheck "Allow exclusive control" + check "Disable all enhancements".
+Whisper-family models hallucinate on a silent buffer (Deepgram Nova-3 does this far less — another reason it's the recommended provider). On Windows, Realtek audio enhancements can put your mic to sleep between recordings — open `mmsys.cpl`, find your mic, uncheck "Allow exclusive control" + check "Disable all enhancements".
 
 </details>
 
 <details>
 <summary><strong>Wrong language detected</strong></summary>
 
-Whisper auto-detects by default. If you only speak one language and it's mis-detecting, set Settings → Models → Language Hint.
+The speech model auto-detects by default. If you only speak one language and it's mis-detecting, set Settings → Models → Language Hint.
 
 </details>
 
 <details>
-<summary><strong>Want to use a different AI provider (Gemini)?</strong></summary>
+<summary><strong>Want to use a different AI provider?</strong></summary>
 
-Settings → Providers & Keys → add a Gemini key from <https://aistudio.google.com/apikey>. Gemini handles drafting/cleanup; Groq still handles transcription (Gemini doesn't expose Whisper-equivalent yet).
+Settings → Providers & Keys. For **transcription** you can pick Groq (Whisper), Deepgram (Nova-3 — the recommended one), OpenAI, or ElevenLabs. For **cleanup/drafting** you can pick Groq, Gemini (key from <https://aistudio.google.com/apikey>), or OpenAI. Mix and match — a common combo is Deepgram for listening + Groq for the free LLM brain.
 
 </details>
 
@@ -163,7 +170,7 @@ Full dev notes: [GETTING_STARTED.md](./GETTING_STARTED.md).
 ### Architecture, 90-second tour
 
 - **Frontend** — SvelteKit + Svelte 5 (runes). Routes: `/` redirects to onboarding or history, `/clippy` is the always-on-top floater, `/settings/*` is the config UI.
-- **Backend** — Rust + Tauri 2. Modules: `audio/` (cpal capture → WAV), `stt/groq.rs` (Whisper Large v3 Turbo), `llm/` (Groq Llama + Gemini), `inject/` (SendInput on Windows, CGEvent on macOS), `flow.rs` (state machine), `hotkey.rs` (global shortcuts), `secrets.rs` (keychain).
+- **Backend** — Rust + Tauri 2. Modules: `audio/` (cpal capture → WAV), `stt/` (Groq Whisper, Deepgram Nova-3, OpenAI, ElevenLabs), `llm/` (Groq Llama, Gemini, OpenAI), `inject/` (SendInput on Windows, CGEvent on macOS), `flow.rs` (state machine), `hotkey.rs` (global shortcuts), `secrets.rs` (keychain).
 - **Storage** — SQLite for history, `tauri-plugin-store` for settings, OS keychain for API keys.
 - **CI** — Every tag push builds Win NSIS + macOS DMG + Linux installers on GitHub Actions.
 
@@ -173,7 +180,7 @@ MIT for the code we wrote. The vendored Microsoft Clippy sprite is © Microsoft 
 
 ### Credits
 
-- 🎙️ **Whisper Large v3 Turbo** by [OpenAI](https://openai.com), hosted by [Groq](https://groq.com)
+- 🎙️ **Nova-3** by [Deepgram](https://deepgram.com) and **Whisper Large v3 Turbo** by [OpenAI](https://openai.com), hosted by [Groq](https://groq.com)
 - 🦙 **Llama 3.3** by [Meta AI](https://ai.meta.com)
 - ✨ **Gemini** by [Google DeepMind](https://deepmind.google)
 - 📎 **Clippy sprite** via [clippyts](https://github.com/pi0/clippyts) (vendored + patched)

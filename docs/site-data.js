@@ -47,7 +47,7 @@ window.PRODUCT_SITE = {
   ],
   proof: [
     "Raw transcript, cleanup, and drafting hotkeys",
-    "Bring your own Groq or Gemini key",
+    "Bring your own key: Deepgram, Groq, OpenAI, and more",
     "Fox, Paperclip, real Clippy, and cat avatars",
     "No telemetry, account, or hosted app login"
   ],
@@ -100,7 +100,7 @@ window.PRODUCT_SITE = {
   panels: [
     {
       title: "Free speech-to-text",
-      body: "Groq's free tier can cover normal daily dictation for many users. Heavy use still stays under your own provider account, not a wispr-fox subscription."
+      body: "Services like Groq and Deepgram offer generous free tiers and credits: Groq is free forever for daily dictation, and Deepgram's $200 signup credit covers heavy use for a year or more. Any spend stays under your own provider account, not a wispr-fox subscription."
     },
     {
       title: "Private by design",
@@ -115,7 +115,7 @@ window.PRODUCT_SITE = {
   setupIntro: "Install the app, paste a provider key, choose your hotkeys and avatar, then keep writing wherever you already work.",
   setup: [
     { title: "Install wispr-fox", body: "Use the stable download for your operating system." },
-    { title: "Add a provider key", body: "Start with Groq for Whisper transcription; add Gemini if you want cleanup or drafting options." },
+    { title: "Add a provider key", body: "Groq gets you started free forever; Deepgram Nova-3 (with $200 signup credit) is the recommended transcription upgrade. Groq or Gemini handle cleanup and drafting for free." },
     { title: "Pick hotkeys and avatar", body: "Defaults work, but Settings lets you adjust dictation modes and choose Fox, Paperclip, Clippy, or Cat." },
     { title: "Speak into any text field", body: "Hold the hotkey, talk, release, and let wispr-fox paste the result back where your cursor is." }
   ],

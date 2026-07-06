@@ -1,10 +1,15 @@
 <script lang="ts">
   // 3-screen Foxy onboarding for non-technical users.
   //
-  //  1. Welcome   — "Hi, I'm Foxy." Press a key, speak, get text. Three modes.
-  //  2. Setup     — Smart Groq deep-link: first click opens groq.com; on
-  //                 return, button copy shifts to "now take me to my keys page".
-  //                 Paste field + live validation. Honest "how is this free?".
+  //  1. Welcome   — "Hi, I'm Foxy." Press a key, speak, get text. Three modes,
+  //                 animated entrance, ambient gradient blobs.
+  //  2. Engine    — provider-neutral setup. Two selectable engine cards:
+  //                 Deepgram (Recommended — $200 signup credit, Nova-3, best
+  //                 with Indian accents) and Groq (free forever). Smart
+  //                 deep-links: first click opens signup, second click lands
+  //                 on the keys page. Paste field + live verification. When
+  //                 Deepgram is chosen, an optional third step adds the free
+  //                 Groq "brain" for cleanup/Draft mode.
   //  3. Demo      — Pre-focused textbox + visible 5-sec timer hint. User
   //                 presses F8 right inside the onboarding window, words land
   //                 in the box. wispr:state events drive the recording UI.
@@ -14,10 +19,12 @@
   // testers back here at will.
 
   import { onMount, onDestroy, tick } from "svelte";
+  import { fly } from "svelte/transition";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
+  import { applySttProvider, applySttModel } from "$lib/provider-options";
   import { prettyHotkey, isMac } from "$lib/hotkey-display";
 
   // Where the OS actually stores the key — platform-aware copy in Setup step 2.
@@ -26,8 +33,15 @@
   type Screen = "welcome" | "setup" | "demo";
   let screen = $state<Screen>("welcome");
 
-  // ── Setup state ────────────────────────────────────────────────────────
-  let groqKey = $state("");
+  // ── Engine setup state ───────────────────────────────────────────────────
+  // Two first-class engines. Deepgram is the recommended default (better
+  // accuracy + speed than Whisper, especially for Indian English; $200 free
+  // signup credit ≈ a year of heavy use). Groq stays as the free-forever
+  // path and doubles as the cleanup/draft "brain" either way.
+  type Engine = "deepgram" | "groq";
+  let engine = $state<Engine>("deepgram");
+
+  let primaryKey = $state("");
   let saving = $state(false);
   let keySaved = $state(false);
   type TestState =
@@ -37,13 +51,66 @@
     | { kind: "error"; msg: string };
   let testState = $state<TestState>({ kind: "idle" });
 
-  // Smart-deeplink tracker: bump on each click. On click #2 we change the
-  // button copy from "Get a Groq key" to "Take me to the keys page" so
-  // returning users get a clearer second step. Same URL either way —
-  // console.groq.com/keys auto-redirects through login.
-  let groqClicks = $state(0);
-  async function openGroqKeyPage() {
-    groqClicks++;
+  // Optional "brain" step (only shown on the Deepgram path): a free Groq key
+  // so cleanup + Draft mode work. Groq-path users get this for free (one key
+  // does both jobs).
+  let brainKey = $state("");
+  let brainSaving = $state(false);
+  let brainSaved = $state(false);
+  let brainTest = $state<TestState>({ kind: "idle" });
+
+  // Switching engines resets the paste/verify state (but never un-saves).
+  function pickEngine(e: Engine) {
+    if (engine === e) return;
+    engine = e;
+    if (!keySaved) {
+      primaryKey = "";
+      testState = { kind: "idle" };
+      linkClicks = 0;
+    }
+  }
+
+  const ENGINE_COPY: Record<Engine, {
+    label: string;
+    signupUrl: string;
+    keysUrl: string;
+    placeholder: string;
+    keysHint: string;
+  }> = {
+    deepgram: {
+      label: "Deepgram",
+      signupUrl: "https://console.deepgram.com/signup",
+      keysUrl: "https://console.deepgram.com/",
+      placeholder: "paste your Deepgram key…",
+      keysHint: "Sign up (Google works, no card), land in the console, then “API Keys” in the left menu → “Create a New API Key” → copy it.",
+    },
+    groq: {
+      label: "Groq",
+      signupUrl: "https://console.groq.com/keys",
+      keysUrl: "https://console.groq.com/keys",
+      placeholder: "gsk_...",
+      keysHint: "Sign in, then under “API Keys” click “Create API Key”, copy the key (starts with gsk_…).",
+    },
+  };
+
+  // Smart-deeplink tracker: bump on each click. Click #1 opens signup;
+  // from click #2 the copy shifts to "take me to my keys page" so returning
+  // users get a clearer second step.
+  let linkClicks = $state(0);
+  async function openEnginePage() {
+    const url = linkClicks === 0 ? ENGINE_COPY[engine].signupUrl : ENGINE_COPY[engine].keysUrl;
+    linkClicks++;
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+    } catch {
+      window.open(url, "_blank");
+    }
+  }
+
+  let brainClicks = $state(0);
+  async function openBrainPage() {
+    brainClicks++;
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl("https://console.groq.com/keys");
@@ -53,7 +120,7 @@
   }
 
   async function verifyAndSave() {
-    const k = groqKey.trim();
+    const k = primaryKey.trim();
     if (!k) {
       testState = { kind: "error", msg: "Paste your key first." };
       return;
@@ -61,15 +128,50 @@
     saving = true;
     testState = { kind: "testing" };
     try {
-      const models = await api.testGroqKey(k);
-      await api.saveSecret("groq_stt", k);
-      await api.saveSecret("groq_llm", k);
-      testState = { kind: "ok", count: models.length };
+      if (engine === "deepgram") {
+        const models = await api.testDeepgramKey(k);
+        await api.saveSecret("deepgram_stt", k);
+        // Point the app at Deepgram Nova-3 right away — the whole pitch of
+        // this path is "best ears out of the box".
+        await applySttProvider("deepgram");
+        await applySttModel("nova-3");
+        testState = { kind: "ok", count: models.length };
+      } else {
+        const models = await api.testGroqKey(k);
+        await api.saveSecret("groq_stt", k);
+        await api.saveSecret("groq_llm", k);
+        await applySttProvider("groq");
+        // One Groq key covers listening AND the cleanup brain.
+        brainSaved = true;
+        testState = { kind: "ok", count: models.length };
+      }
       keySaved = true;
     } catch (e) {
       testState = { kind: "error", msg: String(e) };
     } finally {
       saving = false;
+    }
+  }
+
+  async function verifyAndSaveBrain() {
+    const k = brainKey.trim();
+    if (!k) {
+      brainTest = { kind: "error", msg: "Paste your Groq key first." };
+      return;
+    }
+    brainSaving = true;
+    brainTest = { kind: "testing" };
+    try {
+      const models = await api.testGroqKey(k);
+      await api.saveSecret("groq_llm", k);
+      // Also usable as an STT fallback if Deepgram credit ever runs dry.
+      await api.saveSecret("groq_stt", k);
+      brainTest = { kind: "ok", count: models.length };
+      brainSaved = true;
+    } catch (e) {
+      brainTest = { kind: "error", msg: String(e) };
+    } finally {
+      brainSaving = false;
     }
   }
 
@@ -127,9 +229,10 @@
   // "Skip — I'll set this up later" — available from every screen via a small
   // header link. Goes to History (same destination as Finish) but doesn't
   // require keys to be saved. Reported as a major friction point on a Mac
-  // where Groq was blocked at the corporate egress and the user couldn't
-  // verify a key but also couldn't get past the setup screen. Onboarding
-  // can be replayed any time via the sidebar's "↻ Replay onboarding" link.
+  // where the STT provider was blocked at the corporate egress and the user
+  // couldn't verify a key but also couldn't get past the setup screen.
+  // Onboarding can be replayed any time via the sidebar's "↻ Replay
+  // onboarding" link.
   function skipOnboarding() {
     goto("/history");
   }
@@ -156,6 +259,9 @@
     const secrets = await api.checkSecrets();
     if (secrets.any_stt) {
       keySaved = true;
+    }
+    if (secrets.llm) {
+      brainSaved = true;
     }
 
     unlistenState = await listen<string>("wispr:state", (e) => {
@@ -200,6 +306,14 @@
 </script>
 
 <main class="ob">
+  <!-- Ambient drifting colour fields behind everything — the "alive" layer.
+       Pure CSS, pointer-events none, disabled under prefers-reduced-motion. -->
+  <div class="bg-blobs" aria-hidden="true">
+    <span class="blob b1"></span>
+    <span class="blob b2"></span>
+    <span class="blob b3"></span>
+  </div>
+
   <header class="ob-head">
     <div class="brand">
       <img src="/fox/fox-logo.png" alt="" class="brand-fox" />
@@ -207,7 +321,7 @@
     </div>
     <div class="dots">
       <span class="dot {dotClass('welcome')}" title="Welcome"></span>
-      <span class="dot {dotClass('setup')}" title="Setup"></span>
+      <span class="dot {dotClass('setup')}" title="Pick your engine"></span>
       <span class="dot {dotClass('demo')}" title="Try it"></span>
     </div>
     <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
@@ -218,16 +332,20 @@
 
   <!-- ═════ SCREEN 1: Welcome ═════════════════════════════════════════ -->
   {#if screen === "welcome"}
-    <section class="screen welcome">
+    <section class="screen welcome" in:fly={{ y: 22, duration: 380 }}>
       <img src="/fox/fox-hero.png" alt="" class="hero-fox" />
-      <h1>Hi, I'm Foxy.</h1>
+      <h1 class="grad">Hi, I'm Foxy.</h1>
       <p class="tagline">
         Press a key, say what you mean, get it written down.
         Anywhere on your computer.
       </p>
+      <p class="type-demo">
+        <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
+        <span class="type-text">"chalo — let's ship this today"</span>
+      </p>
 
       <div class="mode-row">
-        <div class="mode-card">
+        <div class="mode-card rise" style="--d: 120ms">
           <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
           <h3>Transcribe</h3>
           <p class="example">
@@ -235,7 +353,7 @@
             <span class="written">You get:</span> "the meeting is at 4 pm tomorrow"
           </p>
         </div>
-        <div class="mode-card">
+        <div class="mode-card rise" style="--d: 220ms">
           <kbd>{prettyHotkey(settings.s.force_clean_hotkey)}</kbd>
           <h3>Transcribe + clean</h3>
           <p class="example">
@@ -243,7 +361,7 @@
             <span class="written">You get:</span> "The meeting tomorrow is at 4."
           </p>
         </div>
-        <div class="mode-card">
+        <div class="mode-card rise" style="--d: 320ms">
           <kbd>{prettyHotkey(settings.s.drafting_hotkey)}</kbd>
           <h3>Draft</h3>
           <p class="example">
@@ -253,7 +371,7 @@
         </div>
       </div>
 
-      <p class="bonus">
+      <p class="bonus rise" style="--d: 420ms">
         <strong>Bonus:</strong> Draft mode is a hidden superpower —
         say the gist of what you want and it writes the whole thing for you.
         Email, Slack, doc, anything.
@@ -271,81 +389,122 @@
       </div>
     </section>
 
-  <!-- ═════ SCREEN 2: Setup ═══════════════════════════════════════════ -->
+  <!-- ═════ SCREEN 2: Pick your engine ════════════════════════════════ -->
   {:else if screen === "setup"}
-    <section class="screen setup">
-      <h1>Get set up</h1>
-      <p class="tagline">Two short steps and you're ready.</p>
+    <section class="screen setup" in:fly={{ y: 22, duration: 380 }}>
+      <h1>Pick your engine</h1>
+      <p class="tagline">
+        One key and you're dictating. Both options are genuinely free to
+        start — pick one, we'll walk you to the key.
+      </p>
 
-      <details class="how-free" open>
+      <div class="engine-row">
+        <button
+          class="engine-card rise"
+          style="--d: 100ms"
+          class:selected={engine === "deepgram"}
+          onclick={() => pickEngine("deepgram")}
+        >
+          <div class="engine-head">
+            <span class="engine-name">Deepgram</span>
+            <span class="engine-badge rec">Recommended</span>
+          </div>
+          <p class="engine-pitch">
+            The best ears. Nova-3 is faster and noticeably more accurate than
+            the older Whisper models — especially with Indian accents.
+          </p>
+          <p class="engine-free">
+            <strong>$200 free credit</strong> on signup, no card. Heavy daily
+            use burns about <strong>$1 a week</strong> — it lasts a year+.
+          </p>
+        </button>
+        <button
+          class="engine-card rise"
+          style="--d: 200ms"
+          class:selected={engine === "groq"}
+          onclick={() => pickEngine("groq")}
+        >
+          <div class="engine-head">
+            <span class="engine-name">Groq</span>
+            <span class="engine-badge free">Free forever</span>
+          </div>
+          <p class="engine-pitch">
+            About 2,000 free transcriptions a day (Whisper), resets daily,
+            no card.
+          </p>
+          <p class="engine-free">
+            One key also powers the <strong>cleanup + Draft brain</strong> —
+            the all-in-one option.
+          </p>
+        </button>
+      </div>
+
+      <details class="how-free">
         <summary>How is this free?</summary>
         <p>
-          No secret — we piggyback on the generous personal-tier free
-          credits that AI companies offer. By default we use <strong>Groq</strong>,
-          which gives you <strong>2,000 transcriptions every day</strong> plus
-          ~1,000 cleanups, no credit card, resets daily at midnight UTC.
+          No secret — AI companies like Deepgram, Groq, and Google court
+          developers with generous personal free tiers and signup credits.
+          A dictation app sips tokens, so those allowances go a very long way.
         </p>
         <p>
-          You can change providers later or hook up paid models in Settings.
-          This guide stays simple — we'll set up Groq.
+          You can switch providers or add others (OpenAI, ElevenLabs, Gemini)
+          any time in <strong>Settings → Providers</strong>.
         </p>
       </details>
 
-      <div class="step-block" class:done={keySaved}>
+      <div class="step-block rise" style="--d: 280ms" class:done={keySaved}>
         <div class="step-num">1</div>
         <div class="step-body">
-          <h3>Get a Groq key</h3>
-          {#if groqClicks === 0}
+          <h3>Get your {ENGINE_COPY[engine].label} key</h3>
+          {#if linkClicks === 0}
             <p class="hint">
-              Opens <code>console.groq.com</code> in your browser. If you
-              haven't used Groq before, sign up first (Google or GitHub
-              works) — should take a minute.
+              Opens {ENGINE_COPY[engine].label} in your browser — sign up if
+              you haven't (Google login works, takes a minute), and keep this
+              window open.
             </p>
-            <button class="btn primary" onclick={openGroqKeyPage}>
-              Get my Groq key →
+            <button class="btn primary" onclick={openEnginePage}>
+              Get my {ENGINE_COPY[engine].label} key →
             </button>
           {:else}
             <p class="hint">
-              ✓ Opened Groq in your browser.
-              <strong>Signed up?</strong> Click again — this time it should
-              land you straight on the API keys page.
+              ✓ Opened {ENGINE_COPY[engine].label} in your browser.
+              <strong>Signed up?</strong> Click again to land on the keys page.
             </p>
-            <button class="btn primary" onclick={openGroqKeyPage}>
+            <button class="btn primary" onclick={openEnginePage}>
               Take me to my keys page →
             </button>
             <p class="hint subtle">
-              Still stuck? Sign in, then under "API Keys" click
-              "Create API Key", copy the key (starts with <code>gsk_…</code>),
-              and paste it below.
+              Still stuck? {ENGINE_COPY[engine].keysHint}
             </p>
           {/if}
         </div>
       </div>
 
-      <div class="step-block" class:done={keySaved}>
+      <div class="step-block rise" style="--d: 360ms" class:done={keySaved}>
         <div class="step-num">2</div>
         <div class="step-body">
           <h3>Paste your key</h3>
           <p class="hint">
-            Stored on your machine only ({keyStoreName}) — never sent anywhere except Groq.
+            Stored on your machine only ({keyStoreName}) — never sent anywhere
+            except {ENGINE_COPY[engine].label}.
           </p>
           <div class="paste-row">
             <input
               type="password"
-              placeholder="gsk_..."
-              bind:value={groqKey}
+              placeholder={ENGINE_COPY[engine].placeholder}
+              bind:value={primaryKey}
               disabled={saving || keySaved}
             />
             <button
               class="btn primary"
               onclick={verifyAndSave}
-              disabled={saving || keySaved || !groqKey.trim()}
+              disabled={saving || keySaved || !primaryKey.trim()}
             >
               {#if saving}Verifying…{:else if keySaved}Saved{:else}Verify + save{/if}
             </button>
           </div>
           {#if testState.kind === "ok"}
-            <div class="status ok">✓ Key works — {testState.count} models accessible</div>
+            <div class="status ok">✓ Key works — you're set for transcription</div>
           {:else if testState.kind === "error"}
             <div class="status error">✗ {testState.msg}</div>
           {:else if testState.kind === "testing"}
@@ -354,10 +513,49 @@
         </div>
       </div>
 
-      <p class="tip">
-        Prefer OpenAI, Deepgram, ElevenLabs, or Gemini cleanup?
-        Add them later in <strong>Settings → Providers</strong>.
-      </p>
+      {#if engine === "deepgram"}
+        <div class="step-block rise optional" style="--d: 440ms" class:done={brainSaved}>
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h3>Add the free brain <span class="optional-tag">optional, recommended</span></h3>
+            {#if brainSaved}
+              <p class="hint">✓ Done — cleanup and Draft mode are powered up.</p>
+            {:else}
+              <p class="hint">
+                Deepgram does the listening; cleanup + Draft mode need a
+                language model. Groq's free tier covers that (no card) —
+                grab a key the same way and paste it here. Skipping is fine:
+                plain transcription works without it.
+              </p>
+              <button class="btn ghost" onclick={openBrainPage}>
+                {brainClicks === 0 ? "Get a free Groq key →" : "Take me to the Groq keys page →"}
+              </button>
+              <div class="paste-row">
+                <input
+                  type="password"
+                  placeholder="gsk_..."
+                  bind:value={brainKey}
+                  disabled={brainSaving}
+                />
+                <button
+                  class="btn primary"
+                  onclick={verifyAndSaveBrain}
+                  disabled={brainSaving || !brainKey.trim()}
+                >
+                  {#if brainSaving}Verifying…{:else}Verify + save{/if}
+                </button>
+              </div>
+              {#if brainTest.kind === "ok"}
+                <div class="status ok">✓ Brain online — cleanup + Draft unlocked</div>
+              {:else if brainTest.kind === "error"}
+                <div class="status error">✗ {brainTest.msg}</div>
+              {:else if brainTest.kind === "testing"}
+                <div class="status testing">Testing key…</div>
+              {/if}
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="cta">
         <button class="btn ghost" onclick={() => (screen = "welcome")}>← Back</button>
@@ -373,7 +571,7 @@
 
   <!-- ═════ SCREEN 3: Demo ════════════════════════════════════════════ -->
   {:else if screen === "demo"}
-    <section class="screen demo">
+    <section class="screen demo" in:fly={{ y: 22, duration: 380 }}>
       <h1>Try it now</h1>
       <p class="tagline">
         The box below is already focused. Press
@@ -471,6 +669,75 @@
     max-width: 920px;
     margin: 0 auto;
     overflow: hidden;
+    position: relative;
+  }
+
+  /* ── Ambient drifting colour fields ──────────────────────────────────
+     Three big blurred blobs slowly wandering behind the content. Warm
+     accent tones at low opacity so they read as light, not decoration. */
+  .bg-blobs {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(70px);
+    opacity: 0.16;
+  }
+  .blob.b1 {
+    width: 380px;
+    height: 380px;
+    background: #ec7c34;
+    top: -120px;
+    left: -100px;
+    animation: drift-a 38s ease-in-out infinite alternate;
+  }
+  .blob.b2 {
+    width: 300px;
+    height: 300px;
+    background: #f0b429;
+    bottom: -80px;
+    right: -60px;
+    animation: drift-b 46s ease-in-out infinite alternate;
+  }
+  .blob.b3 {
+    width: 220px;
+    height: 220px;
+    background: #e8956b;
+    top: 40%;
+    left: 55%;
+    opacity: 0.10;
+    animation: drift-a 52s ease-in-out infinite alternate-reverse;
+  }
+  @keyframes drift-a {
+    0%   { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(120px, 60px) scale(1.15); }
+  }
+  @keyframes drift-b {
+    0%   { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(-100px, -70px) scale(1.1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .blob { animation: none; }
+    .rise { animation: none; opacity: 1; }
+    .type-text { animation: none; width: auto; border-right: none; }
+  }
+
+  /* Everything above the blobs. */
+  .ob-head, .screen { position: relative; z-index: 1; }
+
+  /* Staggered entrance for cards/blocks — set --d per element. */
+  .rise {
+    animation: rise-in 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--d, 0ms);
+  }
+  @keyframes rise-in {
+    0%   { opacity: 0; transform: translateY(14px); }
+    100% { opacity: 1; transform: translateY(0); }
   }
 
   .ob-head {
@@ -539,9 +806,7 @@
     padding: 16px 0 48px;
     /* Critical: own the overflow so on a short window the user can scroll
        to the CTA buttons. Previously content pushed Finish off-screen
-       with no scroll bar (reported on a 1366×768 Mac at the Setup screen
-       where the Groq key field + the long "how is this free" details
-       block both wanted vertical space). */
+       with no scroll bar (reported on a 1366×768 Mac at the Setup screen). */
     overflow-y: auto;
     min-height: 0;
     scrollbar-width: thin;
@@ -563,6 +828,13 @@
     margin: 0;
     letter-spacing: -0.02em;
     color: var(--text-primary);
+  }
+  /* Warm gradient headline — the one "award-site" flourish on each screen. */
+  h1.grad {
+    background: linear-gradient(100deg, #d9542b, var(--accent) 45%, #f0a429);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 
   .tagline {
@@ -593,6 +865,29 @@
     text-align: center;
   }
 
+  /* Looping-free typewriter line: types once, keeps a soft blinking caret. */
+  .type-demo {
+    align-self: center;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .type-text {
+    font-family: ui-monospace, "SF Mono", Cascadia, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    border-right: 2px solid var(--accent);
+    width: 31ch;
+    animation:
+      typing 2.2s steps(31, end) 700ms both,
+      caret 900ms step-end infinite;
+  }
+  @keyframes typing { from { width: 0; } to { width: 31ch; } }
+  @keyframes caret { 0%, 100% { border-color: var(--accent); } 50% { border-color: transparent; } }
+
   .mode-row {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -609,6 +904,12 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  }
+  .mode-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent-soft);
+    box-shadow: 0 8px 22px rgba(184, 84, 18, 0.10);
   }
 
   .mode-card kbd {
@@ -659,13 +960,98 @@
     margin: 4px 0 0;
   }
 
-  /* ── Setup ────────────────────────────────────────────────────────── */
+  /* ── Engine setup ─────────────────────────────────────────────────── */
+  .engine-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 6px;
+  }
+  .engine-card {
+    text-align: left;
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 18px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-family: inherit;
+    color: var(--text-primary);
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+  .engine-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-soft);
+  }
+  .engine-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    box-shadow: 0 6px 20px rgba(184, 84, 18, 0.12);
+  }
+  .engine-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .engine-name {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .engine-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 9px;
+    border-radius: 999px;
+  }
+  .engine-badge.rec {
+    background: var(--accent);
+    color: #fff;
+  }
+  .engine-badge.free {
+    background: var(--success-fade);
+    color: var(--success);
+    border: 1px solid var(--success-fade);
+  }
+  .engine-pitch {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+  }
+  .engine-free {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+  }
+  .engine-free strong { color: var(--text-primary); }
+
+  .optional-tag {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    padding: 1px 8px;
+    margin-left: 6px;
+    vertical-align: 2px;
+  }
+  .step-block.optional .paste-row { margin-top: 10px; }
+
   .how-free {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 0;
-    margin-top: 6px;
+    margin-top: 0;
   }
   .how-free > summary {
     cursor: pointer;
@@ -751,13 +1137,6 @@
     font-size: 12px;
     margin-top: 8px;
   }
-  .step-body .hint code {
-    background: var(--bg-subtle);
-    padding: 1px 5px;
-    border-radius: 4px;
-    font-size: 11px;
-    border: 1px solid var(--border-subtle);
-  }
 
   .paste-row {
     display: flex;
@@ -790,17 +1169,6 @@
   .status.ok      { color: var(--success); font-weight: 500; }
   .status.error   { color: var(--danger); }
   .status.testing { color: var(--text-secondary); }
-
-  .tip {
-    background: var(--bg-subtle);
-    border: 1px dashed var(--border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    line-height: 1.5;
-    margin: 0;
-  }
 
   /* ── Demo ─────────────────────────────────────────────────────────── */
   .demo-area {
@@ -938,10 +1306,12 @@
     color: var(--text-primary);
   }
 
-  /* Narrow window — stack the 3 mode cards vertically. */
+  /* Narrow window — stack the cards vertically. */
   @media (max-width: 760px) {
     .mode-row { grid-template-columns: 1fr; }
+    .engine-row { grid-template-columns: 1fr; }
     .hero-fox { width: 90px; }
     h1 { font-size: 28px; }
+    .type-demo { display: none; }
   }
 </style>
