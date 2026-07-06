@@ -251,6 +251,31 @@ cleanly, or they'll be cut off when the next state arrives. For loops
 (`idle-breathe`, `listening-tilt`), there's no upper bound — they can
 run forever.
 
+### Enter / exit hook (v2.1.0+)
+
+Every avatar "arrives" and "leaves" with an animation. The runtime
+plays it at: first launch (visibility "Always show"), every show/hide
+in "While dictating" (auto) mode, and on app quit (the tray Quit
+emits `wispr:farewell` and holds the process ~420 ms so the exit
+finishes on screen).
+
+The runtime sets `data-arrive-skin` on the stage element and toggles
+`.arrive-enter` / `.arrive-exit` classes. The timing contract is fixed:
+**enter ≤ 380 ms, exit ≤ 240 ms**, both `both`-filled — longer
+animations get cut. Built-in classes:
+
+| `data-arrive-skin` | Enter | Exit |
+|---|---|---|
+| `character` (default) | pop up from the ground with overshoot | shrink + fade down |
+| `wave` | pill stretches open from a sliver, bars pop left→right | collapse to a sliver |
+| `siri` | orb blooms open with a twist | shrink + spin away |
+
+Custom packs currently inherit `character`. When the manifest gains
+`enter`/`exit` fields (planned for manifestVersion 2 alongside the
+loader UI), packs will be able to name their own keyframes in
+`animations.css`, scoped the usual way; the runtime will keep the same
+class toggles and timing contract, so nothing you author today breaks.
+
 ---
 
 ## 6. Bubble styling (`bubble` in manifest)

@@ -89,7 +89,6 @@
     { id: "stylized",    label: "Paperclip" },
     { id: "real-clippy", label: "Clippy" },
     { id: "cat",         label: "Desk Cat" },
-    { id: "duo",         label: "Khaumani & Indy" },
     { id: "oru-gujia",   label: "Oru & Gujia" },
     { id: "spark-buddy", label: "Spark Buddy" },
     { id: "wave",        label: "Wave bar" },

@@ -108,7 +108,12 @@ src/routes/
   /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
   /settings/       Providers, Modes, Dictation, Avatar, General, Security
-  /clippy/         Always-on-top floater. Skins: fox/codex-fox/stylized/real-clippy/cat/duo/oru-gujia/spark-buddy/wave
+  /clippy/         Always-on-top floater. Skins: fox/codex-fox/stylized/real-clippy/cat/oru-gujia/spark-buddy/wave/siri
+                   ("duo"/"duo-hd" removed in v2.1.0-nightly.4 — user judged the
+                   hand-drawn duo bad next to the raster Oru & Gujia; saved values
+                   migrate to "oru-gujia". Per-skin-class enter/exit animations via
+                   data-arrive-skin + wispr:farewell on tray Quit — see AVATAR_SDK.md
+                   "Enter / exit hook".)
                    ("off" is retired as a skin — visibility is its own axis, see below;
                    "wave" = translucent no-text pill w/ live waveform from `wispr:level`
                    RMS events (cpal callback → AtomicU32 → 90ms emitter in lib.rs);
@@ -122,7 +127,7 @@ src/routes/
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
                    Bubble: HARD 2-line cap (CSS line-clamp) — BUBBLE_BAND height math
                    depends on it; write all bubble copy to fit two lines. Idle hover
-                   ≥700ms → random quip bubble (IDLE_QUIPS / IDLE_QUIPS_DUO).
+                   ≥700ms → random quip bubble (IDLE_QUIPS + per-skin pools).
 
 src/lib/
   stats.ts                analytics derivation (time-saved, streak, gap-fill)
@@ -282,9 +287,9 @@ invisible always-on-top dead zone that covered content and ate clicks. Rules:
   Credential Manager fails or does not persist, fallback is DPAPI-encrypted
   at `%APPDATA%/com.wispr-fox.app/.keys.enc.json`. Legacy `.keys.json` is
   migration-only and should disappear after verified replacement.
-- **Skin choice** -> localStorage in the Clippy webview. Retired `duo-hd`
-  saved values migrate to `duo`; `duo-hd` is not selectable in the sidebar,
-  context menu, or Settings -> Avatar.
+- **Skin choice** -> localStorage in the Clippy webview. Retired skins
+  migrate on read: `duo`/`duo-hd` -> `oru-gujia`, `cat-lab` -> `cat`,
+  `off` -> `fox` (+ visibility "hidden").
 
 ## Ground rules
 

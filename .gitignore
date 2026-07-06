@@ -20,3 +20,7 @@ src-tauri/gen/schemas/
 # Build / dev logs
 *.log
 *.log.*
+
+# Local-only reference assets — never commit (third-party copyright)
+/Codex pets_*/
+/Foxy screenshots_*/

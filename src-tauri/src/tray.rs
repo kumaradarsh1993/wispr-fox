@@ -74,8 +74,28 @@ pub fn install(app: &AppHandle) -> Result<()> {
             }
             "quit" => {
                 // The window close handler intercepts and hides; explicit quit
-                // bypasses that path and actually exits.
-                app.exit(0);
+                // bypasses that path and actually exits. If the floater is
+                // visible, give it one beat to play its per-skin farewell
+                // animation (EXIT_MS = 240ms in the clippy page) before dying.
+                let farewell = app
+                    .get_webview_window("clippy")
+                    .map(|w| {
+                        let visible = w.is_visible().unwrap_or(false);
+                        if visible {
+                            let _ = w.emit("wispr:farewell", ());
+                        }
+                        visible
+                    })
+                    .unwrap_or(false);
+                if farewell {
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(420));
+                        app.exit(0);
+                    });
+                } else {
+                    app.exit(0);
+                }
             }
             _ => {}
         })

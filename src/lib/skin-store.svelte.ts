@@ -10,10 +10,6 @@
 //   "real-clippy" — Microsoft Clippy via clippyts
 //   "cat"         — SVG charcoal desk cat (green eyes, slit pupils)
 //   "cat-lab"     — retired pre-stable cat experiment; saved values migrate to "cat".
-//   "duo"         — Khaumani & Indy, the two-cat team (v1.4): a serene white
-//                   cat loafing on a console slab + an orange tabby kitten
-//                   doing the actual work. Modeled on the user's real cats.
-//   "duo-hd"      — retired pre-stable experiment; saved values migrate to "duo".
 //   "wave"        — minimal Wispr-Flow-style pill with a live audio waveform;
 //                   no character, no bubbles, no quips (feature: wave bar).
 //
@@ -28,6 +24,10 @@
 // Removed in v1.1.0-nightly.5: "duck" — the rubber-duck design didn't
 // land visually and was retired before stabilising. Saved value migrates
 // to "fox" on load.
+// Removed in v2.1.0-nightly.4: "duo" (Khaumani & Indy) and the already-retired
+// "duo-hd" — the user judged the hand-drawn duo a bad design next to the
+// raster Oru & Gujia pack, which is the same two-cat concept done right.
+// Both saved values migrate to "oru-gujia".
 
 import { emit, listen } from "@tauri-apps/api/event";
 
@@ -39,12 +39,10 @@ export type Skin =
   | "real-clippy"
   | "cat"
   | "cat-lab"
-  | "duo"
   | "oru-gujia"
   | "spark-buddy"
   | "wave"
-  | "siri"
-  | "duo-hd";
+  | "siri";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
@@ -55,7 +53,6 @@ const VALID_SKINS: readonly Skin[] = [
   "stylized",
   "real-clippy",
   "cat",
-  "duo",
   "oru-gujia",
   "spark-buddy",
   "wave",
@@ -75,8 +72,8 @@ function readInitial(): Skin {
   if (raw === "duck") return "fox";
   // Migrate retired "cat-lab" → "cat" (same character family, cleaner picker).
   if (raw === "cat-lab") return "cat";
-  // Retire the remastered two-cat experiment back to the cleaner original duo.
-  if (raw === "duo-hd") return "duo";
+  // Retire both two-cat SVG experiments → the raster Oru & Gujia pack.
+  if (raw === "duo" || raw === "duo-hd") return "oru-gujia";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
   // Default: the watercolor fox — wispr-fox's own mascot, matches the
   // design playbook. Previously defaulted to real Clippy; new users now
@@ -99,7 +96,7 @@ class SkinStore {
       if ((v as string) === "beige") v = "stylized";
       if ((v as string) === "duck") v = "fox";
       if ((v as string) === "cat-lab") v = "cat";
-      if ((v as string) === "duo-hd") v = "duo";
+      if ((v as string) === "duo" || (v as string) === "duo-hd") v = "oru-gujia";
       if (VALID_SKINS.includes(v)) {
         this.current = v;
         try {
@@ -113,7 +110,7 @@ class SkinStore {
   async set(s: Skin) {
     if ((s as string) === "off") s = "fox";
     if ((s as string) === "cat-lab") s = "cat";
-    if ((s as string) === "duo-hd") s = "duo";
+    if ((s as string) === "duo" || (s as string) === "duo-hd") s = "oru-gujia";
     this.current = s;
     try {
       localStorage.setItem(STORAGE_KEY, s);

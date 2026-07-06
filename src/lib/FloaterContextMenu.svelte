@@ -57,7 +57,6 @@
     { id: "stylized",    label: "Paperclip",        emoji: "Pc" },
     { id: "real-clippy", label: "Clippy",           emoji: "Cl" },
     { id: "cat",         label: "Desk Cat",         emoji: "Ct" },
-    { id: "duo",         label: "Khaumani & Indy",  emoji: "KI" },
     { id: "oru-gujia",   label: "Oru & Gujia",      emoji: "OG" },
     { id: "spark-buddy", label: "Spark Buddy",      emoji: "Sp" },
     { id: "wave",        label: "Wave bar",         emoji: "≈" },
