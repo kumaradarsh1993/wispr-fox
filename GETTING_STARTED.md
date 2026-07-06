@@ -328,11 +328,15 @@ cd src-tauri && cargo clean
 
 ## Sibling docs in this repo
 
+- [HANDOVER.md](./HANDOVER.md) — current state + how to resume. Start here.
+- [CLAUDE.md](./CLAUDE.md) — deep architecture, conventions, gotchas.
 - [README.md](./README.md) — end-user GitHub README. Keep this in sync
   with shipped features.
-- [LINKEDIN_POST.md](./LINKEDIN_POST.md) — three launch-post variations.
-- [skins/SPEC.md](./skins/SPEC.md) + [skins/BRIEF.md](./skins/BRIEF.md) —
-  for commissioning Rive/Lottie animators.
+- [docs/ROADMAP.md](./docs/ROADMAP.md) — what's planned.
+- [docs/AVATAR_SDK.md](./docs/AVATAR_SDK.md) — avatar manifest contract
+  (the raster + sprite-pet avatar system; the old Rive-commissioning
+  `skins/` + `skins-lab/` briefs were retired in the 2026-07-06 doc cleanup —
+  recover from git history if that path ever revives).
 
 ## Sibling project
 

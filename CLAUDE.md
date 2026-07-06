@@ -16,11 +16,15 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 **Current stable: `v2.0.0`** (Latest, 2026-06-30) — user-confirmed working,
 promoted from the Codex `v1.4.0-nightly.12` line plus the final v2.0.0
 floater bubble/readability correction. Single owner, no paid users.
-**Nightly: `v2.1.0-nightly.1`** (2026-07-05, commits `0e29a29`+`e7f6b72`) —
-UX-audit batch (see `docs/UX_AUDIT_2026-07-05.md`; canonical mode names are
-now **Transcribe**/**Draft** everywhere, Raw/Cleaned/Drafted are version tabs
-only; sidebar widened, user explicitly keeps its quick settings) + avatar
-visibility tri-state + the "wave" skin. CI REQUIRES
+**Nightly: `v2.1.0-nightly.6`** (2026-07-06) — the whole v2.1.0 line is
+unreleased-to-stable (needs a "ship it" signal + user testing). Canonical mode
+names are now **Transcribe**/**Draft** everywhere (Raw/Cleaned/Drafted are
+version tabs only); sidebar widened (user explicitly keeps its quick settings);
+avatar-visibility tri-state; **wave** + **siri** minimal skins; **Codex pixel
+pets** (8 sprite-sheet avatars in `static/pets/`, `lib/pets.ts` +
+`SpritePet.svelte`); **auto-title** (parallel Groq call names each recording);
+reimagined "Pick your engine" onboarding (Deepgram recommended vs Groq). The
+per-nightly breakdown of the v2.1.0 cycle lives in `HANDOVER.md`. CI REQUIRES
 `docs/RELEASE_NOTES_<tag>.md` to exist at any tag, and version bumps must hit
 package.json + tauri.conf.json + **Cargo.toml** (missing Cargo.toml at v2.0.0
 caused a permanent phantom "update available" banner).
@@ -44,10 +48,12 @@ Codex-authored nightlies must keep Codex visible in the release title/notes. Do
 not promote any Codex nightly to stable without the user's explicit "ship it"
 signal.
 
-Read `docs/CODEX_HANDOVER_2026-06-29.md` before handing this repo back to
-Claude. It captures the user's prompts, what Codex changed, why the Windows
-key-management fallback was redesigned, the GitHub plaintext-key audit, and
-the settings/sidebar cleanup decisions.
+(The full 2026-06-29 Codex handover — the user's prompts, what Codex changed,
+why the Windows key-management fallback was redesigned, the GitHub plaintext-key
+audit, and the settings/sidebar cleanup decisions — used to live in
+`docs/CODEX_HANDOVER_2026-06-29.md`. It was pruned in the 2026-07-06 doc
+cleanup; recover it from git history if ever needed. The distilled outcomes are
+the "What v2.0.0 shipped" list below.)
 
 **What v2.0.0 shipped** (this is the live baseline; details below):
 - **Provider expansion** — Groq remains supported, and OpenAI, Deepgram, and
@@ -459,11 +465,10 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-06-30 Codex v2.0.0 stable promotion + handover reset. See*
-*docs/CODEX_HANDOVER_2026-06-29.md for the full prompts, decisions,*
-*GitHub plaintext-key audit, settings cleanup notes, avatar QA, v1.4.0 draft*
-*cancellation, and stable promotion notes. Update when*
-*conventions or architecture change - not on every fix.*
+*Last touched: 2026-07-06 doc cleanup — pruned stale/superseded docs, added*
+*`HANDOVER.md` as the current-state entry point. Update this file when*
+*conventions or architecture change — not on every fix; day-to-day state*
+*lives in `HANDOVER.md` + release notes.*
 
 ## Open threads (post-v2.0.0, for the next session)
 

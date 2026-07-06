@@ -1,6 +1,6 @@
 // Terminal pet sprite-sheet catalog — the Codex CLI pets, rendered by
 // SpritePet.svelte as floater avatars. Sheet format reverse-engineered from
-// the Codex CLI (docs/PIXEL_PETS_PLAN.md): every sheet is 1536×1872 WEBP,
+// the Codex CLI: every sheet is 1536×1872 WEBP,
 // 8 columns × 9 rows of 192×208 frames, rows = animations. All eight
 // built-in pets share the exact same grid and frame counts (verified by
 // alpha-scanning every sheet), so ONE animation table serves them all.
