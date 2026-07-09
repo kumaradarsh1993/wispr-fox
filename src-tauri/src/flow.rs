@@ -325,6 +325,43 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
     }
 }
 
+/// Lightweight per-recording flight recorder. Collects timestamped one-line
+/// events (`ms` = elapsed since pipeline start) plus the two headline stage
+/// durations, so the History (i) inspector can explain a slow or failed run
+/// after the fact — "STT 19.2s / cleanup 0.9s / total 20.4s" + a timeline.
+/// Persisted once near the end of `do_pipeline` and on every error return.
+struct Timeline {
+    start: std::time::Instant,
+    events: Vec<serde_json::Value>,
+    stt_ms: Option<i64>,
+    cleanup_ms: Option<i64>,
+}
+
+impl Timeline {
+    fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            events: Vec::new(),
+            stt_ms: None,
+            cleanup_ms: None,
+        }
+    }
+
+    fn mark(&mut self, msg: impl Into<String>) {
+        let ms = self.start.elapsed().as_millis() as u64;
+        self.events
+            .push(serde_json::json!({ "ms": ms, "msg": msg.into() }));
+    }
+
+    fn total_ms(&self) -> i64 {
+        self.start.elapsed().as_millis() as i64
+    }
+
+    fn json(&self) -> String {
+        serde_json::to_string(&self.events).unwrap_or_else(|_| "[]".to_string())
+    }
+}
+
 #[derive(Default)]
 struct FlowState {
     active: Option<InFlight>,
@@ -609,6 +646,21 @@ impl Flow {
         outcome
     }
 
+    /// Write the flight-recorder timings/event-log for a recording. Best-effort:
+    /// a failure here is a log line, never a pipeline error (diagnostics must
+    /// not break the thing they're diagnosing).
+    fn persist_timeline(&self, record_id: &str, tl: &Timeline) {
+        if let Err(e) = self.history.set_timings(
+            record_id,
+            tl.stt_ms,
+            tl.cleanup_ms,
+            Some(tl.total_ms()),
+            &tl.json(),
+        ) {
+            tracing::warn!("set_timings failed (non-fatal): {e:#}");
+        }
+    }
+
     async fn do_pipeline(&self, app: &AppHandle, in_flight: InFlight) -> Result<()> {
         let InFlight {
             mode,
@@ -618,11 +670,19 @@ impl Flow {
             force_clean,
         } = in_flight;
 
+        // Flight recorder for this run — start the clock now (recording just
+        // stopped), so `total_ms` measures true end-to-end turnaround.
+        let mut tl = Timeline::new();
+
         let _ = app.emit("wispr:state", "transcribing");
 
         let FinishedRecording { path, duration_ms } = self.audio.stop().await?;
         crate::audio::cues::play_stop();
         self.history.set_duration(&record_id, duration_ms)?;
+        tl.mark(format!(
+            "audio finalized · {:.1}s captured",
+            (duration_ms.max(0) as f64) / 1000.0
+        ));
 
         // Trim trailing silence before sending to Whisper — prevents
         // hallucinations like "thank you" / "gracias" on silent tails.
@@ -661,6 +721,12 @@ impl Flow {
             "sending WAV to speech-to-text provider"
         );
 
+        tl.mark(format!(
+            "STT request → {} ({})",
+            pretty_provider(stt_name),
+            stt_settings.stt_model
+        ));
+
         // 120s hard cap on STT. Single-request Whisper rarely takes more
         // than ~15s for 5-min audio; the wider ceiling accommodates the
         // multi-chunk path (files > 20 MB get split and transcribed
@@ -668,24 +734,52 @@ impl Flow {
         // (DNS hang, upstream stall) and we'd rather surface an error than
         // let Clippy spin forever. reqwest itself doesn't apply a default
         // request timeout, so without this the call could hang indefinitely.
+        //
+        // The STT wall-time is the single most useful debugging number, so we
+        // measure it explicitly and record it on the timeline for EVERY outcome
+        // (ok / provider error / 120s timeout) before propagating.
+        let stt_t0 = std::time::Instant::now();
         let stt_future = stt.transcribe(&path, stt_settings.language_hint.as_deref());
-        let transcript = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future)
-            .await
-            .map_err(|_| {
-                anyhow!("Whisper STT timed out after 120s — check network or try a shorter clip")
-            })?
-            .with_context(|| {
-                format!(
-                    "{provider} transcription request",
-                    provider = pretty_provider(stt_name)
-                )
-            })?;
+        let stt_result = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future).await;
+        let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
+        tl.stt_ms = Some(stt_elapsed);
+
+        let transcript = match stt_result {
+            Err(_) => {
+                tl.mark(format!("STT TIMED OUT after {stt_elapsed}ms (120s cap)"));
+                self.persist_timeline(&record_id, &tl);
+                return Err(anyhow!(
+                    "Whisper STT timed out after 120s — check network or try a shorter clip"
+                ));
+            }
+            Ok(Err(e)) => {
+                tl.mark(format!(
+                    "STT FAILED after {stt_elapsed}ms · {}",
+                    e.to_string().lines().next().unwrap_or("error")
+                ));
+                self.persist_timeline(&record_id, &tl);
+                return Err(anyhow::Error::new(e)).with_context(|| {
+                    format!(
+                        "{provider} transcription request",
+                        provider = pretty_provider(stt_name)
+                    )
+                });
+            }
+            Ok(Ok(t)) => {
+                tl.mark(format!(
+                    "STT ok · {stt_elapsed}ms · {} chars",
+                    t.text.chars().count()
+                ));
+                t
+            }
+        };
 
         tracing::info!(
             record_id,
             chars = transcript.text.chars().count(),
             language = ?transcript.language,
             duration_secs = ?transcript.duration_seconds,
+            stt_ms = stt_elapsed,
             provider = stt_name,
             "speech-to-text response"
         );
@@ -748,6 +842,8 @@ impl Flow {
             } else {
                 None
             };
+            tl.mark(format!("cleanup request → {} ({})", llm.name(), model));
+            let clean_t0 = std::time::Instant::now();
             let cleaned = clippy::clean(
                 &transcript.text,
                 ClippyMode::from(mode),
@@ -756,6 +852,16 @@ impl Flow {
                 llm.as_ref(),
             )
             .await;
+            let clean_elapsed = clean_t0.elapsed().as_millis() as i64;
+            tl.cleanup_ms = Some(clean_elapsed);
+            if cleaned.used_clippy {
+                tl.mark(format!("cleanup ok · {clean_elapsed}ms"));
+            } else {
+                tl.mark(format!(
+                    "cleanup skipped · {clean_elapsed}ms · {}",
+                    cleaned.note.as_deref().unwrap_or("no LLM output")
+                ));
+            }
             self.usage
                 .record_llm(llm.name(), &model, cleaned.usage.as_ref());
             // Cleanup couldn't run (timeout, auth, rate limit, upstream) but
@@ -892,10 +998,12 @@ impl Flow {
             );
             match inject::clipboard::set_only(&final_text) {
                 Ok(()) => {
+                    tl.mark("delivered · clipboard (navigated away)");
                     let _ = app.emit("wispr:clippy_message", "Copied to clipboard");
                     self.history.update_status(&record_id, Status::Done)?;
                 }
                 Err(e) => {
+                    tl.mark(format!("clipboard delivery FAILED · {e}"));
                     tracing::warn!("silent clipboard set failed: {e:#}");
                     self.history
                         .set_error(&record_id, &format!("clipboard: {e}"))?;
@@ -904,6 +1012,7 @@ impl Flow {
         } else {
             match inject::inject(&final_text, inj_settings.keep_in_clipboard) {
                 Ok(channel) => {
+                    tl.mark(format!("delivered · {channel:?}"));
                     tracing::info!(
                         ?channel,
                         chars = final_text.chars().count(),
@@ -913,12 +1022,18 @@ impl Flow {
                     self.history.update_status(&record_id, Status::Done)?;
                 }
                 Err(e) => {
+                    tl.mark(format!("injection FAILED · {e}"));
                     tracing::warn!("injection failed: {e:#}");
                     self.history
                         .set_error(&record_id, &format!("injection: {e}"))?;
                 }
             }
         }
+
+        // Flight recorder: persist the full timeline + stage durations now that
+        // delivery is done. This is the success path; error returns above have
+        // already persisted their partial timeline.
+        self.persist_timeline(&record_id, &tl);
 
         // wrapper emits idle
         Ok(())
@@ -1003,19 +1118,47 @@ impl Flow {
             .update_status(record_id, Status::Transcribing)?;
         let _ = app.emit("wispr:state", "transcribing");
 
+        // Flight recorder for the retry attempt too, so the (i) inspector shows
+        // the fresh timing (and overwrites the failed original's timeline).
+        let mut tl = Timeline::new();
+
         let stt_settings = self.settings();
         let stt = build_stt_provider(&stt_settings)?;
         let stt_name = stt.name();
+        tl.mark(format!(
+            "retry STT request → {} ({})",
+            pretty_provider(stt_name),
+            stt_settings.stt_model
+        ));
 
-        let transcript = stt
+        let stt_t0 = std::time::Instant::now();
+        let stt_res = stt
             .transcribe(&rec.audio_path, stt_settings.language_hint.as_deref())
-            .await
-            .with_context(|| {
-                format!(
-                    "{provider} transcription retry",
-                    provider = pretty_provider(stt_name)
-                )
-            })?;
+            .await;
+        let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
+        tl.stt_ms = Some(stt_elapsed);
+        let transcript = match stt_res {
+            Ok(t) => {
+                tl.mark(format!(
+                    "retry STT ok · {stt_elapsed}ms · {} chars",
+                    t.text.chars().count()
+                ));
+                t
+            }
+            Err(e) => {
+                tl.mark(format!(
+                    "retry STT FAILED after {stt_elapsed}ms · {}",
+                    e.to_string().lines().next().unwrap_or("error")
+                ));
+                self.persist_timeline(record_id, &tl);
+                return Err(anyhow::Error::new(e)).with_context(|| {
+                    format!(
+                        "{provider} transcription retry",
+                        provider = pretty_provider(stt_name)
+                    )
+                });
+            }
+        };
         self.usage.record_stt(
             stt_name,
             &stt_settings.stt_model,
@@ -1049,6 +1192,8 @@ impl Flow {
             // hours ago into a different app), so skip the app-context
             // hint here. The user can always trigger a fresh F9 if they
             // want app-adapted output.
+            tl.mark(format!("retry cleanup request → {} ({})", llm.name(), model));
+            let clean_t0 = std::time::Instant::now();
             let cleaned = clippy::clean(
                 &transcript.text,
                 ClippyMode::from(mode),
@@ -1057,6 +1202,9 @@ impl Flow {
                 llm.as_ref(),
             )
             .await;
+            let clean_elapsed = clean_t0.elapsed().as_millis() as i64;
+            tl.cleanup_ms = Some(clean_elapsed);
+            tl.mark(format!("retry cleanup done · {clean_elapsed}ms"));
             self.usage
                 .record_llm(llm.name(), &model, cleaned.usage.as_ref());
             let alt = if matches!(mode, Mode::Drafting) {
@@ -1081,6 +1229,7 @@ impl Flow {
         // not waiting at a target field. Leave injection up to the manual
         // "copy" button.
         let _ = final_text;
+        self.persist_timeline(record_id, &tl);
         self.history.update_status(record_id, Status::Done)?;
         let _ = app.emit("wispr:state", "idle");
         Ok(())

@@ -130,6 +130,20 @@ pub struct Recording {
     /// Filled asynchronously after the pipeline completes; None until then
     /// (or forever, if auto-titling is off / the call failed).
     pub title: Option<String>,
+    /// Wall-clock milliseconds the STT (speech-to-text) request took, start
+    /// to finish. This is the single most useful debugging number: a slow
+    /// transcription shows up here directly. None until STT completes.
+    pub stt_ms: Option<i64>,
+    /// Wall-clock milliseconds the LLM cleanup/draft request took. None when
+    /// cleanup didn't run (raw-only) or hasn't finished.
+    pub cleanup_ms: Option<i64>,
+    /// End-to-end turnaround in ms — from the moment recording stopped to the
+    /// moment text was delivered. Lets the user see "20s total, 19s of it STT".
+    pub total_ms: Option<i64>,
+    /// Compact JSON array of timeline events, `[{"ms":123,"msg":"…"}]`, where
+    /// `ms` is elapsed-since-pipeline-start. A per-recording flight recorder so
+    /// a slow/failed run can be diagnosed after the fact. None on old rows.
+    pub event_log: Option<String>,
 }
 
 #[derive(Clone)]
@@ -165,7 +179,11 @@ impl History {
               clippy_note   TEXT,
               retry_count   INTEGER NOT NULL DEFAULT 0,
               error         TEXT,
-              title         TEXT
+              title         TEXT,
+              stt_ms        INTEGER,
+              cleanup_ms    INTEGER,
+              total_ms      INTEGER,
+              event_log     TEXT
             );
             CREATE INDEX IF NOT EXISTS recordings_created_at_idx
               ON recordings(created_at);
@@ -192,6 +210,12 @@ impl History {
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN drafted_text TEXT", []);
         // v2.1.0: LLM-generated one-line name for each recording (auto-title).
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN title TEXT", []);
+        // v2.1.0-nightly.7: per-recording timing + event-log flight recorder,
+        // so slow/failed transcriptions are diagnosable from the (i) inspector.
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN stt_ms INTEGER", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN cleanup_ms INTEGER", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN total_ms INTEGER", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN event_log TEXT", []);
 
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
@@ -335,6 +359,29 @@ impl History {
         Ok(())
     }
 
+    /// Persist the per-recording timing breakdown + event-log JSON. Written
+    /// once near the end of the pipeline (and on the error path) so the (i)
+    /// inspector can show "STT 19.2s / cleanup 0.9s / total 20.4s" plus the
+    /// timeline. All-optional so partial data (e.g. STT timed out, no cleanup)
+    /// still records what we know.
+    pub fn set_timings(
+        &self,
+        id: &str,
+        stt_ms: Option<i64>,
+        cleanup_ms: Option<i64>,
+        total_ms: Option<i64>,
+        event_log: &str,
+    ) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            r#"UPDATE recordings
+               SET stt_ms = ?1, cleanup_ms = ?2, total_ms = ?3, event_log = ?4
+               WHERE id = ?5"#,
+            params![stt_ms, cleanup_ms, total_ms, event_log, id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_error(&self, id: &str, error: &str) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
@@ -369,7 +416,8 @@ impl History {
         let mut stmt = conn.prepare(
             r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
                       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
-                      clippy_used, clippy_note, retry_count, error, title
+                      clippy_used, clippy_note, retry_count, error, title,
+                      stt_ms, cleanup_ms, total_ms, event_log
                FROM recordings
                ORDER BY created_at DESC
                LIMIT ?1"#,
@@ -518,7 +566,8 @@ impl History {
 const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
        transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
-       clippy_used, clippy_note, retry_count, error, title
+       clippy_used, clippy_note, retry_count, error, title,
+       stt_ms, cleanup_ms, total_ms, event_log
 FROM recordings WHERE id = ?1"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
@@ -545,6 +594,10 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         retry_count: row.get(13)?,
         error: row.get(14)?,
         title: row.get(15)?,
+        stt_ms: row.get(16)?,
+        cleanup_ms: row.get(17)?,
+        total_ms: row.get(18)?,
+        event_log: row.get(19)?,
     })
 }
 

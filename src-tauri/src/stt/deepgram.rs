@@ -14,6 +14,28 @@ pub const DEFAULT_MODEL: &str = "nova-3";
 const TIMEOUT: Duration = Duration::from_secs(90);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// Process-wide pooled client. Previously a fresh `reqwest::Client` was built
+/// for EVERY recording, so every dictation paid a full DNS + TCP + TLS
+/// handshake to api.deepgram.com with zero connection reuse — a real chunk of
+/// the intermittent tail latency, especially from a high-RTT link. A shared
+/// client keeps warm keep-alive connections in its pool, so back-to-back
+/// dictations skip the handshake entirely. Cloning it is cheap (it's an Arc)
+/// and the pool is shared across clones. Key/model stay per-request, so one
+/// client serves every user and model.
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> reqwest::Client {
+    SHARED_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(TIMEOUT)
+                .connect_timeout(CONNECT_TIMEOUT)
+                .build()
+                .expect("reqwest client construction is infallible with default config")
+        })
+        .clone()
+}
+
 pub struct DeepgramStt {
     client: reqwest::Client,
     api_key: String,
@@ -22,12 +44,11 @@ pub struct DeepgramStt {
 
 impl DeepgramStt {
     pub fn with_model(api_key: String, model: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .expect("reqwest client construction is infallible with default config");
-        Self { client, api_key, model }
+        Self {
+            client: shared_client(),
+            api_key,
+            model,
+        }
     }
 }
 

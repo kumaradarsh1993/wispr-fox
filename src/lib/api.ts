@@ -79,6 +79,14 @@ export interface Recording {
   error: string | null;
   /** LLM-generated one-line name; arrives asynchronously after the run. */
   title: string | null;
+  /** Wall-clock ms the STT request took (the key debugging number). */
+  stt_ms: number | null;
+  /** Wall-clock ms the LLM cleanup/draft took, or null if it didn't run. */
+  cleanup_ms: number | null;
+  /** End-to-end turnaround ms, recording-stopped → text-delivered. */
+  total_ms: number | null;
+  /** JSON `[{ms,msg}]` timeline of the run; null on pre-nightly.7 rows. */
+  event_log: string | null;
 }
 
 export interface SecretCheck {

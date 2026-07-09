@@ -13,6 +13,24 @@ const TIMEOUT: Duration = Duration::from_secs(8);
 pub const DEFAULT_LIGHT_MODEL: &str = "llama-3.3-70b-versatile";
 pub const DEFAULT_ADVANCED_MODEL: &str = "llama-3.3-70b-versatile";
 
+/// Process-wide pooled client — shared across the cleanup/draft call and the
+/// per-recording auto-title call so both reuse warm keep-alive connections to
+/// api.groq.com instead of each `GroqLlm::new` opening a fresh DNS+TLS handshake.
+/// Cheap to clone (Arc), pool shared across clones; key/model are per-request.
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> reqwest::Client {
+    SHARED_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(TIMEOUT)
+                .connect_timeout(Duration::from_secs(5))
+                .build()
+                .expect("reqwest client construction is infallible with default config")
+        })
+        .clone()
+}
+
 pub struct GroqLlm {
     client: reqwest::Client,
     api_key: String,
@@ -21,13 +39,8 @@ pub struct GroqLlm {
 
 impl GroqLlm {
     pub fn new(api_key: String, model: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(TIMEOUT)
-            .connect_timeout(Duration::from_secs(5))
-            .build()
-            .expect("reqwest client construction is infallible with default config");
         Self {
-            client,
+            client: shared_client(),
             api_key,
             model,
         }

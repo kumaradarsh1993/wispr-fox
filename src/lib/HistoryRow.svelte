@@ -58,6 +58,32 @@
   let showInspector = $state(false);
   let inspectorHasNews = $derived(isError || !!rec.error);
 
+  // Per-recording flight recorder (nightly.7). The Rust pipeline records how
+  // long STT / cleanup took and a timestamped event log, so a slow or failed
+  // run is diagnosable right here instead of being a mystery spinner.
+  type TlEvent = { ms: number; msg: string };
+  let timeline = $derived.by<TlEvent[]>(() => {
+    if (!rec.event_log) return [];
+    try {
+      const arr = JSON.parse(rec.event_log);
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  });
+  let hasTiming = $derived(
+    rec.stt_ms != null || rec.cleanup_ms != null || rec.total_ms != null || timeline.length > 0,
+  );
+  // Draw the eye to a slow transcription — anything past ~8s is worth noticing
+  // for a normal dictation. Deepgram/Groq usually answer in 1-3s.
+  let sttSlow = $derived(rec.stt_ms != null && rec.stt_ms > 8000);
+
+  function fmtMs(ms: number | null | undefined): string {
+    if (ms == null) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+
   // Kebab (3-dot) menu — holds Retry + Delete per the v0.4.0 design
   // playbook. Closes on outside click or Escape.
   let kebabOpen = $state(false);
@@ -467,6 +493,21 @@
         <div class="insp-k">Duration</div>
         <div class="insp-v">{durationShort(rec.duration_ms)}</div>
 
+        {#if rec.stt_ms != null}
+          <div class="insp-k">STT time</div>
+          <div class="insp-v insp-timing" class:insp-slow={sttSlow}>
+            {fmtMs(rec.stt_ms)}{#if sttSlow}<span class="slow-tag">slow</span>{/if}
+          </div>
+        {/if}
+        {#if rec.cleanup_ms != null}
+          <div class="insp-k">Cleanup time</div>
+          <div class="insp-v insp-timing">{fmtMs(rec.cleanup_ms)}</div>
+        {/if}
+        {#if rec.total_ms != null}
+          <div class="insp-k">Turnaround</div>
+          <div class="insp-v insp-timing">{fmtMs(rec.total_ms)}</div>
+        {/if}
+
         <div class="insp-k">STT provider</div>
         <div class="insp-v insp-mono">{rec.stt_provider ?? "—"}</div>
 
@@ -487,6 +528,27 @@
         <div class="insp-k">ID</div>
         <div class="insp-v insp-mono insp-small">{rec.id}</div>
       </div>
+
+      {#if timeline.length > 0}
+        <!-- Flight-recorder timeline: each line is elapsed-since-start + what
+             happened. This is where a slow/failed run explains itself. -->
+        <div class="insp-timeline">
+          <div class="insp-tl-head">Timeline</div>
+          <ol class="insp-tl">
+            {#each timeline as ev}
+              <li>
+                <span class="tl-ms">{fmtMs(ev.ms)}</span>
+                <span class="tl-msg">{ev.msg}</span>
+              </li>
+            {/each}
+          </ol>
+        </div>
+      {:else if !hasTiming}
+        <p class="insp-noteline">
+          No timing recorded for this run (it predates the flight recorder, added
+          in this build). New recordings will show a full timeline here.
+        </p>
+      {/if}
     </div>
   {/if}
 
@@ -975,6 +1037,78 @@
     overflow-wrap: anywhere;
     max-height: 200px;
     overflow-y: auto;
+  }
+
+  /* Stage timings — tabular figures so 1.2s / 19.4s line up. A slow STT is
+     flagged in the warning colour so the eye lands on it immediately. */
+  .insp-v.insp-timing {
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .insp-v.insp-slow {
+    color: var(--warning, #c47a30);
+    font-weight: 600;
+  }
+  .slow-tag {
+    margin-left: 6px;
+    font-family: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--warning-fade, rgba(196, 122, 48, 0.16));
+    color: var(--warning, #c47a30);
+    padding: 1px 5px;
+    border-radius: 9999px;
+    vertical-align: middle;
+  }
+
+  /* Timeline — the run's flight recorder. Compact ordered list; left column
+     is elapsed-since-start, right column the event. Monospace ms keeps the
+     timeline scannable top-to-bottom. */
+  .insp-timeline {
+    margin-top: 10px;
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+  }
+  .insp-tl-head {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .insp-tl {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .insp-tl li {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 10px;
+    font-size: 11px;
+    align-items: baseline;
+  }
+  .tl-ms {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    text-align: right;
+  }
+  .tl-msg {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  .insp-noteline {
+    margin: 10px 0 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.5;
   }
 
   .body {
