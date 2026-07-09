@@ -676,13 +676,46 @@ impl Flow {
 
         let _ = app.emit("wispr:state", "transcribing");
 
-        let FinishedRecording { path, duration_ms } = self.audio.stop().await?;
+        let FinishedRecording {
+            path,
+            duration_ms,
+            captured_ms,
+            stream_errored,
+        } = self.audio.stop().await?;
         crate::audio::cues::play_stop();
-        self.history.set_duration(&record_id, duration_ms)?;
+        self.history
+            .set_duration(&record_id, duration_ms, captured_ms)?;
+
+        // Capture-integrity check. `duration_ms` is the wall-clock timer;
+        // `captured_ms` is how much audio actually reached the WAV. If the mic
+        // dropped mid-recording they diverge — and the transcript WILL be
+        // truncated, because the audio simply isn't there. We flag this loudly
+        // (timeline + a user-facing warning) instead of silently pasting a
+        // fragment and calling it a success. Retrying can't recover lost audio.
+        let capture_gap = stream_errored || captured_ms + 1000 < duration_ms;
         tl.mark(format!(
-            "audio finalized · {:.1}s captured",
-            (duration_ms.max(0) as f64) / 1000.0
+            "audio · {:.1}s recorded / {:.1}s captured{}",
+            (duration_ms.max(0) as f64) / 1000.0,
+            (captured_ms.max(0) as f64) / 1000.0,
+            if stream_errored {
+                " · mic stream ERROR"
+            } else {
+                ""
+            }
         ));
+        if capture_gap {
+            let lost = ((duration_ms - captured_ms).max(0) as f64) / 1000.0;
+            tl.mark(format!(
+                "⚠ capture gap · ~{lost:.0}s of audio missing (mic dropped mid-recording)"
+            ));
+            tracing::warn!(
+                record_id,
+                duration_ms,
+                captured_ms,
+                stream_errored,
+                "capture gap — transcript will be truncated"
+            );
+        }
 
         // Trim trailing silence before sending to Whisper — prevents
         // hallucinations like "thank you" / "gracias" on silent tails.
@@ -766,8 +799,16 @@ impl Flow {
                 });
             }
             Ok(Ok(t)) => {
+                // Provider-reported processed duration is the third leg of the
+                // triangulation: if the WAV held 180s but the provider only
+                // processed 32s, the truncation happened in upload/transport
+                // rather than capture. Deepgram returns this; others may not.
+                let processed = t
+                    .duration_seconds
+                    .map(|d| format!(" · provider processed {d:.1}s"))
+                    .unwrap_or_default();
                 tl.mark(format!(
-                    "STT ok · {stt_elapsed}ms · {} chars",
+                    "STT ok · {stt_elapsed}ms · {} chars{processed}",
                     t.text.chars().count()
                 ));
                 t
@@ -1028,6 +1069,21 @@ impl Flow {
                         .set_error(&record_id, &format!("injection: {e}"))?;
                 }
             }
+        }
+
+        // If the mic dropped mid-recording, tell the user plainly. They got a
+        // (partial) transcript, so this is a warning, not a hard error — but
+        // they deserve to know the result is cut short and that a retry can't
+        // fix it (the audio was never captured).
+        if capture_gap {
+            let recorded = (duration_ms.max(0) as f64) / 1000.0;
+            let got = (captured_ms.max(0) as f64) / 1000.0;
+            let _ = app.emit(
+                "wispr:clippy_warning",
+                format!(
+                    "Mic dropped mid-recording — only ~{got:.0}s of ~{recorded:.0}s was captured, so the transcript is cut short. Re-record to get the rest (retry won't recover lost audio)."
+                ),
+            );
         }
 
         // Flight recorder: persist the full timeline + stage durations now that

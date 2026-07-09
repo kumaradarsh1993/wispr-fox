@@ -144,6 +144,11 @@ pub struct Recording {
     /// `ms` is elapsed-since-pipeline-start. A per-recording flight recorder so
     /// a slow/failed run can be diagnosed after the fact. None on old rows.
     pub event_log: Option<String>,
+    /// Milliseconds of audio actually captured to the WAV (from the real sample
+    /// count). Compared against `duration_ms` (wall-clock) to detect a mic that
+    /// dropped mid-recording: if this is materially smaller, the transcript is
+    /// truncated because the audio itself is. None on old rows.
+    pub audio_captured_ms: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -183,7 +188,8 @@ impl History {
               stt_ms        INTEGER,
               cleanup_ms    INTEGER,
               total_ms      INTEGER,
-              event_log     TEXT
+              event_log     TEXT,
+              audio_captured_ms INTEGER
             );
             CREATE INDEX IF NOT EXISTS recordings_created_at_idx
               ON recordings(created_at);
@@ -216,6 +222,12 @@ impl History {
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN cleanup_ms INTEGER", []);
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN total_ms INTEGER", []);
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN event_log TEXT", []);
+        // v2.1.0-nightly.8: actual audio captured (sample-count derived), vs the
+        // wall-clock duration_ms — divergence = a mic that dropped mid-recording.
+        let _ = conn.execute(
+            "ALTER TABLE recordings ADD COLUMN audio_captured_ms INTEGER",
+            [],
+        );
 
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
@@ -281,11 +293,11 @@ impl History {
         Ok(())
     }
 
-    pub fn set_duration(&self, id: &str, duration_ms: i64) -> Result<()> {
+    pub fn set_duration(&self, id: &str, duration_ms: i64, captured_ms: i64) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
-            "UPDATE recordings SET duration_ms = ?1 WHERE id = ?2",
-            params![duration_ms, id],
+            "UPDATE recordings SET duration_ms = ?1, audio_captured_ms = ?2 WHERE id = ?3",
+            params![duration_ms, captured_ms, id],
         )?;
         Ok(())
     }
@@ -417,7 +429,7 @@ impl History {
             r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
                       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
                       clippy_used, clippy_note, retry_count, error, title,
-                      stt_ms, cleanup_ms, total_ms, event_log
+                      stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms
                FROM recordings
                ORDER BY created_at DESC
                LIMIT ?1"#,
@@ -567,7 +579,7 @@ const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
        transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
-       stt_ms, cleanup_ms, total_ms, event_log
+       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms
 FROM recordings WHERE id = ?1"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
@@ -598,6 +610,7 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         cleanup_ms: row.get(17)?,
         total_ms: row.get(18)?,
         event_log: row.get(19)?,
+        audio_captured_ms: row.get(20)?,
     })
 }
 
@@ -614,7 +627,7 @@ mod tests {
         let id = h
             .insert_new(&PathBuf::from("clip.wav"), ClippyMode::Light)
             .unwrap();
-        h.set_duration(&id, 1234).unwrap();
+        h.set_duration(&id, 1234, 1234).unwrap();
         h.set_transcript(&id, "hello world", "groq").unwrap();
         h.set_cleaned(&id, "Hello world.", Some("groq"), true, None)
             .unwrap();

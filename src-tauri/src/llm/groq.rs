@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT: &str = "https://api.groq.com/openai/v1/chat/completions";
-const TIMEOUT: Duration = Duration::from_secs(8);
+// Groq is fast, but a long Draft rewrite plus tail latency can still exceed a
+// tight 8s and trip a spurious `clippy_timeout`. 25s covers the long case; the
+// fire-and-forget auto-title call shares this client and is unaffected.
+const TIMEOUT: Duration = Duration::from_secs(25);
 
 pub const DEFAULT_LIGHT_MODEL: &str = "llama-3.3-70b-versatile";
 pub const DEFAULT_ADVANCED_MODEL: &str = "llama-3.3-70b-versatile";

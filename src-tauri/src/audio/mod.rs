@@ -20,7 +20,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -40,7 +40,19 @@ type SharedWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
 #[derive(Debug)]
 pub struct FinishedRecording {
     pub path: PathBuf,
+    /// Wall-clock time the recording was active (key-down → key-up). This is
+    /// how long the USER spoke; it is NOT proof that this much audio actually
+    /// landed in the WAV — see `captured_ms`.
     pub duration_ms: i64,
+    /// Actual audio written to the WAV, derived from the real sample count
+    /// (`samples_written / sample_rate`). If the mic stream dropped mid-
+    /// recording, this is much less than `duration_ms` and the transcript will
+    /// be truncated. The two numbers together are how we detect a dropped mic.
+    pub captured_ms: i64,
+    /// True if cpal reported a stream error at any point during the recording
+    /// (device switch, format change, buffer disconnect). A strong signal that
+    /// audio was lost even if `captured_ms` looks plausible.
+    pub stream_errored: bool,
 }
 
 enum AudioCmd {
@@ -104,6 +116,15 @@ struct ActiveRecording {
     path: PathBuf,
     started_at: Instant,
     _stream: Stream,
+    /// Device sample rate — needed at stop time to convert the sample count
+    /// into milliseconds of captured audio.
+    sample_rate: u32,
+    /// Count of mono samples actually written to the WAV. Incremented in the
+    /// capture callback on every successful write; the source of truth for how
+    /// much audio we really got (vs. how long the timer ran).
+    samples_written: Arc<AtomicU64>,
+    /// Set by the cpal error callback if the stream faults mid-recording.
+    stream_error: Arc<AtomicBool>,
 }
 
 fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
@@ -135,13 +156,16 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
 
                 // Build a fresh stream + open WAV writer.
                 match begin_cold_recording(&path, &writer, level.clone()) {
-                    Ok((stream, sample_rate)) => {
+                    Ok((stream, sample_rate, samples_written, stream_error)) => {
                         let setup_ms = t0.elapsed().as_millis();
                         tracing::info!(?path, setup_ms, sample_rate, "recording started (cold)");
                         active = Some(ActiveRecording {
                             path: path.clone(),
                             started_at: Instant::now(),
                             _stream: stream,
+                            sample_rate,
+                            samples_written,
+                            stream_error,
                         });
                         let _ = reply.send(Ok(()));
                     }
@@ -164,6 +188,8 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                 let duration_ms = rec.started_at.elapsed().as_millis() as i64;
 
                 // Tail drain. WASAPI hands us audio in buffered chunks, so at
+                // (see below) — sleep first so the final callbacks land before
+                // we read the sample count.
                 // the instant the key is released the final ~tens-to-hundreds
                 // of milliseconds of speech are still sitting in the OS capture
                 // buffer, not yet delivered to our callback. Closing the writer
@@ -181,11 +207,44 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                         tracing::warn!("WAV finalize error: {e}");
                     }
                 }
-                let ActiveRecording { path, _stream, .. } = rec;
+                let ActiveRecording {
+                    path,
+                    _stream,
+                    sample_rate,
+                    samples_written,
+                    stream_error,
+                    ..
+                } = rec;
                 drop(_stream);
                 level.store(0, Ordering::Relaxed);
 
-                let _ = reply.send(Ok(FinishedRecording { path, duration_ms }));
+                // Convert the real sample count into milliseconds of audio. This
+                // is the ground truth we compare against the wall-clock timer to
+                // detect a mic that dropped mid-recording.
+                let samples = samples_written.load(Ordering::Relaxed);
+                let captured_ms = if sample_rate > 0 {
+                    (samples as i64 * 1000) / sample_rate as i64
+                } else {
+                    0
+                };
+                let stream_errored = stream_error.load(Ordering::Relaxed);
+                if stream_errored || captured_ms + 750 < duration_ms {
+                    // 750ms slack absorbs the normal tail-drain rounding; beyond
+                    // that, real audio went missing.
+                    tracing::warn!(
+                        duration_ms,
+                        captured_ms,
+                        stream_errored,
+                        "capture gap detected — WAV holds less audio than the timer ran"
+                    );
+                }
+
+                let _ = reply.send(Ok(FinishedRecording {
+                    path,
+                    duration_ms,
+                    captured_ms,
+                    stream_errored,
+                }));
             }
         }
     }
@@ -194,11 +253,12 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
 }
 
 /// Build cpal stream, query device fresh, play it. Returns the live stream.
+#[allow(clippy::type_complexity)]
 fn begin_cold_recording(
     out_path: &Path,
     writer: &SharedWriter,
     level: Arc<AtomicU32>,
-) -> Result<(Stream, u32)> {
+) -> Result<(Stream, u32, Arc<AtomicU64>, Arc<AtomicBool>)> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -230,20 +290,31 @@ fn begin_cold_recording(
         .context("writing WAV header")?;
     *writer.lock() = Some(wav_writer);
 
-    let err_fn = |e: cpal::StreamError| {
-        tracing::error!("audio stream error: {e}");
+    let samples_written = Arc::new(AtomicU64::new(0));
+    let stream_error = Arc::new(AtomicBool::new(false));
+
+    // Mid-recording stream faults (device switch, format change, buffer
+    // disconnect) used to be logged and forgotten — the callbacks would stop,
+    // no more audio would be written, but the wall-clock timer kept running, so
+    // a dropped mic produced a full-duration card with a truncated transcript.
+    // Now we latch the error so the pipeline can WARN the user their recording
+    // is incomplete instead of silently pasting a partial result.
+    let stream_error_cb = stream_error.clone();
+    let err_fn = move |e: cpal::StreamError| {
+        stream_error_cb.store(true, Ordering::Relaxed);
+        tracing::error!("audio stream error (recording may be truncated): {e}");
     };
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, err_fn),
-        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, err_fn),
-        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, err_fn),
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     }?;
 
     stream.play().with_context(|| format!("stream.play() on device '{device_name}'"))?;
 
-    Ok((stream, sample_rate))
+    Ok((stream, sample_rate, samples_written, stream_error))
 }
 
 fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
@@ -259,12 +330,14 @@ fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     writer: SharedWriter,
     input_channels: u16,
     level: Arc<AtomicU32>,
+    samples_written: Arc<AtomicU64>,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
@@ -325,9 +398,17 @@ where
                     level.store(perceptual.to_bits(), Ordering::Relaxed);
                 }
 
+                // Count mono samples ACTUALLY written (write_sample Ok). A write
+                // that fails mid-recording used to be silently dropped; now a
+                // divergence between this count and the wall-clock timer is what
+                // exposes the loss. Tallied per-callback (one atomic add) rather
+                // than per-sample to keep the real-time path cheap.
+                let mut wrote: u64 = 0;
                 if input_channels <= 1 {
                     for &s in data {
-                        let _ = wav.write_sample(s.to_i16_sample());
+                        if wav.write_sample(s.to_i16_sample()).is_ok() {
+                            wrote += 1;
+                        }
                     }
                 } else {
                     let n = input_channels as usize;
@@ -337,8 +418,13 @@ where
                             acc += s.to_i16_sample() as i32;
                         }
                         let mono = (acc / n as i32) as i16;
-                        let _ = wav.write_sample(mono);
+                        if wav.write_sample(mono).is_ok() {
+                            wrote += 1;
+                        }
                     }
+                }
+                if wrote > 0 {
+                    samples_written.fetch_add(wrote, Ordering::Relaxed);
                 }
             },
             err_fn,

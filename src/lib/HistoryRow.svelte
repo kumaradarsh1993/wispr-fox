@@ -78,6 +78,20 @@
   // for a normal dictation. Deepgram/Groq usually answer in 1-3s.
   let sttSlow = $derived(rec.stt_ms != null && rec.stt_ms > 8000);
 
+  // Capture gap: the mic dropped mid-recording, so less audio reached the WAV
+  // than the timer ran — the transcript is truncated because the audio is. We
+  // only claim this when we actually measured it (nightly.8+ rows), allowing
+  // 1s of slack for normal tail-drain rounding.
+  let captureGap = $derived(
+    rec.audio_captured_ms != null &&
+      rec.duration_ms > 0 &&
+      rec.audio_captured_ms + 1000 < rec.duration_ms,
+  );
+  let captureLostS = $derived(
+    captureGap ? Math.max(0, Math.round((rec.duration_ms - (rec.audio_captured_ms ?? 0)) / 1000)) : 0,
+  );
+  let capturedS = $derived(Math.max(0, Math.round((rec.audio_captured_ms ?? 0) / 1000)));
+
   function fmtMs(ms: number | null | undefined): string {
     if (ms == null) return "—";
     if (ms < 1000) return `${ms}ms`;
@@ -449,6 +463,17 @@
         <strong>Failed:</strong> {rec.error || "unknown error"}
       </div>
     {/if}
+    {#if captureGap}
+      <!-- The mic dropped mid-recording: less audio reached the file than the
+           timer ran, so this transcript is cut short. Retrying re-reads the same
+           short audio — it can't recover what was never captured. -->
+      <div class="capgap">
+        <strong>Mic dropped mid-recording.</strong> Only ~{capturedS}s of your
+        {durationShort(rec.duration_ms)} recording was captured (~{captureLostS}s
+        lost), so this transcript is cut short. Re-record to get the rest —
+        retrying won't recover audio that wasn't captured.
+      </div>
+    {/if}
     <p class="text">{displayedText}</p>
     {#if expanded && rec.clippy_note}
       <p class="note">Clippy note: {rec.clippy_note}</p>
@@ -492,6 +517,15 @@
 
         <div class="insp-k">Duration</div>
         <div class="insp-v">{durationShort(rec.duration_ms)}</div>
+
+        {#if rec.audio_captured_ms != null}
+          <div class="insp-k">Audio captured</div>
+          <div class="insp-v insp-timing" class:insp-slow={captureGap}>
+            {fmtMs(rec.audio_captured_ms)}{#if captureGap}<span class="slow-tag"
+                >~{captureLostS}s lost</span
+              >{/if}
+          </div>
+        {/if}
 
         {#if rec.stt_ms != null}
           <div class="insp-k">STT time</div>
@@ -1246,6 +1280,23 @@
     color: #b3261e;
     font-size: 12px;
     margin-bottom: 4px;
+  }
+
+  /* Capture-gap notice — the mic dropped mid-recording. Warning (amber) rather
+     than error (red): the user still got a partial transcript, but needs to
+     know it's incomplete and that a re-record — not a retry — is the fix. */
+  .capgap {
+    color: var(--warning, #c47a30);
+    background: var(--warning-fade, rgba(196, 122, 48, 0.12));
+    border: 1px solid var(--warning, #c47a30);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px 11px;
+    margin-bottom: 8px;
+  }
+  .capgap strong {
+    color: var(--warning, #c47a30);
   }
 
   .note {

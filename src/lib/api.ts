@@ -87,6 +87,10 @@ export interface Recording {
   total_ms: number | null;
   /** JSON `[{ms,msg}]` timeline of the run; null on pre-nightly.7 rows. */
   event_log: string | null;
+  /** Audio actually captured to the WAV (ms). Compare to duration_ms: if it's
+   *  materially smaller, the mic dropped mid-recording and the transcript is
+   *  truncated. Null on pre-nightly.8 rows. */
+  audio_captured_ms: number | null;
 }
 
 export interface SecretCheck {

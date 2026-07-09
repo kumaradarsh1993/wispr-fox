@@ -9,7 +9,9 @@ use serde_json::Value;
 use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT: &str = "https://api.openai.com/v1/responses";
-const TIMEOUT: Duration = Duration::from_secs(10);
+// See gemini.rs — 10s was too tight for long Draft rewrites and tripped
+// spurious cleanup timeouts. 30s covers a long draft, still bails if wedged.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const DEFAULT_MODEL: &str = "gpt-5.4-mini";
 

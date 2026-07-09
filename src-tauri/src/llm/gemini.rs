@@ -19,7 +19,11 @@ use serde::{Deserialize, Serialize};
 use super::{LlmError, LlmOutput, LlmProvider, TokenUsage};
 
 const ENDPOINT_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-const TIMEOUT: Duration = Duration::from_secs(10);
+// Long dictations (a few minutes → several hundred words) can take a Draft
+// rewrite well past 10s, which surfaced as spurious `clippy_timeout` notices
+// that dropped the user back to the raw transcript. 30s comfortably covers a
+// long draft while still bailing out if the provider is genuinely wedged.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
 
