@@ -4,7 +4,7 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-07-06** (v2.1.0-nightly.6).
+> **Last updated: 2026-07-12** (v2.1.0-nightly.9).
 
 ---
 
@@ -23,7 +23,7 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   Provider expansion (Groq/OpenAI/Deepgram/ElevenLabs STT; Groq/Gemini/OpenAI
   LLM), keyring-first key storage, Settings/sidebar cleanup, raster avatars,
   analytics dashboard, the constrained two-box floater.
-- **Nightly: `v2.1.0-nightly.6`** (2026-07-06) — the whole v2.1.0 line is
+- **Nightly: `v2.1.0-nightly.9`** (2026-07-12) — the whole v2.1.0 line is
   unreleased-to-stable. It needs a "ship it" signal + user testing before
   promotion. What's accumulated in the nightly cycle:
 
@@ -34,6 +34,9 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   | .4 | Removed "duo"/"duo-hd" (bad design; migrate → oru-gujia); per-skin enter/exit animations (`data-arrive-skin` + `wispr:farewell` on Quit); wave polish |
   | .5 | **Codex pixel pets** as animated avatars (8 sprite-sheet pets in `static/pets/`, `lib/pets.ts` + `SpritePet.svelte`); sidebar picker = 6 featured + "More" tile; **auto-title** (parallel Groq `llama-3.1-8b-instant` names each recording, Settings→General toggle, default ON); history cards restyled (bolded title, right-aligned tabs, hover-glimmer expand chip) |
   | .6 | **Onboarding reimagined** — "Pick your engine": Deepgram (recommended, Nova-3, $200 free credit) vs Groq (free forever), smart 2-click deep-links + live key verify, optional Groq "brain" step on the Deepgram path; animated visual layer (gradient blobs/headline, staggered rise-in, typewriter), reduced-motion gated. README + docs de-Groq'd |
+  | .7 | **Per-recording flight recorder** — the (i) panel shows real STT / cleanup / turnaround timings + an event log; pooled HTTP clients |
+  | .8 | **Mic-drop detection** — captured-audio sample count vs wall-clock timer exposes a mic that died mid-recording; the card warns plainly instead of pasting a silent partial. (i) panel triangulates recorded vs captured vs provider-processed |
+  | .9 | **Sleep-blocker fix** — the audio-cue worker held a rodio `OutputStream` open for the app's lifetime; Windows treats any live WASAPI render stream as "audio in use" and never sleeps. Now opened per cue, dropped after 30 s idle. **Onboarding rebuilt** (user spec): fluid full-bleed layout, zero scrolling at default 1200×800; welcome screen acts out a dictation with a wiggling hotkey cap + SpritePet buddy cycling through the roster + BYOK explainer; setup gates on explicit engine pick, then "I already have a key" vs "Help me get one" fork; cleanup brain is Gemini-recommended, auto-covered on the Groq path |
 
 Every nightly builds all platforms (Win `.exe`/`.msi`, macOS `.dmg`, Linux
 AppImage/deb/rpm) on CI from the tagged commit.
