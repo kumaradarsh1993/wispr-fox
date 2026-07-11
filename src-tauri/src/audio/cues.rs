@@ -100,17 +100,47 @@ fn resolve_user_file(filename: &str) -> Option<PathBuf> {
 }
 
 fn cue_worker(rx: mpsc::Receiver<CueCmd>) {
-    let stream = match OutputStream::try_default() {
-        Ok((s, h)) => Some((s, h)),
-        Err(e) => {
-            tracing::warn!("audio cues: no default output device: {e}");
-            None
-        }
-    };
+    // The output stream is opened ON DEMAND and dropped after a short idle
+    // window — never held for the app's lifetime. rodio's OutputStream keeps
+    // the WASAPI render stream actively playing (silence when no source), and
+    // Windows holds a "An audio stream is currently in use" power request for
+    // as long as any render stream is live — a permanently-open stream here
+    // blocked automatic system sleep on the whole machine (found 2026-07-12:
+    // one dictation after launch and the laptop never slept again).
+    // 30 s keeps the start→stop cue pair latency-free within a dictation and
+    // easily outlives the 80 ms tones before the stream is released.
+    const IDLE_DROP: Duration = Duration::from_secs(30);
+    let mut stream: Option<(OutputStream, rodio::OutputStreamHandle)> = None;
 
-    while let Ok(cmd) = rx.recv() {
+    loop {
+        let cmd = if stream.is_some() {
+            match rx.recv_timeout(IDLE_DROP) {
+                Ok(cmd) => cmd,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    tracing::debug!("audio cues: idle — releasing output stream");
+                    stream = None;
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(cmd) => cmd,
+                Err(_) => break,
+            }
+        };
+
         if !*cues_enabled().lock() {
             continue;
+        }
+        if stream.is_none() {
+            match OutputStream::try_default() {
+                Ok((s, h)) => stream = Some((s, h)),
+                Err(e) => {
+                    tracing::warn!("audio cues: no default output device: {e}");
+                    continue;
+                }
+            }
         }
         let Some((_s, handle)) = &stream else { continue };
 

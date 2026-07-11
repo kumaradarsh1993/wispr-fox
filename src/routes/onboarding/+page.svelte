@@ -1,18 +1,26 @@
 <script lang="ts">
-  // 3-screen Foxy onboarding for non-technical users.
+  // 3-screen Foxy onboarding, rebuilt 2026-07-12 around three user asks:
   //
-  //  1. Welcome   — "Hi, I'm Foxy." Press a key, speak, get text. Three modes,
-  //                 animated entrance, ambient gradient blobs.
-  //  2. Engine    — provider-neutral setup. Two selectable engine cards:
-  //                 Deepgram (Recommended — $200 signup credit, Nova-3, best
-  //                 with Indian accents) and Groq (free forever). Smart
-  //                 deep-links: first click opens signup, second click lands
-  //                 on the keys page. Paste field + live verification. When
-  //                 Deepgram is chosen, an optional third step adds the free
-  //                 Groq "brain" for cleanup/Draft mode.
-  //  3. Demo      — Pre-focused textbox + visible 5-sec timer hint. User
-  //                 presses F8 right inside the onboarding window, words land
-  //                 in the box. wispr:state events drive the recording UI.
+  //  1. Welcome  — the pitch ("free, unlimited, anywhere — bring your own
+  //                key") + a live illustration of the actual loop: a
+  //                cartoonish hotkey cap gets pressed, a pixel-pet buddy
+  //                listens, transcribes, and the words type themselves into
+  //                a mini textbox. The pet swaps each loop so new users see
+  //                the avatar roster before they ever hit Settings.
+  //  2. Setup    — "Pick your engine". Deepgram (Recommended, $200 signup
+  //                credit) vs Groq (free forever). Picking one reveals the
+  //                key step with an explicit fork: "I already have a key"
+  //                (paste box) vs "Help me get one" (walk-through links +
+  //                paste box). Saving the engine key reveals the optional
+  //                cleanup-brain step (Gemini recommended; auto-covered on
+  //                the Groq path since one Groq key does both jobs).
+  //  3. Demo     — pre-focused textbox, press the hotkey right here, words
+  //                land in the box. wispr:state events drive the UI.
+  //
+  // Layout contract: FLUID, full-bleed background (no fixed-width band with
+  // odd gutters), and every screen is designed to fit the default 1200×800
+  // window with zero scrolling. overflow-y:auto stays on as a safety net for
+  // the 720×480 minimum window only.
   //
   // First-time users hit /onboarding automatically (auto-redirect lives in
   // the global layout). The sidebar's "Replay onboarding" link sends repeat
@@ -24,22 +32,92 @@
   import { listen } from "@tauri-apps/api/event";
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
-  import { applySttProvider, applySttModel } from "$lib/provider-options";
+  import { applySttProvider, applySttModel, applyLlmProvider } from "$lib/provider-options";
   import { prettyHotkey, isMac } from "$lib/hotkey-display";
+  import SpritePet from "$lib/SpritePet.svelte";
+  import { PETS } from "$lib/pets";
 
-  // Where the OS actually stores the key — platform-aware copy in Setup step 2.
+  // Where the OS actually stores the key — platform-aware copy in the paste step.
   const keyStoreName = isMac() ? "macOS Keychain" : "Windows Credential Manager";
 
   type Screen = "welcome" | "setup" | "demo";
   let screen = $state<Screen>("welcome");
 
+  // ── Welcome-screen hero animation ────────────────────────────────────────
+  // A ~9s loop acting out one dictation: wiggling key → held down (listening)
+  // → transcribing → text typing into the mini box → done. The pet cycles on
+  // every loop so the roster shows itself. Pure JS timeline + CSS states —
+  // deliberately no 3D/canvas; it must stay light and skippable.
+  type HeroPhase = "wiggle" | "listen" | "think" | "type" | "done";
+  let heroPhase = $state<HeroPhase>("wiggle");
+  let heroPetIdx = $state(0);
+  let heroTyped = $state("");
+  const HERO_LINE = "the meeting moved to 4 — see you there";
+
+  const heroPet = $derived(PETS[heroPetIdx % PETS.length]);
+  const heroAnim = $derived(
+    heroPhase === "wiggle" ? "idle"
+    : heroPhase === "listen" ? "waiting"
+    : heroPhase === "done" ? "celebration"
+    : "typing",
+  );
+
+  // Timeline driver — runs only while the welcome screen is visible.
+  // prefers-reduced-motion users get a static "done" tableau instead.
+  $effect(() => {
+    if (screen !== "welcome") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      heroPhase = "done";
+      heroTyped = HERO_LINE;
+      return;
+    }
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    let typeTimer: ReturnType<typeof setInterval> | null = null;
+    let alive = true;
+    const at = (ms: number, fn: () => void) => {
+      timers.push(setTimeout(() => { if (alive) fn(); }, ms));
+    };
+    const runLoop = () => {
+      heroPhase = "wiggle";
+      heroTyped = "";
+      at(1600, () => (heroPhase = "listen"));
+      at(3900, () => (heroPhase = "think"));
+      at(5300, () => {
+        heroPhase = "type";
+        let i = 0;
+        typeTimer = setInterval(() => {
+          i++;
+          heroTyped = HERO_LINE.slice(0, i);
+          if (i >= HERO_LINE.length && typeTimer) {
+            clearInterval(typeTimer);
+            typeTimer = null;
+          }
+        }, 38);
+      });
+      at(7200, () => (heroPhase = "done"));
+      at(8900, () => {
+        heroPetIdx = (heroPetIdx + 1) % PETS.length;
+        runLoop();
+      });
+    };
+    runLoop();
+    return () => {
+      alive = false;
+      timers.forEach(clearTimeout);
+      if (typeTimer) clearInterval(typeTimer);
+    };
+  });
+
   // ── Engine setup state ───────────────────────────────────────────────────
-  // Two first-class engines. Deepgram is the recommended default (better
-  // accuracy + speed than Whisper, especially for Indian English; $200 free
-  // signup credit ≈ a year of heavy use). Groq stays as the free-forever
-  // path and doubles as the cleanup/draft "brain" either way.
+  // Two first-class engines. NO preselection — the user must actively pick
+  // one before the key step reveals itself (explicit ask: the choice is
+  // mandatory, the rest of the flow gates on it).
   type Engine = "deepgram" | "groq";
-  let engine = $state<Engine>("deepgram");
+  let engine = $state<Engine | null>(null);
+
+  // The explicit fork inside the key step.
+  type KeyPath = "have" | "help";
+  let keyPath = $state<KeyPath | null>(null);
 
   let primaryKey = $state("");
   let saving = $state(false);
@@ -51,19 +129,21 @@
     | { kind: "error"; msg: string };
   let testState = $state<TestState>({ kind: "idle" });
 
-  // Optional "brain" step (only shown on the Deepgram path): a free Groq key
-  // so cleanup + Draft mode work. Groq-path users get this for free (one key
-  // does both jobs).
+  // Optional cleanup "brain": Gemini is the recommended pick (generous free
+  // tier, no card). On the Groq engine path this is auto-covered — one Groq
+  // key powers both listening and cleanup.
   let brainKey = $state("");
   let brainSaving = $state(false);
   let brainSaved = $state(false);
   let brainTest = $state<TestState>({ kind: "idle" });
+  let brainOpen = $state(false);
 
-  // Switching engines resets the paste/verify state (but never un-saves).
+  // Switching engines resets the fork + paste state (but never un-saves).
   function pickEngine(e: Engine) {
     if (engine === e) return;
     engine = e;
     if (!keySaved) {
+      keyPath = null;
       primaryKey = "";
       testState = { kind: "idle" };
       linkClicks = 0;
@@ -93,13 +173,11 @@
     },
   };
 
-  // Smart-deeplink tracker: bump on each click. Click #1 opens signup;
-  // from click #2 the copy shifts to "take me to my keys page" so returning
-  // users get a clearer second step.
+  // Smart-deeplink tracker: click #1 opens signup; from click #2 the copy
+  // shifts to "take me to my keys page" so returning users get a clearer
+  // second step.
   let linkClicks = $state(0);
-  async function openEnginePage() {
-    const url = linkClicks === 0 ? ENGINE_COPY[engine].signupUrl : ENGINE_COPY[engine].keysUrl;
-    linkClicks++;
+  async function openUrlExternal(url: string) {
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(url);
@@ -107,19 +185,15 @@
       window.open(url, "_blank");
     }
   }
-
-  let brainClicks = $state(0);
-  async function openBrainPage() {
-    brainClicks++;
-    try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl("https://console.groq.com/keys");
-    } catch {
-      window.open("https://console.groq.com/keys", "_blank");
-    }
+  async function openEnginePage() {
+    if (!engine) return;
+    const url = linkClicks === 0 ? ENGINE_COPY[engine].signupUrl : ENGINE_COPY[engine].keysUrl;
+    linkClicks++;
+    await openUrlExternal(url);
   }
 
   async function verifyAndSave() {
+    if (!engine) return;
     const k = primaryKey.trim();
     if (!k) {
       testState = { kind: "error", msg: "Paste your key first." };
@@ -156,16 +230,15 @@
   async function verifyAndSaveBrain() {
     const k = brainKey.trim();
     if (!k) {
-      brainTest = { kind: "error", msg: "Paste your Groq key first." };
+      brainTest = { kind: "error", msg: "Paste your Gemini key first." };
       return;
     }
     brainSaving = true;
     brainTest = { kind: "testing" };
     try {
-      const models = await api.testGroqKey(k);
-      await api.saveSecret("groq_llm", k);
-      // Also usable as an STT fallback if Deepgram credit ever runs dry.
-      await api.saveSecret("groq_stt", k);
+      const models = await api.testGeminiKey(k);
+      await api.saveSecret("gemini_llm", k);
+      await applyLlmProvider("gemini");
       brainTest = { kind: "ok", count: models.length };
       brainSaved = true;
     } catch (e) {
@@ -177,8 +250,8 @@
 
   // ── Demo state ─────────────────────────────────────────────────────────
   // demoBox is the textbox the user types/dictates into. We focus it on
-  // mount + on screen change so the user's very first F8 press has a focused
-  // target — text injection lands directly here.
+  // mount + on screen change so the user's very first hotkey press has a
+  // focused target — text injection lands directly here.
   let demoBox: HTMLTextAreaElement | undefined = $state();
   let demoText = $state("");
 
@@ -191,10 +264,6 @@
   let recElapsed = $state(0); // seconds while recording
   let demoCompleted = $state(false);
   let recTimer: ReturnType<typeof setInterval> | null = null;
-  // Friendly app name from Rust; empty until first F8 press fires
-  // wispr:active_app. Used only in the tip line; the demo box itself is
-  // always the target since it's the focused element.
-  let activeApp = $state("");
 
   function startRecCounter() {
     recElapsed = 0;
@@ -226,12 +295,9 @@
     goto("/history");
   }
 
-  // "Skip — I'll set this up later" — available from every screen via a small
-  // header link. Goes to History (same destination as Finish) but doesn't
-  // require keys to be saved. Reported as a major friction point on a Mac
-  // where the STT provider was blocked at the corporate egress and the user
-  // couldn't verify a key but also couldn't get past the setup screen.
-  // Onboarding can be replayed any time via the sidebar's "↻ Replay
+  // "Skip" — available from every screen via a small header link. Goes to
+  // History (same destination as Finish) but doesn't require keys to be
+  // saved. Onboarding can be replayed any time via the sidebar's "↻ Replay
   // onboarding" link.
   function skipOnboarding() {
     goto("/history");
@@ -249,7 +315,6 @@
   // teardown directly in Svelte 5 (return type is Promise<void>, not a
   // disposer). onDestroy below picks these up.
   let unlistenState: (() => void) | null = null;
-  let unlistenActiveApp: (() => void) | null = null;
   let priorTheme: string | null = null;
 
   onMount(async () => {
@@ -277,10 +342,6 @@
       }
     });
 
-    unlistenActiveApp = await listen<string>("wispr:active_app", (e) => {
-      activeApp = e.payload ?? "";
-    });
-
     // Force light theme during onboarding — first-run shouldn't be the
     // moment the user hits any dark-mode rough edges.
     priorTheme = document.body.getAttribute("data-theme");
@@ -289,7 +350,6 @@
 
   onDestroy(() => {
     unlistenState?.();
-    unlistenActiveApp?.();
     if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
     stopRecCounter();
   });
@@ -303,6 +363,14 @@
     if (t === cur) return "current";
     return "future";
   }
+
+  const heroStatus = $derived(
+    heroPhase === "wiggle" ? "hold the key…"
+    : heroPhase === "listen" ? "Listening…"
+    : heroPhase === "think" ? "Transcribing…"
+    : heroPhase === "type" ? "Typing it for you…"
+    : "Done ✓",
+  );
 </script>
 
 <main class="ob">
@@ -314,339 +382,385 @@
     <span class="blob b3"></span>
   </div>
 
-  <header class="ob-head">
-    <div class="brand">
-      <img src="/fox/fox-logo.png" alt="" class="brand-fox" />
-      <span class="brand-name">wispr-fox</span>
-    </div>
-    <div class="dots">
-      <span class="dot {dotClass('welcome')}" title="Welcome"></span>
-      <span class="dot {dotClass('setup')}" title="Pick your engine"></span>
-      <span class="dot {dotClass('demo')}" title="Try it"></span>
-    </div>
-    <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
-    <button class="ob-skip" onclick={skipOnboarding} title="Skip and explore the app — you can replay onboarding from the sidebar later">
-      Skip →
-    </button>
-  </header>
-
-  <!-- ═════ SCREEN 1: Welcome ═════════════════════════════════════════ -->
-  {#if screen === "welcome"}
-    <section class="screen welcome" in:fly={{ y: 22, duration: 380 }}>
-      <img src="/fox/fox-hero.png" alt="" class="hero-fox" />
-      <h1 class="grad">Hi, I'm Foxy.</h1>
-      <p class="tagline">
-        Press a key, say what you mean, get it written down.
-        Anywhere on your computer.
-      </p>
-      <p class="type-demo">
-        <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
-        <span class="type-text">"chalo — let's ship this today"</span>
-      </p>
-
-      <div class="mode-row">
-        <div class="mode-card rise" style="--d: 120ms">
-          <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
-          <h3>Transcribe</h3>
-          <p class="example">
-            <span class="said">You say:</span> "the meeting is at 4 pm tomorrow"<br />
-            <span class="written">You get:</span> "the meeting is at 4 pm tomorrow"
-          </p>
-        </div>
-        <div class="mode-card rise" style="--d: 220ms">
-          <kbd>{prettyHotkey(settings.s.force_clean_hotkey)}</kbd>
-          <h3>Transcribe + clean</h3>
-          <p class="example">
-            <span class="said">You say:</span> "uhh so the meeting tomorrow at 4 i think"<br />
-            <span class="written">You get:</span> "The meeting tomorrow is at 4."
-          </p>
-        </div>
-        <div class="mode-card rise" style="--d: 320ms">
-          <kbd>{prettyHotkey(settings.s.drafting_hotkey)}</kbd>
-          <h3>Draft</h3>
-          <p class="example">
-            <span class="said">You say:</span> "email saurabh that i'll be late tomorrow"<br />
-            <span class="written">You get:</span> "Hi Saurabh, just letting you know I'll be running late tomorrow…"
-          </p>
-        </div>
+  <div class="wrap">
+    <header class="ob-head">
+      <div class="brand">
+        <img src="/fox/fox-logo.png" alt="" class="brand-fox" />
+        <span class="brand-name">wispr-fox</span>
       </div>
-
-      <p class="bonus rise" style="--d: 420ms">
-        <strong>Bonus:</strong> Draft mode is a hidden superpower —
-        say the gist of what you want and it writes the whole thing for you.
-        Email, Slack, doc, anything.
-      </p>
-
-      <div class="cta">
-        <button class="btn primary big" onclick={() => (screen = "setup")}>
-          Get started →
-        </button>
-        {#if keySaved}
-          <button class="btn ghost" onclick={() => (screen = "demo")}>
-            Skip to the demo →
-          </button>
-        {/if}
+      <div class="dots">
+        <span class="dot {dotClass('welcome')}" title="Welcome"></span>
+        <span class="dot {dotClass('setup')}" title="Get your key"></span>
+        <span class="dot {dotClass('demo')}" title="Try it"></span>
       </div>
-    </section>
+      <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
+      <button class="ob-skip" onclick={skipOnboarding} title="Skip and explore the app — you can replay onboarding from the sidebar later">
+        Skip →
+      </button>
+    </header>
 
-  <!-- ═════ SCREEN 2: Pick your engine ════════════════════════════════ -->
-  {:else if screen === "setup"}
-    <section class="screen setup" in:fly={{ y: 22, duration: 380 }}>
-      <h1>Pick your engine</h1>
-      <p class="tagline">
-        One key and you're dictating. Both options are genuinely free to
-        start — pick one, we'll walk you to the key.
-      </p>
-
-      <div class="engine-row">
-        <button
-          class="engine-card rise"
-          style="--d: 100ms"
-          class:selected={engine === "deepgram"}
-          onclick={() => pickEngine("deepgram")}
-        >
-          <div class="engine-head">
-            <span class="engine-name">Deepgram</span>
-            <span class="engine-badge rec">Recommended</span>
-          </div>
-          <p class="engine-pitch">
-            The best ears. Nova-3 is faster and noticeably more accurate than
-            the older Whisper models — especially with Indian accents.
-          </p>
-          <p class="engine-free">
-            <strong>$200 free credit</strong> on signup, no card. Heavy daily
-            use burns about <strong>$1 a week</strong> — it lasts a year+.
-          </p>
-        </button>
-        <button
-          class="engine-card rise"
-          style="--d: 200ms"
-          class:selected={engine === "groq"}
-          onclick={() => pickEngine("groq")}
-        >
-          <div class="engine-head">
-            <span class="engine-name">Groq</span>
-            <span class="engine-badge free">Free forever</span>
-          </div>
-          <p class="engine-pitch">
-            About 2,000 free transcriptions a day (Whisper), resets daily,
-            no card.
-          </p>
-          <p class="engine-free">
-            One key also powers the <strong>cleanup + Draft brain</strong> —
-            the all-in-one option.
-          </p>
-        </button>
-      </div>
-
-      <details class="how-free">
-        <summary>How is this free?</summary>
-        <p>
-          No secret — AI companies like Deepgram, Groq, and Google court
-          developers with generous personal free tiers and signup credits.
-          A dictation app sips tokens, so those allowances go a very long way.
+    <!-- ═════ SCREEN 1: Welcome ═════════════════════════════════════════ -->
+    {#if screen === "welcome"}
+      <section class="screen welcome" in:fly={{ y: 22, duration: 380 }}>
+        <h1 class="grad">Speech to text. Anywhere. Free.</h1>
+        <p class="tagline">
+          Click into any textbox on your computer, hold
+          <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say what you
+          mean, let go — wispr-fox types it for you.
         </p>
-        <p>
-          You can switch providers or add others (OpenAI, ElevenLabs, Gemini)
-          any time in <strong>Settings → Providers</strong>.
-        </p>
-      </details>
 
-      <div class="step-block rise" style="--d: 280ms" class:done={keySaved}>
-        <div class="step-num">1</div>
-        <div class="step-body">
-          <h3>Get your {ENGINE_COPY[engine].label} key</h3>
-          {#if linkClicks === 0}
-            <p class="hint">
-              Opens {ENGINE_COPY[engine].label} in your browser — sign up if
-              you haven't (Google login works, takes a minute), and keep this
-              window open.
-            </p>
-            <button class="btn primary" onclick={openEnginePage}>
-              Get my {ENGINE_COPY[engine].label} key →
-            </button>
-          {:else}
-            <p class="hint">
-              ✓ Opened {ENGINE_COPY[engine].label} in your browser.
-              <strong>Signed up?</strong> Click again to land on the keys page.
-            </p>
-            <button class="btn primary" onclick={openEnginePage}>
-              Take me to my keys page →
-            </button>
-            <p class="hint subtle">
-              Still stuck? {ENGINE_COPY[engine].keysHint}
-            </p>
-          {/if}
-        </div>
-      </div>
-
-      <div class="step-block rise" style="--d: 360ms" class:done={keySaved}>
-        <div class="step-num">2</div>
-        <div class="step-body">
-          <h3>Paste your key</h3>
-          <p class="hint">
-            Stored on your machine only ({keyStoreName}) — never sent anywhere
-            except {ENGINE_COPY[engine].label}.
-          </p>
-          <div class="paste-row">
-            <input
-              type="password"
-              placeholder={ENGINE_COPY[engine].placeholder}
-              bind:value={primaryKey}
-              disabled={saving || keySaved}
-            />
-            <button
-              class="btn primary"
-              onclick={verifyAndSave}
-              disabled={saving || keySaved || !primaryKey.trim()}
+        <!-- The loop, acted out: key press → buddy listens → transcribes →
+             words land in the box. Pet swaps every loop = roster preview. -->
+        <div class="hero rise" style="--d: 120ms">
+          <div class="hero-key-zone">
+            <div
+              class="hero-key"
+              class:wiggle={heroPhase === "wiggle"}
+              class:held={heroPhase === "listen"}
             >
-              {#if saving}Verifying…{:else if keySaved}Saved{:else}Verify + save{/if}
-            </button>
+              <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>
+            </div>
+            <span class="hero-key-hint">
+              {heroPhase === "listen" ? "held down" : "hold to talk"}
+            </span>
           </div>
-          {#if testState.kind === "ok"}
-            <div class="status ok">✓ Key works — you're set for transcription</div>
-          {:else if testState.kind === "error"}
-            <div class="status error">✗ {testState.msg}</div>
-          {:else if testState.kind === "testing"}
-            <div class="status testing">Testing key…</div>
+
+          <div class="hero-pet-zone">
+            <div class="hero-pet" style="--fscale: 1.35">
+              <SpritePet petId={heroPet.id} anim={heroAnim} />
+            </div>
+            <span
+              class="hero-status"
+              class:listening={heroPhase === "listen"}
+              class:thinking={heroPhase === "think" || heroPhase === "type"}
+              class:success={heroPhase === "done"}
+            >
+              {#if heroPhase === "listen"}<span class="hero-wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>{/if}
+              {heroStatus}
+            </span>
+          </div>
+
+          <div class="hero-out-zone">
+            <div class="hero-out" class:active={heroPhase === "type" || heroPhase === "done"}>
+              {#if heroTyped}
+                <span class="hero-out-text">{heroTyped}</span><span class="hero-caret" class:blink={heroPhase !== "done"}></span>
+              {:else}
+                <span class="hero-out-placeholder">your words land here — in any app</span>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <p class="hero-caption rise" style="--d: 220ms">
+          That's <strong>{heroPet.label}</strong> — one of eight pixel buddies
+          who keep you company while you dictate. There's also a watercolor
+          fox, a minimal waveform, and yes, a real Clippy. Pick yours later.
+        </p>
+
+        <div class="byok rise" style="--d: 320ms">
+          <strong>How is it free?</strong> wispr-fox is a
+          <em>bring-your-own-key</em> app: you plug in a free API key from a
+          speech provider (Deepgram, Groq Whisper…) and the app is just the
+          interface. Personal free tiers are so generous that day-to-day
+          dictation costs nothing — setup takes about five minutes, and the
+          next screen walks you through it. Advanced users can swap engines
+          and models any time in Settings.
+        </div>
+
+        <div class="cta">
+          <button class="btn primary big" onclick={() => (screen = "setup")}>
+            Get started →
+          </button>
+          {#if keySaved}
+            <button class="btn ghost" onclick={() => (screen = "demo")}>
+              Skip to the demo →
+            </button>
           {/if}
         </div>
-      </div>
+      </section>
 
-      {#if engine === "deepgram"}
-        <div class="step-block rise optional" style="--d: 440ms" class:done={brainSaved}>
-          <div class="step-num">3</div>
-          <div class="step-body">
-            <h3>Add the free brain <span class="optional-tag">optional, recommended</span></h3>
-            {#if brainSaved}
-              <p class="hint">✓ Done — cleanup and Draft mode are powered up.</p>
-            {:else}
-              <p class="hint">
-                Deepgram does the listening; cleanup + Draft mode need a
-                language model. Groq's free tier covers that (no card) —
-                grab a key the same way and paste it here. Skipping is fine:
-                plain transcription works without it.
-              </p>
-              <button class="btn ghost" onclick={openBrainPage}>
-                {brainClicks === 0 ? "Get a free Groq key →" : "Take me to the Groq keys page →"}
-              </button>
-              <div class="paste-row">
-                <input
-                  type="password"
-                  placeholder="gsk_..."
-                  bind:value={brainKey}
-                  disabled={brainSaving}
-                />
-                <button
-                  class="btn primary"
-                  onclick={verifyAndSaveBrain}
-                  disabled={brainSaving || !brainKey.trim()}
-                >
-                  {#if brainSaving}Verifying…{:else}Verify + save{/if}
-                </button>
-              </div>
-              {#if brainTest.kind === "ok"}
-                <div class="status ok">✓ Brain online — cleanup + Draft unlocked</div>
-              {:else if brainTest.kind === "error"}
-                <div class="status error">✗ {brainTest.msg}</div>
-              {:else if brainTest.kind === "testing"}
-                <div class="status testing">Testing key…</div>
+    <!-- ═════ SCREEN 2: Get your key ════════════════════════════════════ -->
+    {:else if screen === "setup"}
+      <section class="screen setup" in:fly={{ y: 22, duration: 380 }}>
+        <h1>Pick your engine</h1>
+        <p class="tagline">
+          Choose who does the listening — both are genuinely free to start,
+          and you can switch (or add OpenAI, ElevenLabs, Gemini) later in
+          <strong>Settings → Providers</strong>.
+        </p>
+
+        <div class="engine-row">
+          <button
+            class="engine-card rise"
+            style="--d: 100ms"
+            class:selected={engine === "deepgram"}
+            onclick={() => pickEngine("deepgram")}
+          >
+            <div class="engine-head">
+              <span class="engine-name">Deepgram</span>
+              <span class="engine-badge rec">Recommended</span>
+            </div>
+            <p class="engine-pitch">
+              The best ears. Nova-3 is fast and noticeably more accurate than
+              older Whisper models — especially with Indian accents.
+            </p>
+            <p class="engine-free">
+              <strong>$200 free credit</strong> on signup, no card. Heavy
+              daily use ≈ <strong>$1 a week</strong> — it lasts years of
+              day-to-day dictation. You'll sign up, create a key, paste it
+              here — we'll walk you through it.
+            </p>
+          </button>
+          <button
+            class="engine-card rise"
+            style="--d: 200ms"
+            class:selected={engine === "groq"}
+            onclick={() => pickEngine("groq")}
+          >
+            <div class="engine-head">
+              <span class="engine-name">Groq</span>
+              <span class="engine-badge free">Free forever</span>
+            </div>
+            <p class="engine-pitch">
+              Unlimited wispr-fox: about 2,000 free Whisper transcriptions a
+              day, resets daily, no card ever.
+            </p>
+            <p class="engine-free">
+              One key also powers the <strong>cleanup + Draft brain</strong>
+              — the all-in-one option. Sign in, create a key, paste it here.
+            </p>
+          </button>
+        </div>
+
+        {#if engine}
+          <div class="step-block rise" style="--d: 80ms" class:done={keySaved}>
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <h3>Your {ENGINE_COPY[engine].label} key</h3>
+              {#if !keySaved}
+                <div class="fork-row">
+                  <button
+                    class="fork-btn"
+                    class:selected={keyPath === "have"}
+                    onclick={() => (keyPath = "have")}
+                  >
+                    I already have a key
+                  </button>
+                  <button
+                    class="fork-btn"
+                    class:selected={keyPath === "help"}
+                    onclick={() => (keyPath = "help")}
+                  >
+                    Help me get one <span class="fork-sub">(free, ~3 min)</span>
+                  </button>
+                </div>
               {/if}
+
+              {#if keyPath === "help" && !keySaved}
+                <div class="fork-panel">
+                  <p class="hint">
+                    {#if linkClicks === 0}
+                      Opens {ENGINE_COPY[engine].label} in your browser — sign
+                      up if you haven't (Google login works), then come back
+                      here.
+                    {:else}
+                      ✓ Opened {ENGINE_COPY[engine].label}.
+                      <strong>Signed in?</strong> Click again to land on the
+                      keys page, create a key, and copy it.
+                    {/if}
+                  </p>
+                  <button class="btn primary" onclick={openEnginePage}>
+                    {linkClicks === 0
+                      ? `Open ${ENGINE_COPY[engine].label} — sign up or sign in →`
+                      : "Take me to my keys page →"}
+                  </button>
+                  <p class="hint subtle">{ENGINE_COPY[engine].keysHint}</p>
+                </div>
+              {/if}
+
+              {#if keyPath !== null || keySaved}
+                <div class="fork-panel">
+                  <p class="hint">
+                    Paste it below — stored on your machine only
+                    ({keyStoreName}), never sent anywhere except
+                    {ENGINE_COPY[engine].label}.
+                  </p>
+                  <div class="paste-row">
+                    <input
+                      type="password"
+                      placeholder={ENGINE_COPY[engine].placeholder}
+                      bind:value={primaryKey}
+                      disabled={saving || keySaved}
+                    />
+                    <button
+                      class="btn primary"
+                      onclick={verifyAndSave}
+                      disabled={saving || keySaved || !primaryKey.trim()}
+                    >
+                      {#if saving}Verifying…{:else if keySaved}Saved ✓{:else}Verify + save{/if}
+                    </button>
+                  </div>
+                  {#if testState.kind === "ok"}
+                    <div class="status ok">✓ Key works — you're set for transcription</div>
+                  {:else if testState.kind === "error"}
+                    <div class="status error">✗ {testState.msg}</div>
+                  {:else if testState.kind === "testing"}
+                    <div class="status testing">Testing key…</div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        {#if keySaved}
+          <div class="step-block rise optional" style="--d: 80ms" class:done={brainSaved}>
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <h3>
+                Add a cleanup brain
+                <span class="optional-tag">optional, recommended</span>
+              </h3>
+              {#if brainSaved}
+                <p class="hint">
+                  ✓ Covered — cleanup and Draft mode are powered up{engine === "groq"
+                    ? " (your Groq key does both jobs)"
+                    : ""}.
+                </p>
+              {:else}
+                <p class="hint">
+                  Your engine does the listening; polishing filler words and
+                  Draft mode need a language model.
+                  <strong>Gemini</strong> is the recommended pick — generous
+                  free tier, no card. Skipping is fine: plain transcription
+                  works without it, and OpenAI / Groq / Gemini can be added
+                  later in Settings.
+                </p>
+                {#if !brainOpen}
+                  <button class="btn ghost" onclick={() => (brainOpen = true)}>
+                    Set up the free Gemini brain →
+                  </button>
+                {:else}
+                  <button class="btn ghost" onclick={() => openUrlExternal("https://aistudio.google.com/apikey")}>
+                    Open Google AI Studio — get an API key →
+                  </button>
+                  <p class="hint subtle">
+                    Sign in with Google → “Create API key” → copy it → paste below.
+                  </p>
+                  <div class="paste-row">
+                    <input
+                      type="password"
+                      placeholder="AIza..."
+                      bind:value={brainKey}
+                      disabled={brainSaving}
+                    />
+                    <button
+                      class="btn primary"
+                      onclick={verifyAndSaveBrain}
+                      disabled={brainSaving || !brainKey.trim()}
+                    >
+                      {#if brainSaving}Verifying…{:else}Verify + save{/if}
+                    </button>
+                  </div>
+                  {#if brainTest.kind === "ok"}
+                    <div class="status ok">✓ Brain online — cleanup + Draft unlocked</div>
+                  {:else if brainTest.kind === "error"}
+                    <div class="status error">✗ {brainTest.msg}</div>
+                  {:else if brainTest.kind === "testing"}
+                    <div class="status testing">Testing key…</div>
+                  {/if}
+                {/if}
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <div class="cta">
+          <button class="btn ghost" onclick={() => (screen = "welcome")}>← Back</button>
+          <button
+            class="btn primary big"
+            onclick={() => (screen = "demo")}
+            disabled={!keySaved}
+          >
+            Try it now →
+          </button>
+        </div>
+      </section>
+
+    <!-- ═════ SCREEN 3: Demo ════════════════════════════════════════════ -->
+    {:else if screen === "demo"}
+      <section class="screen demo" in:fly={{ y: 22, duration: 380 }}>
+        <h1>Try it now</h1>
+        <p class="tagline">
+          The box below is already focused. Press
+          <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say anything
+          for ~5 seconds, then release.
+        </p>
+
+        <div class="demo-area">
+          <textarea
+            bind:this={demoBox}
+            bind:value={demoText}
+            class="demo-box"
+            class:recording={recState === "recording"}
+            class:thinking={recState === "transcribing" || recState === "cleaning" || recState === "injecting"}
+            placeholder="Press {prettyHotkey(settings.s.light_hotkey)} anywhere — your words appear here."
+            rows="5"
+          ></textarea>
+
+          <div class="rec-ring">
+            {#if recState === "recording"}
+              <div class="ring listening">
+                <span class="ring-label">Listening · {recElapsed.toFixed(1)}s</span>
+                {#if recElapsed < 5}
+                  <span class="ring-hint">keep going to ~5s</span>
+                {:else}
+                  <span class="ring-hint">good — release {prettyHotkey(settings.s.light_hotkey)} when done</span>
+                {/if}
+              </div>
+            {:else if recState === "transcribing"}
+              <div class="ring thinking">
+                <span class="ring-label">Transcribing…</span>
+              </div>
+            {:else if recState === "cleaning" || recState === "injecting"}
+              <div class="ring thinking">
+                <span class="ring-label">Writing it down…</span>
+              </div>
+            {:else if demoCompleted}
+              <div class="ring success">
+                <span class="ring-label">✓ Nice — that's it. Try another?</span>
+                <button class="btn ghost small" onclick={replayDemo}>Clear</button>
+              </div>
+            {:else}
+              <div class="ring idle">
+                <span class="ring-label">Ready — press <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd> to start</span>
+              </div>
             {/if}
           </div>
         </div>
-      {/if}
 
-      <div class="cta">
-        <button class="btn ghost" onclick={() => (screen = "welcome")}>← Back</button>
-        <button
-          class="btn primary big"
-          onclick={() => (screen = "demo")}
-          disabled={!keySaved}
-        >
-          Try it now →
-        </button>
-      </div>
-    </section>
-
-  <!-- ═════ SCREEN 3: Demo ════════════════════════════════════════════ -->
-  {:else if screen === "demo"}
-    <section class="screen demo" in:fly={{ y: 22, duration: 380 }}>
-      <h1>Try it now</h1>
-      <p class="tagline">
-        The box below is already focused. Press
-        <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say anything
-        for ~5 seconds, then release.
-      </p>
-
-      <div class="demo-area">
-        <textarea
-          bind:this={demoBox}
-          bind:value={demoText}
-          class="demo-box"
-          class:recording={recState === "recording"}
-          class:thinking={recState === "transcribing" || recState === "cleaning" || recState === "injecting"}
-          placeholder="Press {prettyHotkey(settings.s.light_hotkey)} anywhere — your words appear here."
-          rows="6"
-        ></textarea>
-
-        <div class="rec-ring">
-          {#if recState === "recording"}
-            <div class="ring listening">
-              <span class="ring-label">Listening · {recElapsed.toFixed(1)}s</span>
-              {#if recElapsed < 5}
-                <span class="ring-hint">keep going to ~5s</span>
-              {:else}
-                <span class="ring-hint">good — release {prettyHotkey(settings.s.light_hotkey)} when done</span>
-              {/if}
-            </div>
-          {:else if recState === "transcribing"}
-            <div class="ring thinking">
-              <span class="ring-label">Transcribing…</span>
-            </div>
-          {:else if recState === "cleaning" || recState === "injecting"}
-            <div class="ring thinking">
-              <span class="ring-label">Writing it down…</span>
-            </div>
-          {:else if demoCompleted}
-            <div class="ring success">
-              <span class="ring-label">✓ Nice — that's it. Try another?</span>
-              <button class="btn ghost small" onclick={replayDemo}>Clear</button>
-            </div>
-          {:else}
-            <div class="ring idle">
-              <span class="ring-label">Ready — press <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd> to start</span>
-            </div>
-          {/if}
+        <div class="tips">
+          <div class="tip-row">
+            <strong>{prettyHotkey(settings.s.drafting_hotkey)} instead</strong>
+            — Draft mode writes the whole thing from the gist. "Email John
+            I'll be late" → a real email.
+          </div>
+          <div class="tip-row">
+            <strong>Need to bail mid-recording?</strong>
+            Press <kbd>Esc</kbd> — stops cleanly without sending anything.
+          </div>
+          <div class="tip-row">
+            <strong>Change hotkeys or providers</strong> any time in Settings.
+          </div>
         </div>
-      </div>
 
-      <div class="tips">
-        <div class="tip-row">
-          <strong>{prettyHotkey(settings.s.drafting_hotkey)} instead</strong>
-          — try it again with {prettyHotkey(settings.s.drafting_hotkey)} to
-          see Draft mode. "Email John I'll be late" → a real email.
+        <div class="cta">
+          <button class="btn ghost" onclick={() => (screen = "setup")}>← Back</button>
+          <button class="btn primary big" onclick={finish}>Finish →</button>
         </div>
-        <div class="tip-row">
-          <strong>Need to bail mid-recording?</strong>
-          Press <kbd>Esc</kbd> — stops cleanly without sending anything.
-        </div>
-        <div class="tip-row">
-          <strong>Box not focused?</strong> Click it once, then press
-          {prettyHotkey(settings.s.light_hotkey)}.
-        </div>
-        <div class="tip-row">
-          <strong>Change hotkeys</strong> any time in
-          Settings → Dictation.
-        </div>
-      </div>
-
-      <div class="cta">
-        <button class="btn ghost" onclick={() => (screen = "setup")}>← Back</button>
-        <button class="btn primary big" onclick={finish}>Finish →</button>
-      </div>
-    </section>
-  {/if}
+      </section>
+    {/if}
+  </div>
 </main>
 
 <style>
@@ -654,22 +768,26 @@
     background: var(--bg-surface);
   }
 
+  /* Full-bleed page: the background paints edge-to-edge at ANY window size
+     (the old layout capped the whole page at 920px and centered it, which
+     read as odd gutters on wide windows). Content centers inside .wrap. */
   .ob {
-    /* Was min-height: 100vh — meant the layout could grow taller than the
-       viewport and the CTA (Finish / Skip) would slide off-screen with no
-       way to reach it. Now: pin to the viewport height, keep the header
-       sticky, and let the SCREEN section own its own scroll. The screen
-       padding-bottom gives the CTA breathing room above the window edge. */
     height: 100vh;
     background: var(--bg-surface);
     color: var(--text-primary);
-    display: flex;
-    flex-direction: column;
-    padding: 24px 32px 0;
-    max-width: 920px;
-    margin: 0 auto;
     overflow: hidden;
     position: relative;
+  }
+
+  .wrap {
+    height: 100%;
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 20px 40px 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 1;
   }
 
   /* ── Ambient drifting colour fields ──────────────────────────────────
@@ -724,11 +842,8 @@
   @media (prefers-reduced-motion: reduce) {
     .blob { animation: none; }
     .rise { animation: none; opacity: 1; }
-    .type-text { animation: none; width: auto; border-right: none; }
+    .hero-key.wiggle { animation: none; }
   }
-
-  /* Everything above the blobs. */
-  .ob-head, .screen { position: relative; z-index: 1; }
 
   /* Staggered entrance for cards/blocks — set --d per element. */
   .rise {
@@ -744,7 +859,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     flex-shrink: 0;
     gap: 12px;
   }
@@ -802,11 +917,11 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 18px;
-    padding: 16px 0 48px;
-    /* Critical: own the overflow so on a short window the user can scroll
-       to the CTA buttons. Previously content pushed Finish off-screen
-       with no scroll bar (reported on a 1366×768 Mac at the Setup screen). */
+    gap: 14px;
+    padding: 10px 0 32px;
+    /* Safety net only: every screen is sized to fit the default 1200×800
+       window with NO scrolling; the scrollbar exists for the 720×480
+       minimum window so the CTA always stays reachable. */
     overflow-y: auto;
     min-height: 0;
     scrollbar-width: thin;
@@ -823,7 +938,7 @@
   }
 
   h1 {
-    font-size: 34px;
+    font-size: 32px;
     font-weight: 700;
     margin: 0;
     letter-spacing: -0.02em;
@@ -841,123 +956,181 @@
     font-size: 15px;
     color: var(--text-secondary);
     margin: 0;
-    max-width: 580px;
+    max-width: 640px;
     line-height: 1.55;
   }
 
-  /* ── Welcome ──────────────────────────────────────────────────────── */
-  .welcome { align-items: flex-start; }
-  .hero-fox {
-    width: 110px;
-    height: auto;
-    align-self: center;
-    margin-bottom: -4px;
-    animation: foxArrival 600ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  }
-
-  @keyframes foxArrival {
-    0%   { opacity: 0; transform: translateY(8px) scale(0.92); }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
+  /* ── Welcome hero ─────────────────────────────────────────────────── */
   .welcome h1, .welcome .tagline {
     align-self: center;
     text-align: center;
   }
 
-  /* Looping-free typewriter line: types once, keeps a soft blinking caret. */
-  .type-demo {
-    align-self: center;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 2px 0 0;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-  .type-text {
-    font-family: ui-monospace, "SF Mono", Cascadia, monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    border-right: 2px solid var(--accent);
-    width: 31ch;
-    animation:
-      typing 2.2s steps(31, end) 700ms both,
-      caret 900ms step-end infinite;
-  }
-  @keyframes typing { from { width: 0; } to { width: 31ch; } }
-  @keyframes caret { 0%, 100% { border-color: var(--accent); } 50% { border-color: transparent; } }
-
-  .mode-row {
+  .hero {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-    margin-top: 12px;
-    width: 100%;
-  }
-
-  .mode-card {
+    grid-template-columns: 150px 190px 1fr;
+    align-items: center;
+    gap: 22px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 16px;
+    border-radius: 18px;
+    padding: 22px 28px;
+    margin-top: 6px;
+    min-height: 208px;
+  }
+
+  .hero-key-zone {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    align-items: center;
+    gap: 10px;
   }
-  .mode-card:hover {
-    transform: translateY(-3px);
-    border-color: var(--accent-soft);
-    box-shadow: 0 8px 22px rgba(184, 84, 18, 0.10);
+  .hero-key {
+    display: grid;
+    place-items: center;
+    transition: transform 160ms ease;
   }
-
-  .mode-card kbd {
-    align-self: flex-start;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+  .hero-key kbd {
+    font-size: 22px;
+    padding: 14px 22px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    border-bottom-width: 6px;
+    background: var(--bg-surface);
+    box-shadow: 0 3px 0 rgba(43, 34, 24, 0.06);
+    transition: transform 140ms ease, border-bottom-width 140ms ease, background 140ms ease;
+  }
+  .hero-key.wiggle { animation: key-wiggle 900ms ease-in-out infinite; }
+  @keyframes key-wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25%      { transform: rotate(-4deg) scale(1.03); }
+    75%      { transform: rotate(4deg) scale(1.03); }
+  }
+  .hero-key.held kbd {
+    transform: translateY(4px);
     border-bottom-width: 2px;
-    border-radius: 6px;
-    padding: 2px 8px;
-    font-family: ui-monospace, "SF Mono", Cascadia, monospace;
+    background: var(--accent-fade);
+    border-color: var(--accent);
+  }
+  .hero-key-hint {
     font-size: 11px;
-    color: var(--text-primary);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 
-  .mode-card h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text-primary);
+  .hero-pet-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
-
-  .mode-card .example {
+  .hero-pet {
+    display: grid;
+    place-items: center;
+  }
+  .hero-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     font-size: 12px;
+    font-weight: 500;
+    padding: 5px 14px;
+    border-radius: 9999px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    transition: all 200ms ease;
+  }
+  .hero-status.listening {
+    background: var(--danger-fade);
+    color: var(--danger);
+    border-color: var(--danger-fade);
+  }
+  .hero-status.thinking {
+    background: var(--info-fade);
+    color: var(--info);
+    border-color: var(--info-fade);
+  }
+  .hero-status.success {
+    background: var(--success-fade);
+    color: var(--success);
+    border-color: var(--success-fade);
+  }
+
+  /* Tiny live "waveform" inside the listening pill. */
+  .hero-wave {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+  }
+  .hero-wave i {
+    width: 3px;
+    background: currentColor;
+    border-radius: 2px;
+    animation: wavebar 700ms ease-in-out infinite;
+  }
+  .hero-wave i:nth-child(1) { animation-delay: 0ms; }
+  .hero-wave i:nth-child(2) { animation-delay: 140ms; }
+  .hero-wave i:nth-child(3) { animation-delay: 280ms; }
+  .hero-wave i:nth-child(4) { animation-delay: 420ms; }
+  @keyframes wavebar {
+    0%, 100% { height: 4px; }
+    50%      { height: 12px; }
+  }
+
+  .hero-out-zone { min-width: 0; }
+  .hero-out {
+    background: var(--bg-surface);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    min-height: 76px;
+    font-size: 14px;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+  .hero-out.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-fade);
+  }
+  .hero-out-text { color: var(--text-primary); }
+  .hero-out-placeholder { color: var(--text-muted); font-style: italic; }
+  .hero-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+  }
+  .hero-caret.blink { animation: caret-blink 900ms step-end infinite; }
+  @keyframes caret-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+  .hero-caption {
+    font-size: 13px;
     color: var(--text-secondary);
     line-height: 1.55;
     margin: 0;
+    align-self: center;
+    text-align: center;
+    max-width: 640px;
   }
+  .hero-caption strong { color: var(--accent); }
 
-  .mode-card .said,
-  .mode-card .written {
-    font-weight: 600;
-    color: var(--text-muted);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    display: inline-block;
-    min-width: 56px;
-  }
-
-  .bonus {
+  .byok {
     background: var(--accent-fade);
     border: 1px solid var(--accent-soft);
     border-radius: 12px;
-    padding: 14px 16px;
+    padding: 13px 16px;
     font-size: 13px;
     color: var(--text-primary);
     line-height: 1.55;
-    margin: 4px 0 0;
+    margin: 0;
   }
 
   /* ── Engine setup ─────────────────────────────────────────────────── */
@@ -965,18 +1138,18 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
-    margin-top: 6px;
+    margin-top: 4px;
   }
   .engine-card {
     text-align: left;
     background: var(--bg-card);
     border: 2px solid var(--border);
     border-radius: 16px;
-    padding: 16px 18px;
+    padding: 14px 18px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 7px;
     font-family: inherit;
     color: var(--text-primary);
     transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
@@ -1044,60 +1217,19 @@
     margin-left: 6px;
     vertical-align: 2px;
   }
-  .step-block.optional .paste-row { margin-top: 10px; }
-
-  .how-free {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 0;
-    margin-top: 0;
-  }
-  .how-free > summary {
-    cursor: pointer;
-    padding: 12px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .how-free > summary::before {
-    content: "▸";
-    color: var(--text-secondary);
-    font-size: 10px;
-    transition: transform 150ms ease;
-    display: inline-block;
-  }
-  .how-free[open] > summary::before {
-    transform: rotate(90deg);
-  }
-  .how-free > summary::-webkit-details-marker { display: none; }
-  .how-free > p {
-    margin: 0;
-    padding: 0 16px 12px 30px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    line-height: 1.55;
-  }
-  .how-free > p:last-child {
-    padding-bottom: 16px;
-  }
 
   .step-block {
     display: grid;
     grid-template-columns: 36px 1fr;
     gap: 14px;
-    padding: 16px 18px;
+    padding: 14px 18px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 14px;
     transition: opacity 200ms ease, border-color 200ms ease;
   }
   .step-block.done {
-    opacity: 0.65;
+    opacity: 0.72;
     border-color: var(--success-fade);
   }
 
@@ -1116,14 +1248,16 @@
   .step-block.done .step-num {
     background: var(--success-fade);
     color: var(--success);
+    font-size: 0; /* hide the number, show only the check */
   }
   .step-block.done .step-num::before {
     content: "✓";
+    font-size: 14px;
   }
 
   .step-body h3 {
     font-size: 15px;
-    margin: 0 0 6px;
+    margin: 0 0 8px;
     color: var(--text-primary);
   }
 
@@ -1136,6 +1270,42 @@
   .step-body .hint.subtle {
     font-size: 12px;
     margin-top: 8px;
+  }
+
+  /* The mandatory fork: already-have vs help-me-get. */
+  .fork-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .fork-btn {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 16px;
+    cursor: pointer;
+    transition: border-color 140ms ease, background 140ms ease, transform 80ms ease;
+  }
+  .fork-btn:hover { border-color: var(--accent-soft); }
+  .fork-btn.selected {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+  }
+  .fork-btn .fork-sub {
+    color: var(--text-muted);
+    font-weight: 400;
+    font-size: 12px;
+  }
+
+  .fork-panel {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border-subtle);
   }
 
   .paste-row {
@@ -1180,7 +1350,7 @@
 
   .demo-box {
     width: 100%;
-    min-height: 130px;
+    min-height: 120px;
     padding: 16px 18px;
     font-size: 15px;
     line-height: 1.55;
@@ -1250,7 +1420,7 @@
     background: var(--bg-subtle);
     border-radius: 12px;
     padding: 14px 16px;
-    margin-top: 8px;
+    margin-top: 6px;
   }
   .tip-row {
     font-size: 12px;
@@ -1264,9 +1434,12 @@
     display: flex;
     gap: 10px;
     align-items: center;
-    margin-top: 20px;
+    justify-content: center;
+    margin-top: auto;
+    padding-top: 16px;
     flex-wrap: wrap;
   }
+  .setup .cta, .demo .cta { justify-content: flex-start; }
 
   .btn {
     border: none;
@@ -1306,12 +1479,17 @@
     color: var(--text-primary);
   }
 
-  /* Narrow window — stack the cards vertically. */
-  @media (max-width: 760px) {
-    .mode-row { grid-template-columns: 1fr; }
+  /* Narrow window — stack the hero and cards vertically. */
+  @media (max-width: 860px) {
+    .hero {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      gap: 14px;
+      padding: 18px;
+    }
+    .hero-out-zone { width: 100%; }
     .engine-row { grid-template-columns: 1fr; }
-    .hero-fox { width: 90px; }
-    h1 { font-size: 28px; }
-    .type-demo { display: none; }
+    h1 { font-size: 27px; }
+    .wrap { padding: 16px 20px 0; }
   }
 </style>

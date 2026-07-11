@@ -4,18 +4,12 @@
 //! park it on a dedicated audio worker thread and expose a Send/Sync handle
 //! (`AudioController`) that the Flow layer calls into.
 //!
-//! **Warm-paused mic:** WASAPI shared-mode initialization (esp. Realtek HD
-//! with audio enhancements, or Bluetooth) can take 3–6 seconds on the very
-//! first `stream.play()`. To avoid that latency on every F8 press, we:
-//!   1. Build + play the cpal stream at app startup (warmup happens here)
-//!   2. Immediately pause it — stream stays alive, mic samples stop flowing
-//!   3. On F8 press: `stream.play()` — resumes in <50ms (already warm)
-//!   4. On F8 release: `stream.pause()` — samples stop, stream stays warm
-//!
-//! Result: first dictation may have warmup-cost during onboarding, every
-//! subsequent press is near-instant. Other apps (Teams, Zoom) can still
-//! read the mic in WASAPI shared mode — only the "mic in use" indicator
-//! stays lit because our stream object is alive.
+//! **Cold-start capture:** a fresh cpal stream is built on every press and
+//! dropped on release (see `worker_loop`). The old "warm-paused" design —
+//! stream built at startup and kept alive forever — was retired: it pinned
+//! the "mic in use" indicator on, and a permanently-open WASAPI stream makes
+//! Windows hold an "audio stream is currently in use" power request that
+//! blocks system sleep. Cost per press: ~200ms build + driver warmup.
 
 use std::fs::File;
 use std::io::BufWriter;
