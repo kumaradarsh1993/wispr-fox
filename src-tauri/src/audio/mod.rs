@@ -47,6 +47,13 @@ pub struct FinishedRecording {
     /// (device switch, format change, buffer disconnect). A strong signal that
     /// audio was lost even if `captured_ms` looks plausible.
     pub stream_errored: bool,
+    /// Time from the Start command reaching the audio worker to the FIRST
+    /// cpal callback delivering samples — i.e. how long the microphone took
+    /// to actually wake up after the key went down. Words spoken inside this
+    /// window are simply not in the WAV (head-gap). Healthy devices: well
+    /// under 500ms. Windows "audio enhancements" / exclusive-mode arbitration
+    /// can stretch it to 3–8s. -1 if no callback ever fired.
+    pub mic_ready_ms: i64,
 }
 
 enum AudioCmd {
@@ -119,6 +126,10 @@ struct ActiveRecording {
     samples_written: Arc<AtomicU64>,
     /// Set by the cpal error callback if the stream faults mid-recording.
     stream_error: Arc<AtomicBool>,
+    /// When the Start command was received — the anchor for `mic_ready_ms`.
+    cmd_received_at: Instant,
+    /// Stamped by the capture callback when the first buffer arrives.
+    first_callback: Arc<Mutex<Option<Instant>>>,
 }
 
 fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
@@ -150,7 +161,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
 
                 // Build a fresh stream + open WAV writer.
                 match begin_cold_recording(&path, &writer, level.clone()) {
-                    Ok((stream, sample_rate, samples_written, stream_error)) => {
+                    Ok((stream, sample_rate, samples_written, stream_error, first_callback)) => {
                         let setup_ms = t0.elapsed().as_millis();
                         tracing::info!(?path, setup_ms, sample_rate, "recording started (cold)");
                         active = Some(ActiveRecording {
@@ -160,6 +171,8 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                             sample_rate,
                             samples_written,
                             stream_error,
+                            cmd_received_at: t0,
+                            first_callback,
                         });
                         let _ = reply.send(Ok(()));
                     }
@@ -201,6 +214,13 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                         tracing::warn!("WAV finalize error: {e}");
                     }
                 }
+                // Head-gap: how long the mic took to wake up after the key
+                // went down. Anything the user said before the first callback
+                // never reached the WAV.
+                let mic_ready_ms = (*rec.first_callback.lock())
+                    .map(|t| t.saturating_duration_since(rec.cmd_received_at).as_millis() as i64)
+                    .unwrap_or(-1);
+
                 let ActiveRecording {
                     path,
                     _stream,
@@ -238,6 +258,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                     duration_ms,
                     captured_ms,
                     stream_errored,
+                    mic_ready_ms,
                 }));
             }
         }
@@ -252,7 +273,7 @@ fn begin_cold_recording(
     out_path: &Path,
     writer: &SharedWriter,
     level: Arc<AtomicU32>,
-) -> Result<(Stream, u32, Arc<AtomicU64>, Arc<AtomicBool>)> {
+) -> Result<(Stream, u32, Arc<AtomicU64>, Arc<AtomicBool>, Arc<Mutex<Option<Instant>>>)> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -286,6 +307,7 @@ fn begin_cold_recording(
 
     let samples_written = Arc::new(AtomicU64::new(0));
     let stream_error = Arc::new(AtomicBool::new(false));
+    let first_callback: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
     // Mid-recording stream faults (device switch, format change, buffer
     // disconnect) used to be logged and forgotten — the callbacks would stop,
@@ -300,15 +322,15 @@ fn begin_cold_recording(
     };
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
-        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
-        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), err_fn),
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     }?;
 
     stream.play().with_context(|| format!("stream.play() on device '{device_name}'"))?;
 
-    Ok((stream, sample_rate, samples_written, stream_error))
+    Ok((stream, sample_rate, samples_written, stream_error, first_callback))
 }
 
 fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
@@ -332,15 +354,14 @@ fn build_stream<T>(
     input_channels: u16,
     level: Arc<AtomicU32>,
     samples_written: Arc<AtomicU64>,
+    first_callback: Arc<Mutex<Option<Instant>>>,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
     T: cpal::SizedSample + ToI16Sample + Send + 'static,
 {
     use std::sync::atomic::AtomicU64;
-    use std::time::Instant;
 
-    let first_callback = Arc::new(Mutex::new(None::<Instant>));
     let callback_count = Arc::new(AtomicU64::new(0));
 
     let fc = first_callback.clone();

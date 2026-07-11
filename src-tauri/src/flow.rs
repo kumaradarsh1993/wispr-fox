@@ -27,6 +27,11 @@ use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
 
+/// One-per-run latch for the slow-mic floater warning. Affected devices are
+/// slow on EVERY press — warning once is enough to send the user to the mic
+/// settings without nagging them every dictation.
+static SLOW_MIC_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Pretty display name for a provider id (as returned by `*.name()`).
 fn pretty_provider(name: &str) -> &str {
     match name {
@@ -681,6 +686,7 @@ impl Flow {
             duration_ms,
             captured_ms,
             stream_errored,
+            mic_ready_ms,
         } = self.audio.stop().await?;
         crate::audio::cues::play_stop();
         self.history
@@ -714,6 +720,40 @@ impl Flow {
                 captured_ms,
                 stream_errored,
                 "capture gap — transcript will be truncated"
+            );
+        }
+
+        // Mic wake-up (head-gap) telemetry. `mic_ready_ms` is key-down →
+        // first audio callback: anything the user said in that window never
+        // reached the WAV, and the wall-clock timer can't see it either
+        // (it also starts late). Emitted on EVERY recording so the
+        // onboarding demo doubles as a mic health-check; the floater warning
+        // fires once per run for pathological wake-ups (typically Windows
+        // "audio enhancements" / exclusive-mode arbitration on the mic).
+        tl.mark(format!(
+            "mic wake-up · {:.2}s",
+            (mic_ready_ms.max(0) as f64) / 1000.0
+        ));
+        #[derive(Clone, serde::Serialize)]
+        struct MicDiag {
+            mic_ready_ms: i64,
+            duration_ms: i64,
+            captured_ms: i64,
+            stream_errored: bool,
+        }
+        let _ = app.emit(
+            "wispr:mic_diag",
+            MicDiag { mic_ready_ms, duration_ms, captured_ms, stream_errored },
+        );
+        if mic_ready_ms > 2500
+            && !SLOW_MIC_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            let _ = app.emit(
+                "wispr:clippy_warning",
+                format!(
+                    "Your mic took {:.1}s to wake up — the first words of every recording are being cut. Usual fix: turn OFF the mic's audio enhancements and exclusive control (Sound settings → your microphone → Properties).",
+                    (mic_ready_ms as f64) / 1000.0
+                ),
             );
         }
 

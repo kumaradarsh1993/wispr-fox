@@ -265,6 +265,28 @@
   let demoCompleted = $state(false);
   let recTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Mic health-check. Rust emits wispr:mic_diag after every recording:
+  // mic_ready_ms is key-down → first audio callback (the head-gap — words
+  // spoken in that window never reach the WAV), and captured vs duration
+  // exposes a mic that died mid-recording. The demo doubles as the moment
+  // we surface both, with the concrete Windows settings that fix the
+  // slow-wake case (audio enhancements / exclusive control — discovered
+  // the hard way on an Alienware 15R4).
+  type MicDiag = {
+    mic_ready_ms: number;
+    duration_ms: number;
+    captured_ms: number;
+    stream_errored: boolean;
+  };
+  let micDiag = $state<MicDiag | null>(null);
+  const SLOW_MIC_MS = 1200;
+  const micSlow = $derived(micDiag !== null && micDiag.mic_ready_ms >= SLOW_MIC_MS);
+  const micDropped = $derived(
+    micDiag !== null &&
+    (micDiag.stream_errored || micDiag.captured_ms + 1000 < micDiag.duration_ms),
+  );
+  const micHealthy = $derived(micDiag !== null && !micSlow && !micDropped);
+
   function startRecCounter() {
     recElapsed = 0;
     if (recTimer) clearInterval(recTimer);
@@ -315,6 +337,7 @@
   // teardown directly in Svelte 5 (return type is Promise<void>, not a
   // disposer). onDestroy below picks these up.
   let unlistenState: (() => void) | null = null;
+  let unlistenMicDiag: (() => void) | null = null;
   let priorTheme: string | null = null;
 
   onMount(async () => {
@@ -342,6 +365,10 @@
       }
     });
 
+    unlistenMicDiag = await listen<MicDiag>("wispr:mic_diag", (e) => {
+      micDiag = e.payload;
+    });
+
     // Force light theme during onboarding — first-run shouldn't be the
     // moment the user hits any dark-mode rough edges.
     priorTheme = document.body.getAttribute("data-theme");
@@ -350,6 +377,7 @@
 
   onDestroy(() => {
     unlistenState?.();
+    unlistenMicDiag?.();
     if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
     stopRecCounter();
   });
@@ -694,7 +722,9 @@
         <p class="tagline">
           The box below is already focused. Press
           <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say anything
-          for ~5 seconds, then release.
+          for ~5 seconds, then release. This demo doubles as a
+          <strong>mic health-check</strong> — we measure how fast your
+          microphone actually starts, and flag settings worth fixing.
         </p>
 
         <div class="demo-area">
@@ -737,6 +767,54 @@
               </div>
             {/if}
           </div>
+
+          {#if micDiag && recState === "idle"}
+            {#if micSlow}
+              <div class="mic-check warn">
+                <div class="mic-check-head">
+                  ⚠ Your mic took <strong>{(micDiag.mic_ready_ms / 1000).toFixed(1)}s</strong>
+                  to wake up — the first words of every recording are at risk.
+                </div>
+                {#if isMac()}
+                  <p>
+                    Try a wired or built-in mic (Bluetooth headsets are the
+                    usual culprit on Mac), then press
+                    {prettyHotkey(settings.s.light_hotkey)} here again — the
+                    wake-up time should drop well under half a second.
+                  </p>
+                {:else}
+                  <p>
+                    The usual fix on Windows: open
+                    <strong>Settings → System → Sound</strong>, click your
+                    microphone → <strong>Properties</strong>, then turn
+                    <strong>audio enhancements off</strong> and untick
+                    <strong>“Allow applications to take exclusive
+                    control”</strong> (under Advanced). Come back and press
+                    {prettyHotkey(settings.s.light_hotkey)} again — the
+                    wake-up time should drop well under half a second.
+                  </p>
+                {/if}
+              </div>
+            {:else if micDropped}
+              <div class="mic-check warn">
+                <div class="mic-check-head">
+                  ⚠ Your mic dropped mid-recording — only
+                  <strong>{(micDiag.captured_ms / 1000).toFixed(1)}s</strong>
+                  of {(micDiag.duration_ms / 1000).toFixed(1)}s was captured.
+                </div>
+                <p>
+                  Something interrupted the microphone stream (a Bluetooth
+                  headset switching profiles is a common cause). Try again —
+                  if it keeps happening, switch to a wired or built-in mic.
+                </p>
+              </div>
+            {:else if micHealthy}
+              <div class="mic-check ok">
+                ✓ Mic wake-up: <strong>{(Math.max(micDiag.mic_ready_ms, 0) / 1000).toFixed(2)}s</strong>
+                — instant handover, nothing gets cut.
+              </div>
+            {/if}
+          {/if}
         </div>
 
         <div class="tips">
@@ -1412,6 +1490,32 @@
   .ring-label { font-weight: 500; }
   .ring-hint { color: var(--text-secondary); font-size: 12px; }
   .ring.listening .ring-hint { color: inherit; opacity: 0.75; }
+
+  /* Mic health-check verdicts under the demo box. */
+  .mic-check {
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .mic-check.ok {
+    background: var(--success-fade);
+    color: var(--success);
+    border: 1px solid var(--success-fade);
+    align-self: center;
+  }
+  .mic-check.warn {
+    background: var(--danger-fade);
+    border: 1px solid var(--danger-fade);
+    color: var(--text-primary);
+  }
+  .mic-check-head {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--danger);
+  }
+  .mic-check p { margin: 0; color: var(--text-secondary); }
+  .mic-check strong { color: inherit; }
 
   .tips {
     display: flex;
