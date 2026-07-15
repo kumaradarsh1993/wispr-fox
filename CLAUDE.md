@@ -13,11 +13,17 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v2.0.0`** (Latest, 2026-06-30) — user-confirmed working,
-promoted from the Codex `v1.4.0-nightly.12` line plus the final v2.0.0
-floater bubble/readability correction. Single owner, no paid users.
-**Nightly: `v2.1.0-nightly.6`** (2026-07-06) — the whole v2.1.0 line is
-unreleased-to-stable (needs a "ship it" signal + user testing). Canonical mode
+**Current stable: `v2.1.0`** (Latest, 2026-07-15) — promoted from `nightly.10`
+on the user's signal. The v2.1.0 line = pixel pets + wave/siri skins,
+avatar-visibility tri-state, auto-titles, rebuilt onboarding, per-recording
+flight recorder, mic-drop + mic-wake-up diagnostics, and the sleep-blocker fix.
+Single owner, no paid users. **Nightly: `v2.2.0-nightly.1`** (2026-07-15) —
+**audio file upload** (drag-drop / picker → transcribe existing audio; per-batch
+provider + clean-up/draft; "Uploaded" badge via a new `source` column;
+`Flow::transcribe_file` / `transcribe_upload` / `UploadDialog.svelte`). A
+password-gated browser sibling lives at `../wispr-fox-web/` (SvelteKit + Vercel,
+deploy pending). The rest of this section documents the v2.1.0 line; canonical
+mode
 names are now **Transcribe**/**Draft** everywhere (Raw/Cleaned/Drafted are
 version tabs only); sidebar widened (user explicitly keeps its quick settings);
 avatar-visibility tri-state; **wave** + **siri** minimal skins; **Codex pixel

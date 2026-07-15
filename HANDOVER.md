@@ -4,7 +4,7 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-07-12** (v2.1.0-nightly.9).
+> **Last updated: 2026-07-15** (v2.1.0 stable + v2.2.0-nightly.1 audio upload).
 
 ---
 
@@ -19,13 +19,23 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
-- **Stable: `v2.0.0`** (2026-06-30, "Latest") — user-confirmed working.
-  Provider expansion (Groq/OpenAI/Deepgram/ElevenLabs STT; Groq/Gemini/OpenAI
-  LLM), keyring-first key storage, Settings/sidebar cleanup, raster avatars,
-  analytics dashboard, the constrained two-box floater.
-- **Nightly: `v2.1.0-nightly.9`** (2026-07-12) — the whole v2.1.0 line is
-  unreleased-to-stable. It needs a "ship it" signal + user testing before
-  promotion. What's accumulated in the nightly cycle:
+- **Stable: `v2.1.0`** (2026-07-15, "Latest") — promoted from `nightly.10` on the
+  user's "promote to stable" signal. The whole v2.1.0 line: pixel pets + wave/siri
+  minimal skins, avatar-visibility tri-state, auto-titles, reimagined+rebuilt
+  onboarding, per-recording flight recorder, mic-drop detection, mic wake-up
+  health-check, and the sleep-blocker fix. (Superseded v2.0.0.)
+- **Nightly: `v2.2.0-nightly.1`** (2026-07-15) — **audio file upload**. Drag an
+  audio file onto History (or the Upload button → file picker) to transcribe
+  voice memos / recordings, not just the mic. Per-batch provider/model + clean-up
+  /draft choices in a modal; rows carry an "Uploaded" badge (new `source` column).
+  Backend: `Flow::transcribe_file` + `run_upload_pipeline` (no injection, no
+  mic-specific telemetry); STT providers now forward uploads with the correct
+  MIME per extension (m4a/mp3/etc. — no local transcoding). `transcribe_upload`
+  command. See `src/lib/UploadDialog.svelte`.
+- **Sibling project: `../wispr-fox-web/`** — password-gated browser version
+  (SvelteKit + Vercel serverless proxy). Separate repo, deploy pending. See its
+  own `HANDOVER`-equivalent `README.md` / `DEPLOY.md`.
+- The v2.1.0 nightly cycle that led to stable (kept for history):
 
   | Nightly | What landed |
   |---|---|
@@ -47,10 +57,9 @@ AppImage/deb/rpm) on CI from the tagged commit.
    `.github/workflows/release.yml` per `docs/MACOS_SIGNING.md`. Fixes the
    Accessibility re-grant reset on every update AND the Mac auto-paste report.
    Long-standing, still pending.
-2. **v2.1.0 stable promotion** — awaits user testing of the nightly cycle +
-   an explicit "ship it". Then bump `package.json` + `tauri.conf.json` +
-   **`Cargo.toml`** together (the missing Cargo.toml bump at v2.0.0 caused a
-   phantom "update available" banner) and publish non-prerelease `--latest`.
+2. **v2.1.0 stable — SHIPPED 2026-07-15.** (Done: tagged `v2.1.0` on the
+   nightly.10 commit, CI published it as Latest.) The v2.2.0 line is now the
+   active nightly cycle, opened by the audio-upload feature.
 3. **Pet importer + one original pet** (from the pets work) — ship an
    importer (Settings → Appearance "Import pet", Codex `pet.json` format, or
    fetch-from-CDN into appdata) rather than bundling more third-party art, and
