@@ -6,7 +6,9 @@
   import HistoryRow from "$lib/HistoryRow.svelte";
   import StatsWidget from "$lib/StatsWidget.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
+  import DeleteDialog from "$lib/DeleteDialog.svelte";
   import { settings } from "$lib/settings-store.svelte";
+  import { account } from "$lib/account-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
 
   let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
@@ -31,6 +33,7 @@
   onMount(() => {
     history.refresh();
     history.subscribe();
+    account.init();
 
     // Window-wide drag-and-drop. Tauri delivers real filesystem paths here
     // (HTML5 drag-drop in a webview can't see them), so this is the reliable
@@ -40,7 +43,10 @@
     getCurrentWebview()
       .onDragDropEvent((event) => {
         const p = event.payload;
-        if (p.type === "enter" || p.type === "over") {
+        if (p.type === "enter") {
+          // Only the "enter" (and "drop") payloads carry `paths`; "over" does
+          // not. Reading it there is a type error, so gate on "enter" only —
+          // dragActive stays sticky through the subsequent "over" events.
           dragActive = (p.paths ?? []).some(isAudioPath) || dragActive;
         } else if (p.type === "leave") {
           dragActive = false;
@@ -106,31 +112,37 @@
     return order.map((label) => ({ label, items: buckets[label] }));
   });
 
-  // Press-and-hold-to-confirm clear. Holding the button for HOLD_MS deletes
-  // everything (DB rows + transcripts + the .wav files on disk). Releasing
-  // early cancels — no accidental nukes, no modal dialog.
-  const HOLD_MS = 3000;
+  // Press-and-hold (~1.5s) to open the delete dialog. A visual fill sweeps
+  // while held; releasing early cancels and shows a "hold to delete" hint.
+  // The dialog (not the hold itself) is where the user picks what/where.
+  const HOLD_MS = 1500;
   let holdActive = $state(false);
   let holdProgress = $state(0); // 0..1
-  let clearing = $state(false);
   let clearedMsg = $state("");
+  let hintMsg = $state("");
+  let deleteOpen = $state(false);
   let _holdStart = 0;
   let _holdRAF: number | null = null;
+  let _reachedFull = false;
 
   function holdTick() {
     const t = Math.min(1, (Date.now() - _holdStart) / HOLD_MS);
     holdProgress = t;
     if (t >= 1) {
       _holdRAF = null;
-      void doClear();
+      _reachedFull = true;
+      holdActive = false;
+      holdProgress = 0;
+      deleteOpen = true;
       return;
     }
     _holdRAF = requestAnimationFrame(holdTick);
   }
   function startHold() {
-    if (clearing) return;
     holdActive = true;
     clearedMsg = "";
+    hintMsg = "";
+    _reachedFull = false;
     _holdStart = Date.now();
     _holdRAF = requestAnimationFrame(holdTick);
   }
@@ -139,22 +151,18 @@
       cancelAnimationFrame(_holdRAF);
       _holdRAF = null;
     }
+    // A quick click (released before the fill completed) = show the hint.
+    if (holdActive && !_reachedFull) {
+      hintMsg = "Hold to delete";
+      setTimeout(() => (hintMsg = ""), 2500);
+    }
     holdActive = false;
     holdProgress = 0;
   }
-  async function doClear() {
-    cancelHold();
-    clearing = true;
-    try {
-      const removed = await api.clearAllHistory();
-      await history.refresh();
-      clearedMsg = `Deleted ${removed} recording${removed === 1 ? "" : "s"} + audio files.`;
-    } catch (e) {
-      clearedMsg = `Clear failed: ${e}`;
-    } finally {
-      clearing = false;
-      setTimeout(() => (clearedMsg = ""), 4000);
-    }
+  function onDeleted() {
+    void history.refresh();
+    clearedMsg = "Done.";
+    setTimeout(() => (clearedMsg = ""), 3000);
   }
 
   async function openRecordingsFolder() {
@@ -227,21 +235,21 @@
         <button
           class="hold-clear"
           class:armed={holdActive}
-          disabled={clearing}
           style="--hold:{holdProgress}"
           onmousedown={startHold}
           onmouseup={cancelHold}
           onmouseleave={cancelHold}
-          title="Press and hold 3 seconds to delete all recordings and audio files"
+          title="Press and hold to delete recordings"
         >
           <span class="hold-fill"></span>
           <span class="hold-text">
             <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
               <path d="M 3 4.5 H 13 M 6.5 4.5 V 3.2 A 0.7 0.7 0 0 1 7.2 2.5 H 8.8 A 0.7 0.7 0 0 1 9.5 3.2 V 4.5 M 4.5 4.5 L 5 12.5 A 1 1 0 0 0 6 13.4 H 10 A 1 1 0 0 0 11 12.5 L 11.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            {#if clearing}Clearing…{:else if holdActive}Keep holding to delete…{:else}Clear all{/if}
+            {#if holdActive}Keep holding…{:else}Clear all{/if}
           </span>
         </button>
+        {#if hintMsg}<span class="cleared-msg">{hintMsg}</span>{/if}
         {#if clearedMsg}<span class="cleared-msg">{clearedMsg}</span>{/if}
       </div>
     </div>
@@ -296,6 +304,10 @@
   {/if}
 
   <UploadDialog bind:open={uploadOpen} bind:paths={stagedPaths} />
+
+  <!-- Reworked delete (v3.0.0): released by the press-and-hold "Clear all"
+       control above. Targets everything (ids=null). -->
+  <DeleteDialog bind:open={deleteOpen} ids={null} label="all recordings" onDone={onDeleted} />
 
   <!-- Ambient pastoral meadow pinned to the bottom of the pane (design
        playbook: "the bottom sticky wave"). Sits BEHIND the row cards

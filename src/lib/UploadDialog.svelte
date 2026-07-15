@@ -89,7 +89,7 @@
   }
 
   function removePath(p: string) {
-    paths = paths.filter((x) => x !== p);
+    paths = paths.filter((x: string) => x !== p);
   }
 
   function close() {

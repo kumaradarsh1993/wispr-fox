@@ -62,6 +62,7 @@ const FALLBACK: AppSettings = {
   force_clean_hotkey: "Shift+F8",
   force_clean_sticky_hotkey: "Shift+Super+F8",
   adapt_to_app: true,
+  device_name: "",
 };
 
 class SettingsStore {

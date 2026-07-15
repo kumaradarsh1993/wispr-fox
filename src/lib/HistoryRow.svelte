@@ -3,6 +3,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { history } from "./history-store.svelte";
   import { api, type Recording } from "./api";
+  import DeleteDialog from "./DeleteDialog.svelte";
 
   let { rec } = $props<{ rec: Recording }>();
 
@@ -161,6 +162,23 @@
     return `${m}m ${s % 60}s`;
   }
 
+  // Platform badge — Desktop / Web / Mobile — shown next to the "Uploaded"
+  // badge. Rows synced from another device carry remote=1 and have no local
+  // audio, so playback is hidden for them.
+  function platformLabel(p: string): string {
+    if (p === "web") return "Web";
+    if (p === "mobile") return "Mobile";
+    return "Desktop";
+  }
+  let platformTitle = $derived(
+    rec.device_name ? `${platformLabel(rec.platform)} · ${rec.device_name}` : platformLabel(rec.platform),
+  );
+  // Only surface a platform badge for rows that came from elsewhere — a plain
+  // local Desktop row doesn't need a "Desktop" tag cluttering every card. Once
+  // any sync has happened (remote rows exist, or a row is explicitly web/
+  // mobile), the badge earns its place.
+  let showPlatformBadge = $derived(rec.remote || rec.platform === "web" || rec.platform === "mobile");
+
   async function ensureAudioUrl() {
     if (audioUrl) return;
     try {
@@ -230,14 +248,15 @@
     }
   }
 
-  async function remove() {
-    if (!confirm("Delete this recording (text + audio)?")) return;
-    busy = true;
-    try {
-      await history.remove(rec.id);
-    } finally {
-      busy = false;
-    }
+  // Per-row delete now opens the reworked dialog (voice files / transcripts,
+  // this-device / everywhere). Signed-in users get the "Everywhere" option
+  // for free via the shared dialog.
+  let deleteOpen = $state(false);
+  function remove() {
+    deleteOpen = true;
+  }
+  function onDeleted() {
+    void history.refresh();
   }
 
   async function retry() {
@@ -321,6 +340,9 @@
           Uploaded
         </span>
       {/if}
+      {#if showPlatformBadge}
+        <span class="plat-badge" title={platformTitle}>{platformLabel(rec.platform)}</span>
+      {/if}
       <!-- LLM-generated one-line name (auto-title). Arrives a beat after the
            run finishes; until then the time + duration carry the header. -->
       {#if rec.title}
@@ -391,6 +413,10 @@
       {/if}
 
       <div class="actions">
+      <!-- Play is hidden for remote rows (synced from another device): audio
+           never leaves the device that recorded it, so there's nothing local
+           to play. -->
+      {#if !rec.remote}
       <button class="action-btn play" onclick={togglePlay} disabled={busy} title="Play / pause audio">
         {#if playing}
           <svg viewBox="0 0 16 16" width="14" height="14"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg>
@@ -398,6 +424,7 @@
           <svg viewBox="0 0 16 16" width="14" height="14"><path d="M 5 3 L 13 8 L 5 13 Z" fill="currentColor"/></svg>
         {/if}
       </button>
+      {/if}
 
       <!-- Copy: only meaningful when there's actual text. Hidden on
            rows that errored before producing a transcript. -->
@@ -622,6 +649,10 @@
   {/if}
 </div>
 
+<!-- Sits outside the row so the overlay isn't clipped by the card. Clicks on
+     the dialog stop propagation, so opening it never toggles row expansion. -->
+<DeleteDialog bind:open={deleteOpen} ids={[rec.id]} label="this recording" onDone={onDeleted} />
+
 <style>
   /* Each recording is its own floating card on the cream surface (design
      playbook mock) — rounded, bordered, with gaps between cards instead of
@@ -770,6 +801,23 @@
     letter-spacing: 0.02em;
     background: var(--accent-fade);
     color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  /* Platform badge — which device (Desktop / Web / Mobile) a synced row came
+     from. Neutral tone so it reads as metadata, distinct from the accent
+     "Uploaded" pill. */
+  .plat-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
     flex-shrink: 0;
   }
 

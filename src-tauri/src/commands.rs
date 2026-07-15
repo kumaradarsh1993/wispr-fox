@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio;
 use crate::flow::Flow;
@@ -366,6 +366,223 @@ pub fn delete_recording(history: State<'_, History>, id: String) -> Result<(), S
     history.delete(&id).map_err(|e| e.to_string())
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Accounts + cross-device sync (v3.0.0)
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct AuthStatus {
+    /// Whether this build has a real Supabase project baked in. When false,
+    /// the account UI shows "Sync not configured in this build" and behaves
+    /// signed-out no matter what.
+    pub configured: bool,
+    pub signed_in: bool,
+    pub email: Option<String>,
+    pub user_id: Option<String>,
+}
+
+#[tauri::command]
+pub fn auth_status() -> AuthStatus {
+    let configured = crate::sync::config::is_configured();
+    let user = if configured {
+        crate::sync::auth::current_user()
+    } else {
+        None
+    };
+    AuthStatus {
+        configured,
+        signed_in: user.is_some(),
+        email: user.as_ref().map(|u| u.email.clone()),
+        user_id: user.as_ref().map(|u| u.user_id.clone()),
+    }
+}
+
+/// Shared post-sign-in bookkeeping: on first sign-in, mark all existing
+/// `done` rows dirty so the user's whole local history pushes up, then kick
+/// a sync cycle in the background.
+fn after_sign_in(app: &AppHandle) {
+    if let Some(history) = app.try_state::<History>() {
+        match history.mark_all_done_dirty() {
+            Ok(n) => tracing::info!(rows = n, "sync: marked existing history dirty for initial push"),
+            Err(e) => tracing::warn!("sync: initial dirty-mark failed: {e:#}"),
+        }
+    }
+    if let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() {
+        let engine = engine.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            engine.sync_once().await;
+        });
+    }
+}
+
+#[tauri::command]
+pub async fn sign_in_email(
+    app: AppHandle,
+    email: String,
+    password: String,
+) -> Result<AuthStatus, String> {
+    crate::sync::auth::sign_in_email(email, password)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    after_sign_in(&app);
+    Ok(auth_status())
+}
+
+#[tauri::command]
+pub async fn sign_up_email(
+    app: AppHandle,
+    email: String,
+    password: String,
+) -> Result<AuthStatus, String> {
+    crate::sync::auth::sign_up_email(email, password)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    after_sign_in(&app);
+    Ok(auth_status())
+}
+
+#[tauri::command]
+pub async fn sign_in_google(app: AppHandle) -> Result<AuthStatus, String> {
+    crate::sync::auth::sign_in_google(app.clone())
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    after_sign_in(&app);
+    Ok(auth_status())
+}
+
+#[tauri::command]
+pub fn cancel_google_sign_in() {
+    crate::sync::auth::cancel_google_sign_in();
+}
+
+#[tauri::command]
+pub async fn sign_out() -> Result<AuthStatus, String> {
+    crate::sync::auth::sign_out().await;
+    Ok(auth_status())
+}
+
+/// Manual "Sync now" from Settings → Account.
+#[tauri::command]
+pub async fn sync_now(app: AppHandle) -> Result<(), String> {
+    if let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() {
+        let engine = engine.inner().clone();
+        engine.sync_once().await;
+    }
+    Ok(())
+}
+
+/// Update this install's device name (shown as "Desktop · <name>" on synced
+/// rows). Persists into the live Flow settings; the frontend also writes it
+/// into its own settings store so it survives a restart.
+#[tauri::command]
+pub fn set_device_name(flow: State<'_, Flow>, name: String) {
+    let mut s = flow.settings();
+    s.device_name = name;
+    flow.set_settings(s);
+}
+
+/// The reworked delete (v3.0.0). See SYNC_DESIGN.md "Delete rework":
+///   - `what.audio`       delete local voice files
+///   - `what.transcripts` delete the transcript rows
+///   - scope "device"     local only (transcripts → add to sync_exclusions
+///                        when signed in, so a pull won't resurrect them)
+///   - scope "everywhere" tombstone the cloud rows (deleted_at + null text),
+///                        then delete locally; other devices apply on pull
+/// `ids = None` means "all recordings".
+#[derive(Deserialize)]
+pub struct DeleteWhat {
+    pub audio: bool,
+    pub transcripts: bool,
+}
+
+#[tauri::command]
+pub async fn delete_recordings(
+    app: AppHandle,
+    history: State<'_, History>,
+    scope: String,
+    what: DeleteWhat,
+    ids: Option<Vec<String>>,
+) -> Result<u64, String> {
+    if !what.audio && !what.transcripts {
+        return Ok(0);
+    }
+    let everywhere = scope == "everywhere";
+    let signed_in = crate::sync::config::is_configured()
+        && crate::sync::auth::current_user().is_some();
+
+    // Resolve the target id set.
+    let target_ids: Vec<String> = match ids {
+        Some(list) => list,
+        None => history
+            .list_recent(100_000)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.id)
+            .collect(),
+    };
+
+    // Cloud tombstones first (best-effort) when deleting transcripts
+    // everywhere — so other devices converge even if the local half below
+    // hits a snag.
+    if everywhere && what.transcripts && signed_in {
+        crate::sync::engine::tombstone_remote(&target_ids).await;
+    }
+
+    let mut affected = 0u64;
+    for id in &target_ids {
+        let Some(rec) = history.get(id).map_err(|e| e.to_string())? else {
+            continue;
+        };
+
+        if what.transcripts {
+            // Row (and its audio) goes entirely.
+            let _ = std::fs::remove_file(&rec.audio_path);
+            if everywhere {
+                // Tombstone already sent above; just delete locally.
+                history.delete(id).map_err(|e| e.to_string())?;
+            } else {
+                // This-device-only: delete locally and, when signed in,
+                // remember the id so a later pull won't bring it back.
+                if signed_in {
+                    let _ = history.exclusion_add(id);
+                }
+                history.delete(id).map_err(|e| e.to_string())?;
+            }
+            affected += 1;
+        } else if what.audio {
+            // Audio-only: drop the file, keep the row (playback UI shows the
+            // audio as missing). `clear_audio` blanks audio_path so
+            // audio_data_url_for returns a clean error the frontend handles.
+            history.clear_audio(id).map_err(|e| e.to_string())?;
+            affected += 1;
+        }
+    }
+
+    // Wipe empty audio date-folders if we did a full transcript delete of
+    // everything, matching clear_all_history's "leave nothing behind".
+    if what.transcripts {
+        if let Ok(dir) = app.path().app_data_dir() {
+            let audio = dir.join("audio");
+            if audio.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&audio) {
+                    for e in entries.flatten() {
+                        if e.path().is_dir() {
+                            if let Ok(mut c) = std::fs::read_dir(e.path()) {
+                                if c.next().is_none() {
+                                    let _ = std::fs::remove_dir(e.path());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = app.emit("wispr:history_changed", ());
+    Ok(affected)
+}
+
 #[tauri::command]
 pub async fn retry_recording(
     app: AppHandle,
@@ -444,6 +661,12 @@ pub fn audio_data_url_for(
         .get(&id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "recording not found".to_string())?;
+    // Remote rows (synced from another device) never have local audio, and
+    // audio-only deletes blank the path — return a clear, expected error the
+    // frontend surfaces gracefully rather than a raw filesystem failure.
+    if rec.remote || rec.audio_path.as_os_str().is_empty() {
+        return Err("audio not available on this device".to_string());
+    }
     let bytes = std::fs::read(&rec.audio_path)
         .map_err(|e| format!("read {}: {e}", rec.audio_path.display()))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

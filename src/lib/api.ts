@@ -59,6 +59,31 @@ export interface AppSettings {
   force_clean_hotkey: string;
   force_clean_sticky_hotkey: string;
   adapt_to_app: boolean;
+  device_name: string;
+}
+
+/** Account / sync status (accounts + cross-device sync, v3.0.0). */
+export interface AuthStatus {
+  /** Whether this build has a real Supabase project baked in. When false the
+   *  account UI shows "Sync not configured in this build" and behaves as
+   *  signed-out regardless. */
+  configured: boolean;
+  signed_in: boolean;
+  email: string | null;
+  user_id: string | null;
+}
+
+export type SyncState = "idle" | "syncing" | "error" | "signed_out";
+
+export interface SyncStatusEvent {
+  state: SyncState;
+  last_synced_at: string | null;
+}
+
+/** What to delete + where, for the reworked delete flow. */
+export interface DeleteWhat {
+  audio: boolean;
+  transcripts: boolean;
 }
 
 export interface Recording {
@@ -94,6 +119,14 @@ export interface Recording {
   /** How the recording entered the app: "mic" (live dictation) or "upload"
    *  (a user-supplied audio file). Drives the "Uploaded" badge. */
   source: string;
+  /** Which client made this recording: "desktop" | "web" | "mobile". Drives
+   *  the per-row platform badge. NULL rows read as "desktop". */
+  platform: string;
+  /** Device name recorded at capture time (tooltip on the platform badge). */
+  device_name: string | null;
+  /** True when this row was pulled from another device via sync — no local
+   *  audio exists, so playback is hidden/disabled. */
+  remote: boolean;
 }
 
 /** Options for a one-off upload transcription. Null provider/model = use the
@@ -254,7 +287,24 @@ export const api = {
     invoke<void>("set_settings", { settings }),
   listHistory: (limit = 100) => invoke<Recording[]>("list_history", { limit }),
   deleteRecording: (id: string) => invoke<void>("delete_recording", { id }),
+  /** Reworked delete. scope = "device" | "everywhere"; ids omitted = all. */
+  deleteRecordings: (
+    scope: "device" | "everywhere",
+    what: DeleteWhat,
+    ids?: string[] | null,
+  ) => invoke<number>("delete_recordings", { scope, what, ids: ids ?? null }),
   retryRecording: (id: string) => invoke<void>("retry_recording", { id }),
+  // ── Accounts + cross-device sync ──────────────────────────────────────
+  authStatus: () => invoke<AuthStatus>("auth_status"),
+  signInEmail: (email: string, password: string) =>
+    invoke<AuthStatus>("sign_in_email", { email, password }),
+  signUpEmail: (email: string, password: string) =>
+    invoke<AuthStatus>("sign_up_email", { email, password }),
+  signInGoogle: () => invoke<AuthStatus>("sign_in_google"),
+  cancelGoogleSignIn: () => invoke<void>("cancel_google_sign_in"),
+  signOut: () => invoke<AuthStatus>("sign_out"),
+  syncNow: () => invoke<void>("sync_now"),
+  setDeviceName: (name: string) => invoke<void>("set_device_name", { name }),
   /** Transcribe an on-disk audio file. Returns the new recording id. */
   transcribeUpload: (path: string, opts: UploadOptions) =>
     invoke<string>("transcribe_upload", {
@@ -306,4 +356,9 @@ export function onFlowState(cb: (s: FlowState) => void): Promise<UnlistenFn> {
 /** Subscribe to flow-error notifications. */
 export function onFlowError(cb: (msg: string) => void): Promise<UnlistenFn> {
   return listen<string>("wispr:flow_error", (e) => cb(e.payload));
+}
+
+/** Subscribe to sync-status changes emitted by the Rust sync engine. */
+export function onSyncStatus(cb: (s: SyncStatusEvent) => void): Promise<UnlistenFn> {
+  return listen<SyncStatusEvent>("wispr:sync_status", (e) => cb(e.payload));
 }

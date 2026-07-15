@@ -600,7 +600,10 @@ impl Flow {
             .await
             .context("starting audio capture")?;
         crate::audio::cues::play_start();
-        let record_id = self.history.insert_new(&path, ClippyMode::from(mode))?;
+        let device_name = self.settings.lock().device_name.clone();
+        let record_id = self
+            .history
+            .insert_new(&path, ClippyMode::from(mode), &device_name)?;
 
         let mut state = self.state.lock();
         state.active = Some(InFlight {
@@ -1082,6 +1085,7 @@ impl Flow {
                     tl.mark("delivered · clipboard (navigated away)");
                     let _ = app.emit("wispr:clippy_message", "Copied to clipboard");
                     self.history.update_status(&record_id, Status::Done)?;
+                    crate::sync::engine::notify_recording_done(app);
                 }
                 Err(e) => {
                     tl.mark(format!("clipboard delivery FAILED · {e}"));
@@ -1101,6 +1105,7 @@ impl Flow {
                         "injected"
                     );
                     self.history.update_status(&record_id, Status::Done)?;
+                    crate::sync::engine::notify_recording_done(app);
                 }
                 Err(e) => {
                     tl.mark(format!("injection FAILED · {e}"));
@@ -1186,7 +1191,10 @@ impl Flow {
         let dest = dir.join(format!("{id_seed}.{ext}"));
         std::fs::copy(&src, &dest).with_context(|| format!("copying upload to {dest:?}"))?;
 
-        let record_id = self.history.insert_upload(&dest, ClippyMode::Light)?;
+        let device_name = self.settings.lock().device_name.clone();
+        let record_id = self
+            .history
+            .insert_upload(&dest, ClippyMode::Light, &device_name)?;
         // Show the pending row immediately; the pipeline fills it in.
         let _ = app.emit("wispr:history_changed", ());
 
@@ -1419,6 +1427,7 @@ impl Flow {
         }
 
         self.history.update_status(record_id, Status::Done)?;
+        crate::sync::engine::notify_recording_done(app);
         self.persist_timeline(record_id, &tl);
         Ok(())
     }
@@ -1615,6 +1624,7 @@ impl Flow {
         let _ = final_text;
         self.persist_timeline(record_id, &tl);
         self.history.update_status(record_id, Status::Done)?;
+        crate::sync::engine::notify_recording_done(app);
         let _ = app.emit("wispr:state", "idle");
         Ok(())
     }

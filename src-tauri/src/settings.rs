@@ -142,6 +142,14 @@ pub struct AppSettings {
     pub custom_advanced_prompt: String,
     #[serde(default)]
     pub custom_drafting_prompt: String,
+
+    // ── Accounts + cross-device sync (v3.0.0) ─────────────────────────────
+    /// This install's display name — shown to the user (and other signed-in
+    /// devices) as "Desktop · <name>". Defaults to the machine hostname;
+    /// editable in Settings → Account. Stamped onto every new recording row
+    /// and the `devices` table's `name` column on sign-in/sync.
+    #[serde(default = "default_device_name")]
+    pub device_name: String,
 }
 
 impl Default for AppSettings {
@@ -213,8 +221,36 @@ impl Default for AppSettings {
             keep_in_clipboard: default_keep_in_clipboard(),
             open_silently: default_open_silently(),
             adapt_to_app: default_adapt_to_app(),
+            device_name: default_device_name(),
         }
     }
+}
+
+/// Best-effort hostname lookup, used as the default device name shown in
+/// Settings → Account and stamped on synced rows/devices. Falls through a
+/// couple of common env vars before shelling out to the `hostname` command
+/// (present on Windows, macOS, and Linux) — no extra crate needed for
+/// something this simple.
+fn default_device_name() -> String {
+    if let Ok(v) = std::env::var("COMPUTERNAME") {
+        if !v.trim().is_empty() {
+            return v;
+        }
+    }
+    if let Ok(v) = std::env::var("HOSTNAME") {
+        if !v.trim().is_empty() {
+            return v;
+        }
+    }
+    if let Ok(out) = std::process::Command::new("hostname").output() {
+        if let Ok(s) = String::from_utf8(out.stdout) {
+            let s = s.trim().to_string();
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    "My Computer".to_string()
 }
 
 fn default_adapt_to_app() -> bool {

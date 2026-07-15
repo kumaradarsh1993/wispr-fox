@@ -12,6 +12,7 @@ mod power;
 mod secrets;
 mod settings;
 mod stt;
+mod sync;
 mod tray;
 #[cfg(target_os = "macos")]
 mod touchbar;
@@ -158,6 +159,26 @@ pub fn run() {
             // Touch Bar (macOS only — no-op on non-Touch-Bar hardware).
             #[cfg(target_os = "macos")]
             touchbar::install(app.handle(), &flow);
+
+            // Accounts + cross-device sync (v3.0.0). Fully inert unless the
+            // user signs in AND this build has a real Supabase project baked
+            // into sync/config.rs — see SYNC_DESIGN.md. Cloned BEFORE
+            // `history`/`flow` are moved into managed state below; both are
+            // cheap `Clone` (Arc-backed internally).
+            let sync_engine =
+                sync::engine::SyncEngine::new(history.clone(), flow.clone(), app.handle().clone());
+            app.manage(sync_engine.clone());
+            {
+                let engine_for_launch = sync_engine.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Restore a previous session (if any) before the first
+                    // sync attempt — both are no-ops when signed out or when
+                    // this build has no Supabase project configured.
+                    sync::auth::try_restore_session().await;
+                    engine_for_launch.sync_once().await;
+                });
+            }
+            sync::engine::spawn_background_poll(sync_engine);
 
             app.manage(history);
             app.manage(flow);
@@ -306,7 +327,16 @@ pub fn run() {
             commands::set_settings,
             commands::list_history,
             commands::delete_recording,
+            commands::delete_recordings,
             commands::retry_recording,
+            commands::auth_status,
+            commands::sign_in_email,
+            commands::sign_up_email,
+            commands::sign_in_google,
+            commands::cancel_google_sign_in,
+            commands::sign_out,
+            commands::sync_now,
+            commands::set_device_name,
             commands::transcribe_upload,
             commands::generate_alt_version,
             commands::audio_url_for,

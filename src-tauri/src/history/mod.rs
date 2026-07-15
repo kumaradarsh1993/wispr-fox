@@ -153,6 +153,22 @@ pub struct Recording {
     /// default, and what old NULL rows map to) or `"upload"` for a user-supplied
     /// audio file dragged in or picked from disk. Drives the "Uploaded" badge.
     pub source: String,
+    /// Which client produced this recording: `"desktop"` / `"web"` / `"mobile"`.
+    /// NULL (pre-sync rows, or genuinely unknown) reads as `"desktop"` — this
+    /// build only ever creates local rows on desktop.
+    pub platform: String,
+    /// Human-readable device name at the time this recording was made (from
+    /// the synced device's `device_name` setting). None on old rows and on
+    /// remote rows pulled before a device ever set a name.
+    pub device_name: Option<String>,
+    /// True when this row has local edits that haven't been pushed to the
+    /// cloud yet. Only rows with `status = done` and `dirty = true` are
+    /// eligible for the next push.
+    pub dirty: bool,
+    /// True when this row was pulled down from another device via sync — its
+    /// `audio_path` will not exist locally (audio never syncs), so playback
+    /// UI must hide/disable itself for these rows.
+    pub remote: bool,
 }
 
 #[derive(Clone)]
@@ -210,6 +226,18 @@ impl History {
               light_count   INTEGER NOT NULL DEFAULT 0,
               draft_count   INTEGER NOT NULL DEFAULT 0
             );
+
+            -- v3.0.0: accounts + cross-device sync. `sync_meta` is a tiny KV
+            -- store for the device id + pull cursor; `sync_exclusions` records
+            -- ids the user deleted "this device only" so a later pull doesn't
+            -- resurrect them from the cloud copy.
+            CREATE TABLE IF NOT EXISTS sync_meta (
+              key   TEXT PRIMARY KEY,
+              value TEXT
+            );
+            CREATE TABLE IF NOT EXISTS sync_exclusions (
+              id TEXT PRIMARY KEY
+            );
             "#,
         )?;
 
@@ -237,6 +265,21 @@ impl History {
         // "mic" on read, so old dictations keep behaving as before.
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN source TEXT", []);
 
+        // v3.0.0: accounts + cross-device sync columns. NULL/0 on pre-upgrade
+        // rows is the correct default: they were all made on this desktop
+        // (platform → "desktop" on read), have no device name recorded, are
+        // not yet marked dirty (nothing to push until the user signs in —
+        // first sign-in explicitly marks every `done` row dirty), and are not
+        // remote (they're local rows, obviously — `remote` only gets set on
+        // rows pulled down from another device).
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN platform TEXT", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN device_name TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE recordings ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN remote INTEGER", []);
+
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
         // output schema. Move it into `drafted_text` so the new history
@@ -258,24 +301,31 @@ impl History {
         Ok(Self { inner: Arc::new(Mutex::new(conn)) })
     }
 
+    /// `device_name` is this desktop install's current display name (from
+    /// Settings → Account, or the hostname default) — stamped onto every new
+    /// row alongside `platform = "desktop"` so History/Settings can show
+    /// "Desktop · <name>" badges once sync is in play. Old rows (before this
+    /// column existed) stay NULL and fall back to plain "Desktop" on read.
     pub fn insert_new(
         &self,
         audio_path: &Path,
         mode: ClippyMode,
+        device_name: &str,
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let conn = self.inner.lock();
         conn.execute(
             r#"INSERT INTO recordings
-               (id, created_at, audio_path, mode, status)
-               VALUES (?1, ?2, ?3, ?4, ?5)"#,
+               (id, created_at, audio_path, mode, status, platform, device_name)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'desktop', ?6)"#,
             params![
                 id,
                 now,
                 audio_path.to_string_lossy(),
                 mode_str(mode),
                 Status::Recording.as_str(),
+                device_name,
             ],
         )?;
         Ok(id)
@@ -284,20 +334,21 @@ impl History {
     /// Insert a row for a user-uploaded audio file. Unlike `insert_new` it
     /// starts in `Transcribing` (there is no live recording phase) and marks
     /// `source = "upload"` so the History UI shows an "Uploaded" badge.
-    pub fn insert_upload(&self, audio_path: &Path, mode: ClippyMode) -> Result<String> {
+    pub fn insert_upload(&self, audio_path: &Path, mode: ClippyMode, device_name: &str) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let conn = self.inner.lock();
         conn.execute(
             r#"INSERT INTO recordings
-               (id, created_at, audio_path, mode, status, source)
-               VALUES (?1, ?2, ?3, ?4, ?5, 'upload')"#,
+               (id, created_at, audio_path, mode, status, source, platform, device_name)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'upload', 'desktop', ?6)"#,
             params![
                 id,
                 now,
                 audio_path.to_string_lossy(),
                 mode_str(mode),
                 Status::Transcribing.as_str(),
+                device_name,
             ],
         )?;
         Ok(id)
@@ -309,7 +360,16 @@ impl History {
         // clear the stale error text. Otherwise a successful retry would
         // leave the previous failure message in the row, and any UI that
         // surfaces `error` (info popover, telemetry) would show stale data.
-        if !matches!(status, Status::Error) {
+        //
+        // Reaching `done` is also a sync trigger: mark the row dirty so the
+        // next sync cycle pushes it. Only terminal `done` rows are ever
+        // synced (per SYNC_DESIGN.md), so no other status flips the flag.
+        if matches!(status, Status::Done) {
+            conn.execute(
+                "UPDATE recordings SET status = ?1, error = NULL, dirty = 1 WHERE id = ?2",
+                params![status.as_str(), id],
+            )?;
+        } else if !matches!(status, Status::Error) {
             conn.execute(
                 "UPDATE recordings SET status = ?1, error = NULL WHERE id = ?2",
                 params![status.as_str(), id],
@@ -341,7 +401,7 @@ impl History {
         let conn = self.inner.lock();
         conn.execute(
             r#"UPDATE recordings
-               SET transcript = ?1, stt_provider = ?2
+               SET transcript = ?1, stt_provider = ?2, dirty = 1
                WHERE id = ?3"#,
             params![transcript, provider, id],
         )?;
@@ -377,14 +437,14 @@ impl History {
             AltKind::Cleaned => conn.execute(
                 r#"UPDATE recordings
                    SET cleaned_text = ?1, llm_provider = ?2,
-                       clippy_used = ?3, clippy_note = ?4
+                       clippy_used = ?3, clippy_note = ?4, dirty = 1
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
             AltKind::Drafted => conn.execute(
                 r#"UPDATE recordings
                    SET drafted_text = ?1, llm_provider = ?2,
-                       clippy_used = ?3, clippy_note = ?4
+                       clippy_used = ?3, clippy_note = ?4, dirty = 1
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
@@ -395,7 +455,7 @@ impl History {
     pub fn set_title(&self, id: &str, title: &str) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
-            "UPDATE recordings SET title = ?1 WHERE id = ?2",
+            "UPDATE recordings SET title = ?1, dirty = 1 WHERE id = ?2",
             params![title, id],
         )?;
         Ok(())
@@ -455,15 +515,9 @@ impl History {
 
     pub fn list_recent(&self, limit: i64) -> Result<Vec<Recording>> {
         let conn = self.inner.lock();
-        let mut stmt = conn.prepare(
-            r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
-                      transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
-                      clippy_used, clippy_note, retry_count, error, title,
-                      stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source
-               FROM recordings
-               ORDER BY created_at DESC
-               LIMIT ?1"#,
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "{SELECT_ALL_COLUMNS} ORDER BY created_at DESC LIMIT ?1"
+        ))?;
         let rows = stmt
             .query_map(params![limit], row_to_recording)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -609,8 +663,17 @@ const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
        transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
-       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source
+       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
+       platform, device_name, dirty, remote
 FROM recordings WHERE id = ?1"#;
+
+const SELECT_ALL_COLUMNS: &str = r#"
+SELECT id, created_at, audio_path, duration_ms, mode, status,
+       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
+       clippy_used, clippy_note, retry_count, error, title,
+       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
+       platform, device_name, dirty, remote
+FROM recordings"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
     let created_at_str: String = row.get(1)?;
@@ -644,7 +707,234 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         source: row
             .get::<_, Option<String>>(21)?
             .unwrap_or_else(|| "mic".to_string()),
+        platform: row
+            .get::<_, Option<String>>(22)?
+            .unwrap_or_else(|| "desktop".to_string()),
+        device_name: row.get(23)?,
+        dirty: row.get::<_, i32>(24)? != 0,
+        remote: row.get::<_, Option<i32>>(25)?.unwrap_or(0) != 0,
     })
+}
+
+// ─── Sync support (accounts + cross-device sync, v3.0.0) ───────────────────
+//
+// See `wispr-fox-web/docs/SYNC_DESIGN.md` for the canonical protocol. History
+// owns the local half: which rows are dirty (need pushing), applying rows
+// pulled from the cloud, tombstones, per-id "don't resurrect on pull"
+// exclusions, and a tiny key/value `sync_meta` table for the device id +
+// pull cursor. All of this is completely inert (never touched) unless the
+// user is signed in — `engine.rs` is the only caller.
+
+/// A synced transcript row as it comes down from (or goes up to) the cloud
+/// `notes` table. Intentionally a plain data bag — `engine.rs` maps this
+/// to/from PostgREST JSON; History just knows how to apply/read it locally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteNote {
+    pub id: String,
+    pub device_id: String,
+    pub platform: String,
+    pub device_name: Option<String>,
+    pub title: Option<String>,
+    pub transcript: Option<String>,
+    pub cleaned_text: Option<String>,
+    pub drafted_text: Option<String>,
+    pub duration_ms: i64,
+    pub stt_provider: Option<String>,
+    pub llm_provider: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+impl History {
+    /// Rows eligible for the next push: terminal `done` status AND locally
+    /// dirty. Remote rows (pulled from another device) are never pushed back
+    /// — they're excluded here so a round-trip echo never happens.
+    pub fn list_dirty(&self) -> Result<Vec<Recording>> {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare(&format!(
+            "{SELECT_ALL_COLUMNS} WHERE status = 'done' AND dirty = 1 AND COALESCE(remote, 0) = 0"
+        ))?;
+        let rows = stmt
+            .query_map([], row_to_recording)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Clear the dirty flag after a successful push.
+    pub fn mark_clean(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.inner.lock();
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("UPDATE recordings SET dirty = 0 WHERE id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        conn.execute(&sql, params.as_slice())?;
+        Ok(())
+    }
+
+    /// On first sign-in, every existing `done` row becomes eligible for the
+    /// initial push — the user's whole pre-existing history goes up.
+    pub fn mark_all_done_dirty(&self) -> Result<usize> {
+        let conn = self.inner.lock();
+        let n = conn.execute("UPDATE recordings SET dirty = 1 WHERE status = 'done'", [])?;
+        Ok(n)
+    }
+
+    /// Apply one row pulled from the cloud. Never overwrites a local row that
+    /// has unpushed edits (`dirty = 1`) — that would silently discard work
+    /// the next push hasn't sent up yet; the row is skipped this cycle and
+    /// picked up again once it's been pushed clean. Inserts new remote rows
+    /// with `remote = 1` and an empty `audio_path` (audio never syncs).
+    /// Returns `true` if the local DB was changed.
+    pub fn upsert_remote(&self, note: &RemoteNote) -> Result<bool> {
+        let conn = self.inner.lock();
+        let existing_dirty: Option<i32> = conn
+            .query_row(
+                "SELECT dirty FROM recordings WHERE id = ?1",
+                params![note.id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if existing_dirty == Some(1) {
+            tracing::debug!(id = %note.id, "sync: skipping pull for locally-dirty row");
+            return Ok(false);
+        }
+
+        let dur = note.duration_ms;
+        conn.execute(
+            r#"INSERT INTO recordings
+                 (id, created_at, audio_path, duration_ms, mode, status,
+                  transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
+                  title, platform, device_name, dirty, remote, source)
+               VALUES (?1, ?2, '', ?3, 'light', 'done',
+                       ?4, ?5, ?6, ?7, ?8,
+                       ?9, ?10, ?11, 0, 1, 'mic')
+               ON CONFLICT(id) DO UPDATE SET
+                 transcript   = excluded.transcript,
+                 cleaned_text = excluded.cleaned_text,
+                 drafted_text = excluded.drafted_text,
+                 stt_provider = excluded.stt_provider,
+                 llm_provider = excluded.llm_provider,
+                 title        = excluded.title,
+                 platform     = excluded.platform,
+                 device_name  = excluded.device_name,
+                 duration_ms  = excluded.duration_ms,
+                 dirty        = 0,
+                 remote       = 1"#,
+            params![
+                note.id,
+                note.created_at,
+                dur,
+                note.transcript,
+                note.cleaned_text,
+                note.drafted_text,
+                note.stt_provider,
+                note.llm_provider,
+                note.title,
+                note.platform,
+                note.device_name,
+            ],
+        )?;
+        Ok(true)
+    }
+
+    /// Apply a cloud tombstone (`deleted_at` set): remove the local row and,
+    /// if it happens to have a local audio file (it was a local row on THIS
+    /// device before being deleted "everywhere" from elsewhere), delete that
+    /// file too. No-op if the id isn't present locally.
+    pub fn apply_tombstone(&self, id: &str) -> Result<()> {
+        let audio_path = {
+            let conn = self.inner.lock();
+            conn.query_row(
+                "SELECT audio_path FROM recordings WHERE id = ?1",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        };
+        if let Some(p) = audio_path {
+            if !p.is_empty() {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+        self.delete(id)
+    }
+
+    /// Remove a recording's local audio file but keep its row — used by the
+    /// "voice files, this device" delete option. The row's `audio_path` is
+    /// blanked so playback UI (and `audio_data_url_for`) can tell cleanly
+    /// that there's nothing to play instead of hitting a raw fs error.
+    pub fn clear_audio(&self, id: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT audio_path FROM recordings WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(p) = existing {
+            if !p.is_empty() {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+        conn.execute(
+            "UPDATE recordings SET audio_path = '' WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Ids the user chose to delete "this device only" while signed in — a
+    /// pull must not resurrect them even though the cloud copy still exists
+    /// for other devices.
+    pub fn exclusion_add(&self, id: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO sync_exclusions (id) VALUES (?1)",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    pub fn exclusion_contains(&self, id: &str) -> Result<bool> {
+        let conn = self.inner.lock();
+        let found: Option<String> = conn
+            .query_row(
+                "SELECT id FROM sync_exclusions WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Tiny KV store for sync state — device id (generated once, persisted
+    /// forever) and the pull cursor (max `updated_at` seen so far).
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.inner.lock();
+        let v = conn
+            .query_row(
+                "SELECT value FROM sync_meta WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v)
+    }
+
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            r#"INSERT INTO sync_meta (key, value) VALUES (?1, ?2)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value"#,
+            params![key, value],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -658,7 +948,7 @@ mod tests {
         let db = tmp.path().join("h.sqlite");
         let h = History::open(&db).unwrap();
         let id = h
-            .insert_new(&PathBuf::from("clip.wav"), ClippyMode::Light)
+            .insert_new(&PathBuf::from("clip.wav"), ClippyMode::Light, "Test Device")
             .unwrap();
         h.set_duration(&id, 1234, 1234).unwrap();
         h.set_transcript(&id, "hello world", "groq").unwrap();

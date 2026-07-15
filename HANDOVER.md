@@ -4,7 +4,7 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-07-15** (v2.1.0 stable + v2.2.0-nightly.1 audio upload).
+> **Last updated: 2026-07-16** (v3.0.0-nightly.1 accounts + cross-device sync).
 
 ---
 
@@ -19,6 +19,19 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **Nightly: `v3.0.0-nightly.1`** (2026-07-16) — **accounts + cross-device
+  sync** (major). Optional sign-in (Google via loopback-PKCE `127.0.0.1:43117`,
+  or email/password) against a shared **Supabase** backend. Signed-in clients
+  sync *transcripts* + API keys across desktop/web/mobile; audio never leaves
+  the device. Reworked delete: press-and-hold → dialog (voice files /
+  transcripts × this-device / everywhere, with cloud tombstones). Platform
+  badges on rows. **Signed-out mode is byte-identical to before.** Rust
+  `src-tauri/src/sync/` (config/auth/engine); history gains
+  `platform`/`device_name`/`dirty`/`remote` cols + `sync_meta`/`sync_exclusions`;
+  `delete_recordings` command. Backend/setup is shared across all three apps —
+  see `../wispr-fox-web/docs/SYNC_DESIGN.md`, `SETUP_ACCOUNTS.md`, and the
+  gitignored `../wispr-fox-web/SECRETS.local.md` (Supabase URL/keys, Google
+  OAuth). The Supabase URL + anon key are baked into `src/sync/config.rs`.
 - **Stable: `v2.1.0`** (2026-07-15, "Latest") — promoted from `nightly.10` on the
   user's "promote to stable" signal. The whole v2.1.0 line: pixel pets + wave/siri
   minimal skins, avatar-visibility tri-state, auto-titles, reimagined+rebuilt

@@ -11,13 +11,14 @@
   // Icons are inline stroke SVGs (see the navIcon snippet) rather than letter
   // glyphs — the old K/M/D/A/G/! read like keyboard shortcuts. Same 15px /
   // currentColor / 1.6-stroke style as the main sidebar nav.
-  type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security";
+  type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security" | "account";
   type NavItem = { href: string; label: string; icon: IconName };
   const NAV: NavItem[] = [
     { href: "/settings/providers", label: "Providers", icon: "providers" },
     { href: "/settings/modes", label: "Modes", icon: "modes" },
     { href: "/settings/dictation", label: "Dictation", icon: "dictation" },
     { href: "/settings/appearance", label: "Appearance", icon: "appearance" },
+    { href: "/settings/account", label: "Account", icon: "account" },
     { href: "/settings/general", label: "General", icon: "general" },
     { href: "/settings/security", label: "Security", icon: "security" },
   ];
@@ -62,6 +63,12 @@
     <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
       <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6" />
       <path d="M 8 1.5 V 3 M 8 13 V 14.5 M 1.5 8 H 3 M 13 8 H 14.5 M 3.4 3.4 L 4.5 4.5 M 11.5 11.5 L 12.6 12.6 M 12.6 3.4 L 11.5 4.5 M 4.5 11.5 L 3.4 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    </svg>
+  {:else if icon === "account"}
+    <!-- person -->
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+      <circle cx="8" cy="5.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+      <path d="M 3 13.5 C 3 10.8 5.2 9.5 8 9.5 C 10.8 9.5 13 10.8 13 13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
     </svg>
   {:else}
     <!-- shield -->

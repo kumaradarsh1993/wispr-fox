@@ -35,12 +35,14 @@
   import { applySttProvider, applySttModel, applyLlmProvider } from "$lib/provider-options";
   import { prettyHotkey, isMac } from "$lib/hotkey-display";
   import SpritePet from "$lib/SpritePet.svelte";
+  import AccountPanel from "$lib/AccountPanel.svelte";
+  import { account } from "$lib/account-store.svelte";
   import { PETS } from "$lib/pets";
 
   // Where the OS actually stores the key — platform-aware copy in the paste step.
   const keyStoreName = isMac() ? "macOS Keychain" : "Windows Credential Manager";
 
-  type Screen = "welcome" | "setup" | "demo";
+  type Screen = "welcome" | "setup" | "demo" | "sync";
   let screen = $state<Screen>("welcome");
 
   // ── Welcome-screen hero animation ────────────────────────────────────────
@@ -384,7 +386,7 @@
 
   // ── Visual helpers ─────────────────────────────────────────────────────
   function dotClass(target: Screen): string {
-    const order = ["welcome", "setup", "demo"] as const;
+    const order = ["welcome", "setup", "demo", "sync"] as const;
     const cur = order.indexOf(screen);
     const t = order.indexOf(target);
     if (t < cur) return "done";
@@ -420,6 +422,7 @@
         <span class="dot {dotClass('welcome')}" title="Welcome"></span>
         <span class="dot {dotClass('setup')}" title="Get your key"></span>
         <span class="dot {dotClass('demo')}" title="Try it"></span>
+        <span class="dot {dotClass('sync')}" title="Sync"></span>
       </div>
       <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
       <button class="ob-skip" onclick={skipOnboarding} title="Skip and explore the app — you can replay onboarding from the sidebar later">
@@ -834,7 +837,30 @@
 
         <div class="cta">
           <button class="btn ghost" onclick={() => (screen = "setup")}>← Back</button>
-          <button class="btn primary big" onclick={finish}>Finish →</button>
+          <button class="btn primary big" onclick={() => (screen = "sync")}>Next →</button>
+        </div>
+      </section>
+
+    <!-- ═════ SCREEN 4: Sync across your devices (optional) ═════════════ -->
+    {:else if screen === "sync"}
+      <section class="screen sync" in:fly={{ y: 22, duration: 380 }}>
+        <h1>Sync across your devices</h1>
+        <p class="tagline">
+          Optional. Sign in to sync your transcripts and API keys across
+          desktop, web and mobile. Your voice recordings always stay on this
+          device — only the text syncs. You can do this later in
+          <strong>Settings → Account</strong> too.
+        </p>
+
+        <div class="sync-panel rise" style="--d: 100ms">
+          <AccountPanel compact />
+        </div>
+
+        <div class="cta">
+          <button class="btn ghost" onclick={() => (screen = "demo")}>← Back</button>
+          <button class="btn primary big" onclick={finish}>
+            {account.signedIn ? "Finish →" : "Continue without an account →"}
+          </button>
         </div>
       </section>
     {/if}
@@ -990,6 +1016,12 @@
   }
   .dot.done { background: var(--accent-soft); }
   .dot.current { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-fade); }
+
+  .sync-panel {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0 4px;
+  }
 
   .screen {
     flex: 1;

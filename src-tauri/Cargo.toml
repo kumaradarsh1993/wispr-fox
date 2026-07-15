@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "2.2.0"
+version = "3.0.0"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -60,6 +60,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Sync primitives
 once_cell = "1"
 parking_lot = "0.12"
+
+# SHA-256 for the Google PKCE code_challenge (accounts + cross-device sync).
+# The PKCE code_verifier itself is derived from uuid::Uuid::new_v4() (already
+# a dependency) rather than pulling in `rand` as a new crate.
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
