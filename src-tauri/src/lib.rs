@@ -307,6 +307,7 @@ pub fn run() {
             commands::list_history,
             commands::delete_recording,
             commands::retry_recording,
+            commands::transcribe_upload,
             commands::generate_alt_version,
             commands::audio_url_for,
             commands::audio_data_url_for,

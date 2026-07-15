@@ -97,7 +97,7 @@ impl SttProvider for DeepgramStt {
             .post(ENDPOINT)
             .query(&[("model", self.model.as_str()), ("smart_format", "true")])
             .header("Authorization", format!("Token {}", self.api_key))
-            .header("Content-Type", "audio/wav")
+            .header("Content-Type", super::mime_for_audio(wav_path))
             .body(bytes);
 
         if let Some(lang) = hint_lang {

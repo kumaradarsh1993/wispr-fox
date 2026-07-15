@@ -377,6 +377,31 @@ pub async fn retry_recording(
         .map_err(|e| e.to_string())
 }
 
+/// Transcribe a user-supplied audio file (drag-and-drop or the file picker).
+/// `path` is an absolute path on disk; the backend copies it into the audio
+/// store, runs STT + optional cleanup/draft, and files it in History with an
+/// "Uploaded" badge. Provider/model args are per-batch overrides (null = use
+/// the current global setting). Returns the new recording id.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn transcribe_upload(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    path: String,
+    stt_provider: Option<String>,
+    stt_model: Option<String>,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
+    cleanup: bool,
+    draft: bool,
+) -> Result<String, String> {
+    flow.transcribe_file(
+        &app, &path, stt_provider, stt_model, llm_provider, llm_model, cleanup, draft,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
 /// Generate a "cleaned" or "drafted" variant for an existing recording.
 /// Used by the History UI tabs: clicking a dimmed tab (Cleaned or Drafted
 /// version not yet generated) calls this, the LLM runs against the raw
@@ -422,7 +447,10 @@ pub fn audio_data_url_for(
     let bytes = std::fs::read(&rec.audio_path)
         .map_err(|e| format!("read {}: {e}", rec.audio_path.display()))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(format!("data:audio/wav;base64,{b64}"))
+    // Uploaded files may be m4a/mp3/etc., not WAV — advertise the right MIME so
+    // the <audio> element in History plays them back correctly.
+    let mime = crate::stt::mime_for_audio(&rec.audio_path);
+    Ok(format!("data:{mime};base64,{b64}"))
 }
 
 #[tauri::command]

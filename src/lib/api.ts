@@ -91,6 +91,20 @@ export interface Recording {
    *  materially smaller, the mic dropped mid-recording and the transcript is
    *  truncated. Null on pre-nightly.8 rows. */
   audio_captured_ms: number | null;
+  /** How the recording entered the app: "mic" (live dictation) or "upload"
+   *  (a user-supplied audio file). Drives the "Uploaded" badge. */
+  source: string;
+}
+
+/** Options for a one-off upload transcription. Null provider/model = use the
+ *  current global setting; cleanup/draft add the matching version columns. */
+export interface UploadOptions {
+  sttProvider?: string | null;
+  sttModel?: string | null;
+  llmProvider?: string | null;
+  llmModel?: string | null;
+  cleanup: boolean;
+  draft: boolean;
 }
 
 export interface SecretCheck {
@@ -241,6 +255,17 @@ export const api = {
   listHistory: (limit = 100) => invoke<Recording[]>("list_history", { limit }),
   deleteRecording: (id: string) => invoke<void>("delete_recording", { id }),
   retryRecording: (id: string) => invoke<void>("retry_recording", { id }),
+  /** Transcribe an on-disk audio file. Returns the new recording id. */
+  transcribeUpload: (path: string, opts: UploadOptions) =>
+    invoke<string>("transcribe_upload", {
+      path,
+      sttProvider: opts.sttProvider ?? null,
+      sttModel: opts.sttModel ?? null,
+      llmProvider: opts.llmProvider ?? null,
+      llmModel: opts.llmModel ?? null,
+      cleanup: opts.cleanup,
+      draft: opts.draft,
+    }),
   generateAltVersion: (id: string, kind: "cleaned" | "drafted") =>
     invoke<string>("generate_alt_version", { id, kind }),
   audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),

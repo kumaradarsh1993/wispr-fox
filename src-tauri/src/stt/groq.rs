@@ -115,7 +115,7 @@ impl GroqStt {
         for attempt in 1..=MAX_ATTEMPTS {
             let file_part = multipart::Part::bytes(bytes.clone())
                 .file_name(filename.clone())
-                .mime_str("audio/wav")
+                .mime_str(super::mime_for_audio(wav_path))
                 .map_err(|e| SttError::Decode(e.to_string()))?;
 
             let mut form = multipart::Form::new()

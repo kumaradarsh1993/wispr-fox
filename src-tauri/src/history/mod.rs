@@ -149,6 +149,10 @@ pub struct Recording {
     /// dropped mid-recording: if this is materially smaller, the transcript is
     /// truncated because the audio itself is. None on old rows.
     pub audio_captured_ms: Option<i64>,
+    /// How this recording entered the app: `"mic"` for a live dictation (the
+    /// default, and what old NULL rows map to) or `"upload"` for a user-supplied
+    /// audio file dragged in or picked from disk. Drives the "Uploaded" badge.
+    pub source: String,
 }
 
 #[derive(Clone)]
@@ -228,6 +232,10 @@ impl History {
             "ALTER TABLE recordings ADD COLUMN audio_captured_ms INTEGER",
             [],
         );
+        // v2.2.0: origin of the recording — "mic" (live dictation) or "upload"
+        // (user-supplied audio file). NULL on pre-upgrade rows → treated as
+        // "mic" on read, so old dictations keep behaving as before.
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN source TEXT", []);
 
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
@@ -268,6 +276,28 @@ impl History {
                 audio_path.to_string_lossy(),
                 mode_str(mode),
                 Status::Recording.as_str(),
+            ],
+        )?;
+        Ok(id)
+    }
+
+    /// Insert a row for a user-uploaded audio file. Unlike `insert_new` it
+    /// starts in `Transcribing` (there is no live recording phase) and marks
+    /// `source = "upload"` so the History UI shows an "Uploaded" badge.
+    pub fn insert_upload(&self, audio_path: &Path, mode: ClippyMode) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        let conn = self.inner.lock();
+        conn.execute(
+            r#"INSERT INTO recordings
+               (id, created_at, audio_path, mode, status, source)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'upload')"#,
+            params![
+                id,
+                now,
+                audio_path.to_string_lossy(),
+                mode_str(mode),
+                Status::Transcribing.as_str(),
             ],
         )?;
         Ok(id)
@@ -429,7 +459,7 @@ impl History {
             r#"SELECT id, created_at, audio_path, duration_ms, mode, status,
                       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
                       clippy_used, clippy_note, retry_count, error, title,
-                      stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms
+                      stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source
                FROM recordings
                ORDER BY created_at DESC
                LIMIT ?1"#,
@@ -579,7 +609,7 @@ const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
        transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
-       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms
+       stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source
 FROM recordings WHERE id = ?1"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
@@ -611,6 +641,9 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         total_ms: row.get(18)?,
         event_log: row.get(19)?,
         audio_captured_ms: row.get(20)?,
+        source: row
+            .get::<_, Option<String>>(21)?
+            .unwrap_or_else(|| "mic".to_string()),
     })
 }
 

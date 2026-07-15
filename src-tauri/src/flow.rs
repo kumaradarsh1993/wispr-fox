@@ -1135,6 +1135,294 @@ impl Flow {
         Ok(())
     }
 
+    /// Transcribe a user-supplied audio file (drag-and-drop or file picker)
+    /// instead of a live mic recording. The file is copied into the same dated
+    /// audio store the recorder uses — so playback, the (i) inspector, and the
+    /// retention GC treat it identically — then run through STT and the optional
+    /// cleanup/draft passes. It lands in History flagged `source = upload` (the
+    /// "Uploaded" badge) and is NOT injected anywhere: an upload isn't aimed at
+    /// a text field, it's just a new history entry.
+    ///
+    /// `stt_provider`/`stt_model`/`llm_provider`/`llm_model` are per-batch
+    /// overrides from the upload dialog; `None` means "use the current global
+    /// setting". `do_cleanup` and `do_draft` each add the corresponding version
+    /// column, exactly like the Cleaned/Drafted tabs on a dictation.
+    ///
+    /// Returns the new recording id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn transcribe_file(
+        &self,
+        app: &AppHandle,
+        src_path: &str,
+        stt_provider: Option<String>,
+        stt_model: Option<String>,
+        llm_provider: Option<String>,
+        llm_model: Option<String>,
+        do_cleanup: bool,
+        do_draft: bool,
+    ) -> Result<String> {
+        let src = PathBuf::from(src_path);
+        if !src.is_file() {
+            return Err(anyhow!("file not found: {src_path}"));
+        }
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        if !crate::stt::is_supported_audio_ext(&ext) {
+            return Err(anyhow!(
+                "unsupported audio format '.{ext}' — use wav, mp3, m4a, aac, ogg, opus, flac, or webm"
+            ));
+        }
+
+        // Copy into audio_dir/YYYY-MM-DD/{uuid}.{ext}, preserving the original
+        // extension so the STT providers (which sniff by container/filename)
+        // and the <audio> playback both get the right format.
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+        let id_seed = uuid::Uuid::new_v4().to_string();
+        let dir = self.audio_dir.join(&date);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {dir:?}"))?;
+        let dest = dir.join(format!("{id_seed}.{ext}"));
+        std::fs::copy(&src, &dest).with_context(|| format!("copying upload to {dest:?}"))?;
+
+        let record_id = self.history.insert_upload(&dest, ClippyMode::Light)?;
+        // Show the pending row immediately; the pipeline fills it in.
+        let _ = app.emit("wispr:history_changed", ());
+
+        let outcome = self
+            .run_upload_pipeline(
+                app,
+                &record_id,
+                &dest,
+                stt_provider,
+                stt_model,
+                llm_provider,
+                llm_model,
+                do_cleanup,
+                do_draft,
+            )
+            .await;
+
+        if let Err(e) = &outcome {
+            let raw = format!("{e:#}");
+            tracing::warn!(record_id = %record_id, "upload pipeline failed: {raw}");
+            let _ = self.history.set_error(&record_id, &raw);
+            let _ = app.emit(
+                "wispr:flow_error",
+                user_friendly_error(&raw),
+            );
+        }
+        let _ = app.emit("wispr:history_changed", ());
+        outcome.map(|_| record_id)
+    }
+
+    /// The STT (+ optional cleanup/draft) body for an uploaded file. Separate
+    /// from `do_pipeline` because uploads skip everything mic-specific: no
+    /// capture-gap / mic-wake-up telemetry, no silence trimming, no focus
+    /// capture or injection.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_upload_pipeline(
+        &self,
+        app: &AppHandle,
+        record_id: &str,
+        audio_path: &std::path::Path,
+        stt_provider: Option<String>,
+        stt_model: Option<String>,
+        llm_provider: Option<String>,
+        llm_model: Option<String>,
+        do_cleanup: bool,
+        do_draft: bool,
+    ) -> Result<()> {
+        let mut tl = Timeline::new();
+        let base_settings = self.settings();
+
+        // Groq/OpenAI cap a single request at 25 MB and only WAV can be
+        // auto-chunked; reject an oversized non-WAV up front with a clear
+        // message rather than a cryptic decode error inside the chunker.
+        // Deepgram/ElevenLabs stream the whole file server-side, so they're fine.
+        let effective_stt = stt_provider
+            .clone()
+            .unwrap_or_else(|| base_settings.stt_provider.clone());
+        let file_bytes = std::fs::metadata(audio_path).map(|m| m.len()).unwrap_or(0);
+        let is_wav = audio_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("wav"))
+            .unwrap_or(false);
+        let chunkable_provider = effective_stt == "deepgram" || effective_stt == "elevenlabs";
+        if !is_wav && !chunkable_provider && file_bytes > 24 * 1024 * 1024 {
+            return Err(anyhow!(
+                "file is {:.0} MB — too large for this engine to send in one piece. Pick Deepgram for long files, or split the audio.",
+                file_bytes as f64 / (1024.0 * 1024.0)
+            ));
+        }
+
+        // STT provider — clone settings and apply the per-batch override so we
+        // reuse the exact key-lookup + model-validation logic in build_stt_provider.
+        let mut stt_settings = base_settings.clone();
+        if let Some(p) = &stt_provider {
+            stt_settings.stt_provider = p.clone();
+        }
+        if let Some(m) = &stt_model {
+            stt_settings.stt_model = m.clone();
+        }
+        let stt = build_stt_provider(&stt_settings)?;
+        let stt_name = stt.name();
+        tl.mark(format!(
+            "upload STT → {} ({})",
+            pretty_provider(stt_name),
+            stt_settings.stt_model
+        ));
+
+        // Uploaded files can be long (a whole voice memo), so give STT a wider
+        // 180s ceiling than the 120s live-dictation cap.
+        let stt_t0 = std::time::Instant::now();
+        let stt_future = stt.transcribe(audio_path, stt_settings.language_hint.as_deref());
+        let stt_result =
+            tokio::time::timeout(std::time::Duration::from_secs(180), stt_future).await;
+        let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
+        tl.stt_ms = Some(stt_elapsed);
+
+        let transcript = match stt_result {
+            Err(_) => {
+                tl.mark(format!("STT TIMED OUT after {stt_elapsed}ms (180s cap)"));
+                self.persist_timeline(record_id, &tl);
+                return Err(anyhow!(
+                    "Transcription timed out after 180s — try a shorter file"
+                ));
+            }
+            Ok(Err(e)) => {
+                tl.mark(format!(
+                    "STT FAILED after {stt_elapsed}ms · {}",
+                    e.to_string().lines().next().unwrap_or("error")
+                ));
+                self.persist_timeline(record_id, &tl);
+                return Err(anyhow::Error::new(e)).with_context(|| {
+                    format!("{} transcription request", pretty_provider(stt_name))
+                });
+            }
+            Ok(Ok(t)) => {
+                tl.mark(format!(
+                    "STT ok · {stt_elapsed}ms · {} chars",
+                    t.text.chars().count()
+                ));
+                t
+            }
+        };
+
+        // We didn't record the file, so its length comes from the provider's
+        // reported audio duration (Groq/Deepgram return it). captured == duration
+        // for an upload — there's no mic to drop.
+        let dur_ms = transcript
+            .duration_seconds
+            .map(|d| (d * 1000.0) as i64)
+            .unwrap_or(0);
+        self.history.set_duration(record_id, dur_ms, dur_ms)?;
+        self.usage.record_stt(
+            stt_name,
+            &stt_settings.stt_model,
+            transcript
+                .duration_seconds
+                .unwrap_or_else(|| (dur_ms.max(0) as f64) / 1000.0),
+        );
+        self.history
+            .set_transcript(record_id, &transcript.text, stt_name)?;
+
+        // Optional cleanup and/or draft. Both may be requested from the dialog;
+        // each writes into its own column so the history row shows both tabs.
+        if do_cleanup || do_draft {
+            let provider_id = llm_provider
+                .clone()
+                .unwrap_or_else(|| base_settings.llm_provider.clone());
+            let model = llm_model
+                .clone()
+                .unwrap_or_else(|| base_settings.llm_model.clone());
+            self.history.update_status(record_id, Status::Cleaning)?;
+
+            if do_cleanup {
+                let llm = build_llm_provider(&provider_id, model.clone())?;
+                let custom = custom_prompt_for(&base_settings, Mode::Light);
+                tl.mark(format!("cleanup → {} ({})", llm.name(), model));
+                let t0 = std::time::Instant::now();
+                let cleaned = clippy::clean(
+                    &transcript.text,
+                    ClippyMode::Light,
+                    custom.as_deref(),
+                    None,
+                    llm.as_ref(),
+                )
+                .await;
+                tl.cleanup_ms = Some(t0.elapsed().as_millis() as i64);
+                self.usage
+                    .record_llm(llm.name(), &model, cleaned.usage.as_ref());
+                self.history.set_alt(
+                    record_id,
+                    AltKind::Cleaned,
+                    &cleaned.text,
+                    Some(llm.name()),
+                    cleaned.used_clippy,
+                    cleaned.note,
+                )?;
+            }
+
+            if do_draft {
+                let llm = build_llm_provider(&provider_id, model.clone())?;
+                let custom = custom_prompt_for(&base_settings, Mode::Drafting);
+                tl.mark(format!("draft → {} ({})", llm.name(), model));
+                let t0 = std::time::Instant::now();
+                let drafted = clippy::clean(
+                    &transcript.text,
+                    ClippyMode::Drafting,
+                    custom.as_deref(),
+                    None,
+                    llm.as_ref(),
+                )
+                .await;
+                let d = t0.elapsed().as_millis() as i64;
+                tl.cleanup_ms = Some(tl.cleanup_ms.unwrap_or(0) + d);
+                self.usage
+                    .record_llm(llm.name(), &model, drafted.usage.as_ref());
+                self.history.set_alt(
+                    record_id,
+                    AltKind::Drafted,
+                    &drafted.text,
+                    Some(llm.name()),
+                    drafted.used_clippy,
+                    drafted.note,
+                )?;
+            }
+        }
+
+        // Count uploads toward lifetime stats too (words + audio seconds).
+        {
+            let words = transcript.text.split_whitespace().count() as i64;
+            let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let _ = self
+                .history
+                .record_session(&date, words, dur_ms, ClippyMode::Light);
+        }
+
+        // Auto-title, same fire-and-forget path as a dictation.
+        if self.settings.lock().auto_title {
+            let history = self.history.clone();
+            let app_for_title = app.clone();
+            let rid = record_id.to_string();
+            let text_for_title = transcript.text.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(Some(title)) = generate_title(&text_for_title).await {
+                    if history.set_title(&rid, &title).is_ok() {
+                        let _ = app_for_title.emit("wispr:history_changed", ());
+                    }
+                }
+            });
+        }
+
+        self.history.update_status(record_id, Status::Done)?;
+        self.persist_timeline(record_id, &tl);
+        Ok(())
+    }
+
     /// Generate a Cleaned or Drafted version for an existing recording.
     /// The raw transcript must already exist (i.e. STT has run); we just
     /// feed it through the LLM with the appropriate prompt and persist

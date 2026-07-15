@@ -312,6 +312,15 @@
       <span class="when">{timeShort(rec.created_at)}</span>
       <span class="dot">·</span>
       <span class="dur">{durationShort(rec.duration_ms)}</span>
+      {#if rec.source === "upload"}
+        <span class="src-badge" title="Transcribed from an uploaded audio file">
+          <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
+            <path d="M8 10V3M5.5 5.5 8 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.5 10v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Uploaded
+        </span>
+      {/if}
       <!-- LLM-generated one-line name (auto-title). Arrives a beat after the
            run finishes; until then the time + duration carry the header. -->
       {#if rec.title}
@@ -746,6 +755,22 @@
 
   .dur, .retry-count {
     color: var(--text-secondary);
+  }
+
+  /* "Uploaded" badge — marks rows that came from a dropped/picked audio file
+     rather than a live dictation. Small accent-tinted pill next to the meta. */
+  .src-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 7px 1px 5px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--accent-fade);
+    color: var(--accent);
+    flex-shrink: 0;
   }
 
   .dot {

@@ -1,19 +1,61 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { history } from "$lib/history-store.svelte";
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
   import StatsWidget from "$lib/StatsWidget.svelte";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import UploadDialog from "$lib/UploadDialog.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
 
   let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
   let search = $state("");
 
+  // Audio upload: staged file paths + modal state. `stagedPaths` is shared with
+  // UploadDialog so a window-wide drag-drop drops files straight into it.
+  const AUDIO_EXTS = ["wav", "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "webm", "mp4"];
+  let uploadOpen = $state(false);
+  let stagedPaths = $state<string[]>([]);
+  let dragActive = $state(false);
+
+  function isAudioPath(p: string): boolean {
+    return AUDIO_EXTS.includes((p.split(".").pop() || "").toLowerCase());
+  }
+
+  function openUpload() {
+    stagedPaths = [];
+    uploadOpen = true;
+  }
+
   onMount(() => {
     history.refresh();
     history.subscribe();
+
+    // Window-wide drag-and-drop. Tauri delivers real filesystem paths here
+    // (HTML5 drag-drop in a webview can't see them), so this is the reliable
+    // "drop an audio file onto the app" path. Dropping audio opens the upload
+    // dialog pre-staged with the files.
+    let unlisten: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          dragActive = (p.paths ?? []).some(isAudioPath) || dragActive;
+        } else if (p.type === "leave") {
+          dragActive = false;
+        } else if (p.type === "drop") {
+          dragActive = false;
+          const audio = (p.paths ?? []).filter(isAudioPath);
+          if (audio.length > 0) {
+            stagedPaths = audio;
+            uploadOpen = true;
+          }
+        }
+      })
+      .then((u) => (unlisten = u))
+      .catch(() => {});
+    return () => unlisten?.();
   });
 
   let filtered = $derived.by(() => {
@@ -163,6 +205,13 @@
       </div>
 
       <div class="controls-right">
+        <button class="upload-btn" onclick={openUpload} title="Transcribe an audio file from your computer or phone">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 10V2M5 5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3 10v2.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Upload
+        </button>
         <button class="icon-btn" onclick={openRecordingsFolder} title="Open recordings folder in file manager">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             <path d="M 2 4 L 2 12 A 1 1 0 0 0 3 13 L 13 13 A 1 1 0 0 0 14 12 L 14 5 A 1 1 0 0 0 13 4 L 8 4 L 6.5 2.5 A 1 1 0 0 0 5.8 2.2 L 3 2.2 A 1 1 0 0 0 2 3.2 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
@@ -232,6 +281,21 @@
       {/each}
     </div>
   {/if}
+
+  {#if dragActive}
+    <!-- Full-pane hint while an audio file is dragged over the window. -->
+    <div class="drag-overlay" aria-hidden="true">
+      <div class="drag-card">
+        <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true">
+          <path d="M12 16V4M8 8l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>Drop to transcribe</p>
+      </div>
+    </div>
+  {/if}
+
+  <UploadDialog bind:open={uploadOpen} bind:paths={stagedPaths} />
 
   <!-- Ambient pastoral meadow pinned to the bottom of the pane (design
        playbook: "the bottom sticky wave"). Sits BEHIND the row cards
@@ -398,6 +462,30 @@
     gap: 6px;
   }
 
+  /* Upload — the prominent accent-filled action in this cluster; it's the
+     entry point for the whole file-upload feature, so it reads louder than the
+     neutral folder / refresh icon buttons. */
+  .upload-btn {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: inherit;
+    box-shadow: 0 1px 2px rgba(184, 84, 18, 0.25);
+    transition: background 120ms ease, transform 120ms ease;
+  }
+  .upload-btn:hover {
+    background: var(--accent-hover, var(--accent));
+    transform: translateY(-1px);
+  }
+
   .icon-btn {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -415,6 +503,40 @@
   .icon-btn:hover {
     background: var(--bg-subtle);
     border-color: var(--text-secondary);
+  }
+
+  /* Drag-over hint — appears while an audio file is dragged onto the window. */
+  .drag-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(250, 246, 236, 0.72);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+  }
+  :global(body[data-theme="dark"]) .drag-overlay {
+    background: rgba(30, 24, 16, 0.72);
+  }
+  .drag-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 44px;
+    border: 2px dashed var(--accent);
+    border-radius: 18px;
+    background: var(--bg-card);
+    color: var(--accent);
+    box-shadow: 0 16px 50px rgba(60, 40, 15, 0.25);
+  }
+  .drag-card p {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
   }
 
   /* Press-and-hold-to-clear button. Quiet ghost at rest (neutral secondary

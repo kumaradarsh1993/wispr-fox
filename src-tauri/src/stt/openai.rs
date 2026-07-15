@@ -49,7 +49,7 @@ impl OpenAiStt {
 
         let file_part = multipart::Part::bytes(bytes)
             .file_name(filename)
-            .mime_str("audio/wav")
+            .mime_str(super::mime_for_audio(wav_path))
             .map_err(|e| SttError::Decode(e.to_string()))?;
 
         let mut form = multipart::Form::new()

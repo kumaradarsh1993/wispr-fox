@@ -22,6 +22,43 @@ pub struct Transcript {
     pub duration_seconds: Option<f64>,
 }
 
+/// Audio container extensions we accept for uploaded files. The cloud STT
+/// providers (Groq/OpenAI Whisper, Deepgram, ElevenLabs) all decode these
+/// server-side, so we forward the original bytes untouched rather than
+/// transcoding locally. `.wav` is what the mic recorder writes.
+pub const SUPPORTED_AUDIO_EXTS: &[&str] = &[
+    "wav", "mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus", "flac", "webm", "mpga", "mpeg",
+];
+
+/// Whether `ext` (lowercase, no dot) is an audio container we can transcribe.
+pub fn is_supported_audio_ext(ext: &str) -> bool {
+    SUPPORTED_AUDIO_EXTS.contains(&ext)
+}
+
+/// MIME type to advertise for an audio file, keyed off its extension. Used
+/// both for the multipart upload part (Groq/OpenAI) and the raw-body
+/// Content-Type (Deepgram). Providers sniff the actual container too, but a
+/// correct hint avoids ambiguity for formats like m4a. Unknown extensions
+/// fall back to a generic audio type.
+pub fn mime_for_audio(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("wav") => "audio/wav",
+        Some("mp3") | Some("mpga") | Some("mpeg") => "audio/mpeg",
+        Some("m4a") | Some("mp4") => "audio/mp4",
+        Some("aac") => "audio/aac",
+        Some("ogg") | Some("oga") => "audio/ogg",
+        Some("opus") => "audio/opus",
+        Some("flac") => "audio/flac",
+        Some("webm") => "audio/webm",
+        _ => "audio/wav",
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SttError {
     #[error("missing API key for provider {0}")]
