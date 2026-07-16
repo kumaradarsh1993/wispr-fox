@@ -331,18 +331,6 @@
       <span class="when">{timeShort(rec.created_at)}</span>
       <span class="dot">·</span>
       <span class="dur">{durationShort(rec.duration_ms)}</span>
-      {#if rec.source === "upload"}
-        <span class="src-badge" title="Transcribed from an uploaded audio file">
-          <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
-            <path d="M8 10V3M5.5 5.5 8 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M3.5 10v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Uploaded
-        </span>
-      {/if}
-      {#if showPlatformBadge}
-        <span class="plat-badge" title={platformTitle}>{platformLabel(rec.platform)}</span>
-      {/if}
       <!-- LLM-generated one-line name (auto-title). Arrives a beat after the
            run finishes; until then the time + duration carry the header. -->
       {#if rec.title}
@@ -371,6 +359,25 @@
       >
         i
       </button>
+    </div>
+
+    <!-- Source chips sit just left of the version tabs, out of the meta strip
+         so a long auto-title can't shove them around. Deliberately outside
+         .tail: these aren't controls, so clicking them should still expand
+         the row like the rest of the header. -->
+    <div class="badges">
+      {#if rec.source === "upload"}
+        <span class="src-badge" title="Transcribed from an uploaded audio file">
+          <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
+            <path d="M8 10V3M5.5 5.5 8 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.5 10v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Uploaded
+        </span>
+      {/if}
+      {#if showPlatformBadge}
+        <span class="plat-badge" title={platformTitle}>{platformLabel(rec.platform)}</span>
+      {/if}
     </div>
 
     <!-- Right rail: version tabs (always visible, so every card's Raw /
@@ -752,6 +759,13 @@
   }
 
   /* Right rail: always-visible version tabs + hover-revealed actions. */
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
   .tail {
     display: flex;
     align-items: center;
