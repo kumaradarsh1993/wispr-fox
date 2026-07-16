@@ -415,15 +415,18 @@
       <div class="actions">
       <!-- Play is hidden for remote rows (synced from another device): audio
            never leaves the device that recorded it, so there's nothing local
-           to play. -->
-      {#if !rec.remote}
-      <button class="action-btn play" onclick={togglePlay} disabled={busy} title="Play / pause audio">
-        {#if playing}
-          <svg viewBox="0 0 16 16" width="14" height="14"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg>
-        {:else}
-          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M 5 3 L 13 8 L 5 13 Z" fill="currentColor"/></svg>
-        {/if}
-      </button>
+           to play. The slot is still reserved, otherwise Copy + the kebab
+           slide left on synced rows and stop lining up with local ones. -->
+      {#if rec.remote}
+        <span class="action-slot" aria-hidden="true"></span>
+      {:else}
+        <button class="action-btn play" onclick={togglePlay} disabled={busy} title="Play / pause audio">
+          {#if playing}
+            <svg viewBox="0 0 16 16" width="14" height="14"><rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/></svg>
+          {:else}
+            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M 5 3 L 13 8 L 5 13 Z" fill="currentColor"/></svg>
+          {/if}
+        </button>
       {/if}
 
       <!-- Copy: only meaningful when there's actual text. Hidden on
@@ -889,6 +892,14 @@
   .actions:focus-within {
     opacity: 1;
     visibility: visible;
+  }
+
+  /* Placeholder for the play button on synced rows — same footprint, no
+     paint, so every row's action rail stays on the same grid. */
+  .action-slot {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
   }
 
   .action-btn {
