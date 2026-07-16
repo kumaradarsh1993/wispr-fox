@@ -154,9 +154,17 @@ impl SyncEngine {
     async fn register_device(&self, token: &str) -> anyhow::Result<()> {
         let device_id = self.device_id();
         let device_name = self.flow.settings().device_name;
+        // `devices.user_id` is NOT NULL with no default, and RLS enforces
+        // `with check (auth.uid() = user_id)` — so the row must carry our own
+        // user id or PostgREST rejects the insert (that rejection is exactly
+        // what surfaces as "Sync paused — will retry").
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("device registration: not signed in"))?;
         let url = format!("{}/rest/v1/devices", config::SUPABASE_URL);
         let body = serde_json::json!({
             "id": device_id,
+            "user_id": user_id,
             "name": device_name,
             "platform": "desktop",
             "last_seen_at": Utc::now().to_rfc3339(),
@@ -182,12 +190,18 @@ impl SyncEngine {
             return Ok(());
         }
         let device_id = self.device_id();
+        // Same NOT NULL + RLS requirement as devices — every note row must
+        // carry our user id or the push 4xxs and sync flips to "paused".
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("notes push: not signed in"))?;
         let now = Utc::now().to_rfc3339();
         let rows: Vec<serde_json::Value> = dirty
             .iter()
             .map(|r| {
                 serde_json::json!({
                     "id": r.id,
+                    "user_id": user_id,
                     "device_id": device_id,
                     "platform": "desktop",
                     "origin": if r.source == "upload" { "upload" } else { "mic" },
@@ -301,10 +315,17 @@ impl SyncEngine {
     /// failure here is logged and swallowed by the caller so it never blocks
     /// transcript sync.
     async fn sync_settings(&self, token: &str) -> anyhow::Result<()> {
+        // user_settings.user_id is NOT NULL + RLS-checked too — without it the
+        // key push 4xxs (silently, since the caller swallows this), so keys
+        // never actually reach the cloud. Include our id like devices/notes.
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("settings sync: not signed in"))?;
         let mut push_rows = Vec::new();
         for (key_name, secret_key) in SETTINGS_KEYS {
             if let Ok(Some(value)) = secrets::get(secret_key) {
                 push_rows.push(serde_json::json!({
+                    "user_id": user_id,
                     "key": key_name,
                     "value": value,
                     "updated_at": Utc::now().to_rfc3339(),
