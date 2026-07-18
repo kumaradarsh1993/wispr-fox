@@ -27,6 +27,7 @@ use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
 pub mod cues;
+pub mod denoise;
 pub mod devices;
 
 type SharedWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;

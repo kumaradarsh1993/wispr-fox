@@ -27,6 +27,17 @@ use crate::usage::UsageTracker;
 
 const MIN_DURATION_MS: i64 = 300;
 
+/// Deletes the wrapped file when dropped. Used for the denoised side-WAV so
+/// every pipeline exit (success, STT error, 120s timeout) cleans it up without
+/// each early-return needing to remember to.
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// One-per-run latch for the slow-mic floater warning. Affected devices are
 /// slow on EVERY press — warning once is enough to send the user to the mic
 /// settings without nagging them every dictation.
@@ -786,7 +797,45 @@ impl Flow {
         // attributable rather than a mystery spinner.
         let _ = app.emit("wispr:stt_provider", stt_name);
 
-        let wav_size = tokio::fs::metadata(&path)
+        // Optional mic noise reduction (laptop fan hum/whir). Processes the
+        // recording into a SIDE file that only the STT request sees — the raw
+        // WAV in history stays untouched, so playback and re-diagnosis always
+        // have the original. Runs on a blocking thread (pure CPU, ~130-600x
+        // realtime). Fail-open: any error falls back to the raw audio, because
+        // denoising must never cost the user a dictation. The guard deletes
+        // the side file on every exit path (success, STT error, timeout).
+        let nr = crate::audio::denoise::NoiseReduction::parse(&stt_settings.noise_reduction);
+        let (stt_input, _denoise_guard) = if nr != crate::audio::denoise::NoiseReduction::Off {
+            let _ = app.emit("wispr:state", "denoising");
+            let src = path.clone();
+            let result =
+                tokio::task::spawn_blocking(move || {
+                    crate::audio::denoise::denoise_to_side_file(&src, nr)
+                })
+                .await
+                .map_err(anyhow::Error::new)
+                .and_then(|r| r);
+            let _ = app.emit("wispr:state", "transcribing");
+            match result {
+                Ok(out) => {
+                    tl.mark(format!(
+                        "noise reduction ({}) · {}ms",
+                        stt_settings.noise_reduction, out.elapsed_ms
+                    ));
+                    let guard = TempFileGuard(out.path.clone());
+                    (out.path, Some(guard))
+                }
+                Err(e) => {
+                    tl.mark("noise reduction FAILED · using raw audio".to_string());
+                    tracing::warn!("denoise failed (non-fatal, using raw audio): {e:#}");
+                    (path.clone(), None)
+                }
+            }
+        } else {
+            (path.clone(), None)
+        };
+
+        let wav_size = tokio::fs::metadata(&stt_input)
             .await
             .map(|m| m.len())
             .unwrap_or(0);
@@ -815,7 +864,7 @@ impl Flow {
         // measure it explicitly and record it on the timeline for EVERY outcome
         // (ok / provider error / 120s timeout) before propagating.
         let stt_t0 = std::time::Instant::now();
-        let stt_future = stt.transcribe(&path, stt_settings.language_hint.as_deref());
+        let stt_future = stt.transcribe(&stt_input, stt_settings.language_hint.as_deref());
         let stt_result = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
         tl.stt_ms = Some(stt_elapsed);

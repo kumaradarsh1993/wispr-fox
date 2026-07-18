@@ -496,6 +496,7 @@ pub fn install(app: &AppHandle, flow: &Flow) {
                         });
                     }
                 }
+                "denoising" => set_processing_items("Reducing noise…"),
                 "transcribing" => set_processing_items("Transcribing · Groq"),
                 "cleaning" => set_processing_items("Polishing · Groq"),
                 "injecting" | "pasting" => set_processing_items("Pasting…"),

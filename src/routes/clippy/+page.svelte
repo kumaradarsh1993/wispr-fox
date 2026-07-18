@@ -676,6 +676,9 @@
     switch (s) {
       case "recording":
         return "listening";
+      // Denoising rides the "thinking" pose (every skin has one) — only the
+      // bubble label differs, via the `denoising` flag set in the listener.
+      case "denoising":
       case "transcribing":
         return "thinking";
       case "cleaning":
@@ -732,6 +735,7 @@
       flowState = "idle";
       displayState = "idle";
       displayQueue = [];
+      denoising = false;
       if (displayTimer) {
         clearTimeout(displayTimer);
         displayTimer = null;
@@ -743,6 +747,10 @@
     listen<string>("wispr:state", (e) => {
       const next = mapFlow(e.payload);
       console.log("[clippy] wispr:state", e.payload, "→", next);
+      // Track the noise-reduction beat in real time (not through the display
+      // queue) so the bubble reads "clearing noise" for exactly as long as
+      // the denoiser actually runs — the user asked to SEE this cost.
+      denoising = e.payload === "denoising";
       flowState = next;
       // Clear stale provider labels at the start/end of a run so a finished
       // pipeline doesn't leave "transcribing · Groq" hanging around.
@@ -1040,6 +1048,9 @@
   // clearly attributable. Cleared when we return to idle.
   let sttProvider = $state("");
   let llmProvider = $state("");
+  // True only while the Rust denoise stage is actually running (between the
+  // "denoising" and "transcribing" state events).
+  let denoising = $state(false);
   function prettyProvider(name: string): string {
     if (name === "deepgram") return "Deepgram";
     if (name === "elevenlabs") return "ElevenLabs";
@@ -1101,7 +1112,9 @@
 
   let labels = $derived({
     listening: listenLabel(listenElapsed, activeApp),
-    thinking: sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : runLines.think,
+    thinking: denoising
+      ? "clearing noise…"
+      : sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : runLines.think,
     writing: llmProvider ? `polishing · ${prettyProvider(llmProvider)}` : runLines.write,
     writingIcon: "✏️",
     pasting: runLines.done,

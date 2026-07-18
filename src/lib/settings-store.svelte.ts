@@ -46,6 +46,7 @@ const FALLBACK: AppSettings = {
   drafting_provider: "groq",
   stt_model: "whisper-large-v3-turbo",
   language_hint: null,
+  noise_reduction: "off",
   retention_days: 7,
   retention_max_mb: 500,
   autostart: false,

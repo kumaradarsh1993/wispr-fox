@@ -499,3 +499,40 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 3. **Avatar plugin loader / SDK v2** — parked (ROADMAP "Next up").
 4. **Touch Bar** — code exists (`touchbar.rs`); auto-detect + toggle polish low
    priority.
+
+## Multi-machine / multi-agent workflow (READ if the tree looks unexpected)
+
+As of 2026-07-18 this repo is worked from **two machines with two separate
+Claude Code sessions**:
+
+- **Core machine (this local directory)** — the primary dev box. Ideation,
+  larger features, and the running documentation (HANDOVER.md / CLAUDE.md /
+  release notes) live here. Historically worked local-first and pushed in
+  batches.
+- **Second laptop (cloud Claude Code session)** — makes *atomic* upgrades
+  committed **straight to git** on their own `claude/*` branch, then tagged as
+  nightlies. First one: `v3.1.0-nightly.1` — mic noise reduction, branch
+  `claude/laptop-fan-noise-mic-w4k2ho`.
+
+**The only shared source of truth is git.** The cloud machine cannot see this
+machine's uncommitted local work, and vice-versa. Rules to avoid stepping on
+each other:
+
+1. **Push early from the core machine.** Anything unpushed is invisible to the
+   other agent and *will* cause it to branch from stale code. If you keep work
+   local for a while, expect to resolve merge conflicts when the cloud branch
+   lands — that's normal, not a mistake.
+2. **`git fetch` at the start of every session on both machines**, and before
+   starting new work reconcile HANDOVER.md "Current state" against
+   `git log origin/main` + open `claude/*` branches.
+3. **Each machine owns its own `claude/*` branch.** Never push to a branch the
+   other machine is using. Nightlies from either machine are fine; **stable
+   promotion stays a single explicit user signal** regardless of which machine
+   builds it.
+4. **Docs (HANDOVER.md / CLAUDE.md) are edited on both machines**, so they will
+   occasionally conflict on merge. Keep edits small and section-scoped so a
+   conflict is a 2-line resolve, not a rewrite. Whichever machine merges a
+   branch to `main` reconciles the docs at that point.
+5. When the cloud machine ships a nightly branch, it leaves a one-paragraph
+   brief for the core machine (what changed, what to fetch, what to watch for).
+   Paste that into the core session so it pulls before working.

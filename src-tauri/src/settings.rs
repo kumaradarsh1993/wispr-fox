@@ -67,6 +67,14 @@ pub struct AppSettings {
     pub llm_model: String,
     pub language_hint: Option<String>,
 
+    /// Mic noise reduction applied to the recorded WAV before STT (fan hum /
+    /// whir from laptop built-in mics). "off" | "on" (90 Hz rumble high-pass)
+    /// | "aggressive" (high-pass + RNNoise). The raw recording on disk is
+    /// never modified — only the audio sent to the STT provider. Applies to
+    /// hotkey recordings, not uploaded files.
+    #[serde(default = "default_noise_reduction")]
+    pub noise_reduction: String,
+
     // Legacy per-mode fields. Kept so old settings.json files still
     // deserialize cleanly. New code uses llm_provider / llm_model.
     #[serde(default)]
@@ -197,6 +205,7 @@ impl Default for AppSettings {
             llm_provider: "groq".to_string(),
             llm_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             language_hint: None,
+            noise_reduction: default_noise_reduction(),
             // Legacy per-mode fields — mirror the globals so any code that
             // still reads them gets a sane value.
             clippy_light_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
@@ -255,6 +264,10 @@ fn default_device_name() -> String {
 
 fn default_adapt_to_app() -> bool {
     true
+}
+
+fn default_noise_reduction() -> String {
+    "off".to_string()
 }
 
 fn default_keep_in_clipboard() -> bool {
