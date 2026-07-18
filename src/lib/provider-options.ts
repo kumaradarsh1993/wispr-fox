@@ -33,7 +33,9 @@ export const STT_MODELS: Record<string, ProviderModel[]> = {
   groq: [
     { id: "whisper-large-v3-turbo", label: "Whisper Turbo", quality: "Fast, strong default" },
     { id: "whisper-large-v3", label: "Whisper Large v3", quality: "Slower, highest Whisper accuracy" },
-    { id: "distil-whisper-large-v3-en", label: "Distil-Whisper", quality: "Fastest, English only" },
+    // "distil-whisper-large-v3-en" removed 2026-07 — Groq retired the model
+    // upstream (live-verified, see wispr-fox-android/HANDOVER.md "Desktop
+    // parity ports"). Saved selections coerce via settings-store.svelte.ts.
   ],
   openai: [
     { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", quality: "Best OpenAI STT quality" },
@@ -46,7 +48,9 @@ export const STT_MODELS: Record<string, ProviderModel[]> = {
   ],
   elevenlabs: [
     { id: "scribe_v2", label: "Scribe v2", quality: "Recommended ElevenLabs STT" },
-    { id: "scribe_v1", label: "Scribe v1", quality: "Legacy fallback" },
+    // "scribe_v1" removed 2026-07 — ElevenLabs retired the model upstream
+    // (live-verified, see wispr-fox-android/HANDOVER.md "Desktop parity
+    // ports"). Saved selections coerce via settings-store.svelte.ts.
   ],
 };
 
@@ -54,7 +58,10 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
   groq: [
     { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", quality: "Balanced default" },
     { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", quality: "Fastest cleanup" },
-    { id: "llama-4-maverick", label: "Llama 4 Maverick", quality: "Higher quality, lower free quota" },
+    // "llama-4-maverick" removed 2026-07 — it was never a valid Groq model
+    // id (live-verified, see wispr-fox-android/HANDOVER.md "Desktop parity
+    // ports"). No replacement added; Llama 3.3 70B stays the default. Saved
+    // selections coerce via settings-store.svelte.ts.
   ],
   openai: [
     { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },

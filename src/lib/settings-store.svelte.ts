@@ -14,6 +14,7 @@
 
 import { Store, type Store as StoreType } from "@tauri-apps/plugin-store";
 import { api, type AppSettings } from "./api";
+import { llmModelsFor, sttModelsFor } from "./provider-options";
 
 const STORE_FILE = "user-prefs.json";
 const STORE_KEY = "settings";
@@ -218,6 +219,35 @@ class SettingsStore {
         } catch {
           /* best-effort marker */
         }
+      }
+    }
+
+    // 2d) Sanitize saved model selections against the current provider
+    //     catalog (`provider-options.ts`). Providers occasionally retire a
+    //     model id upstream (e.g. Groq dropping `distil-whisper-large-v3-en`,
+    //     ElevenLabs retiring `scribe_v1`) — a saved id that's no longer
+    //     listed can't match any <option> in the sidebar/Settings model
+    //     <select>s (renders with nothing visibly selected) AND would keep
+    //     getting sent straight to the provider on every call, which just
+    //     4xxs. Coerce to that provider's first listed model instead, same
+    //     fallback `applySttProvider`/`applyLlmProvider` already use when the
+    //     user switches providers by hand.
+    {
+      const sttOptions = sttModelsFor(this.s.stt_provider);
+      if (sttOptions.length > 0 && !sttOptions.some((m) => m.id === this.s.stt_model)) {
+        console.info(
+          `settings.init: saved STT model "${this.s.stt_model}" is no longer offered by ${this.s.stt_provider}; falling back to ${sttOptions[0].id}`,
+        );
+        this.s.stt_model = sttOptions[0].id;
+        migrated = true;
+      }
+      const llmOptions = llmModelsFor(this.s.llm_provider);
+      if (llmOptions.length > 0 && !llmOptions.some((m) => m.id === this.s.llm_model)) {
+        console.info(
+          `settings.init: saved LLM model "${this.s.llm_model}" is no longer offered by ${this.s.llm_provider}; falling back to ${llmOptions[0].id}`,
+        );
+        this.s.llm_model = llmOptions[0].id;
+        migrated = true;
       }
     }
 
