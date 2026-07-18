@@ -36,6 +36,9 @@ export interface AppSettings {
   llm_provider: string;
   llm_model: string;
   language_hint: string | null;
+  /** Mic noise reduction before STT: "off" | "on" (rumble high-pass) |
+   *  "aggressive" (high-pass + RNNoise). Raw WAV on disk is never modified. */
+  noise_reduction: string;
   // Legacy per-mode fields — kept for backwards compat, not used by UI.
   clippy_light_model: string;
   clippy_advanced_model: string;

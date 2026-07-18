@@ -8,6 +8,24 @@
     await settings.replace({ ...settings.s });
     flash("Restart wispr-fox to apply new hotkeys");
   }
+
+  const NOISE_OPTIONS = [
+    {
+      id: "off",
+      label: "Off",
+      desc: "Audio goes to the transcriber exactly as recorded.",
+    },
+    {
+      id: "on",
+      label: "On",
+      desc: "Filters low-frequency fan rumble. Zero effect on speech — safe to leave on.",
+    },
+    {
+      id: "aggressive",
+      label: "Aggressive",
+      desc: "Adds an AI noise gate (RNNoise) that strips fan whir across the whole spectrum. Best for loud fans; turn back if transcripts get worse.",
+    },
+  ] as const;
 </script>
 
 <section>
@@ -155,5 +173,29 @@
       />
       <span><strong>Adapt Draft tone to the active app</strong>.</span>
     </label>
+  </div>
+
+  <h3>Noise reduction</h3>
+  <p class="lede">
+    Cleans laptop-fan hum and whir out of the audio sent for transcription.
+    Runs locally in a few milliseconds after you release the hotkey — the
+    floater shows a quick "clearing noise" beat while it works. The saved
+    recording in History is always the untouched original.
+  </p>
+
+  <div class="radio-grid">
+    {#each NOISE_OPTIONS as opt (opt.id)}
+      <button
+        class="radio-card"
+        class:active={settings.s.noise_reduction === opt.id}
+        onclick={() => settings.set("noise_reduction", opt.id)}
+      >
+        <div class="radio-card-head">
+          <span class="radio-dot">{settings.s.noise_reduction === opt.id ? "●" : "○"}</span>
+          <span class="radio-label">{opt.label}</span>
+        </div>
+        <div class="radio-desc">{opt.desc}</div>
+      </button>
+    {/each}
   </div>
 </section>

@@ -5,7 +5,19 @@
 > is a specialist doc (see the map at the bottom).
 >
 > **Last updated: 2026-07-18** (v3.0.0 promoted to stable — accounts +
-> cross-device sync, audio-file upload, ownership-scoped delete, and Purge).
+> cross-device sync, audio-file upload, ownership-scoped delete, and Purge;
+> then `v3.1.0-nightly.1` = mic noise reduction, pushed from the cloud/second
+> machine — see "Current state" and the multi-machine note directly below).
+
+> **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
+> this local core machine, AND a cloud Claude Code session on a second laptop
+> that commits atomic upgrades straight to git. `v3.1.0-nightly.1`
+> (`src-tauri/src/audio/denoise.rs` + the noise-reduction setting/UI) was
+> authored on the cloud machine and lives on branch
+> `claude/laptop-fan-noise-mic-w4k2ho`. **Before starting new work here, `git
+> fetch` and reconcile** — that branch/tag may be ahead of your local tree.
+> Coordination process for this split is written up at the bottom of CLAUDE.md
+> ("Multi-machine / multi-agent workflow").
 
 ---
 
@@ -77,6 +89,22 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
     deliberate live test is still owed. One sharp edge, intended per spec:
     signing an existing device with local history into an already-purged account
     wipes that device's local history to match the reset.
+- **In flight: `v3.1.0-nightly.1`** (2026-07-18, branch
+  `claude/laptop-fan-noise-mic-w4k2ho`, authored on the cloud/second machine) —
+  **mic noise reduction** for fan-heavy laptop built-in mics. Opt-in setting
+  `noise_reduction` ("off" default | "on" | "aggressive") in Settings →
+  Dictation. "on" = 4th-order Butterworth high-pass @ 90 Hz (kills fan rumble,
+  can't touch speech); "aggressive" adds RNNoise via the pure-Rust
+  `nnnoiseless` crate (measured SNR 21→42-57 dB on the user's real XPS-13
+  samples). New `src-tauri/src/audio/denoise.rs`; wired into `flow.rs` between
+  silence-trim and STT on a `spawn_blocking` thread (~130-600× realtime, no
+  perceptible latency). Runs on a **temp side-file** the STT request reads —
+  the raw WAV in History is never modified (a `TempFileGuard` deletes the copy
+  on every pipeline exit), and any denoise error **fails open** to raw audio.
+  New `wispr:state` "denoising" drives a "clearing noise…" floater bubble +
+  Touch Bar label + a flight-recorder timeline mark with the exact ms. Verified
+  `cargo check` + 3 denoise unit tests + `svelte-check` + vite build. Not yet
+  merged to `main`; nightly tag pending push.
 - **Prior stable: `v2.1.0`** (2026-07-15) — pixel pets + wave/siri minimal skins,
   avatar-visibility tri-state, auto-titles, reimagined+rebuilt onboarding,
   per-recording flight recorder, mic-drop detection, mic wake-up health-check,
