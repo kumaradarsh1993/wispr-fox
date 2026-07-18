@@ -13,16 +13,24 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v2.1.0`** (Latest, 2026-07-15) — promoted from `nightly.10`
-on the user's signal. The v2.1.0 line = pixel pets + wave/siri skins,
-avatar-visibility tri-state, auto-titles, rebuilt onboarding, per-recording
-flight recorder, mic-drop + mic-wake-up diagnostics, and the sleep-blocker fix.
-Single owner, no paid users. **Nightly: `v2.2.0-nightly.1`** (2026-07-15) —
-**audio file upload** (drag-drop / picker → transcribe existing audio; per-batch
-provider + clean-up/draft; "Uploaded" badge via a new `source` column;
-`Flow::transcribe_file` / `transcribe_upload` / `UploadDialog.svelte`). A
-password-gated browser sibling lives at `../wispr-fox-web/` (SvelteKit + Vercel,
-deploy pending). The rest of this section documents the v2.1.0 line; canonical
+**Current stable: `v3.0.0`** (Latest, 2026-07-18) — the major accounts + sync
+line, promoted on the user's "bump to stable" signal. v3.0.0 = **accounts +
+optional cross-device sync** (Supabase; transcripts + API keys sync, audio never
+leaves the device; signed-out mode byte-identical to before), **audio-file
+upload** (drag-drop / picker → transcribe existing audio; `source` column,
+`Flow::transcribe_file` / `transcribe_upload` / `UploadDialog.svelte`),
+**ownership-scoped delete** (a client deletes only rows it originated —
+`remote == false`; transcript + audio die together), and **Purge** (Account →
+hold-to-confirm; account-wide reset that also clears orphans; protocol in
+`../wispr-fox-web/docs/SYNC_DESIGN.md`). All three clients share the delete/purge
+policy. ⚠️ The delete/purge paths went stable **runtime-unverified** (typechecked
++ CI-built, never run against a live Supabase account) — one deliberate live test
+is owed. Single owner, no paid users. The prior **v2.1.0** line = pixel pets +
+wave/siri skins, avatar-visibility tri-state, auto-titles, rebuilt onboarding,
+per-recording flight recorder, mic-drop + mic-wake-up diagnostics, and the
+sleep-blocker fix. The browser sibling at `../wispr-fox-web/` (SvelteKit +
+Vercel) is now **LIVE** at <https://wispr-fox-web.vercel.app>. The rest of this
+section documents the v2.1.0 line; canonical
 mode
 names are now **Transcribe**/**Draft** everywhere (Raw/Cleaned/Drafted are
 version tabs only); sidebar widened (user explicitly keeps its quick settings);
@@ -471,7 +479,9 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-07-06 doc cleanup — pruned stale/superseded docs, added*
+*Last touched: 2026-07-18 — updated the stable line to v3.0.0 (accounts + sync,*
+*audio upload, ownership-scoped delete, Purge) during the cross-repo doc lint.*
+*Prior: 2026-07-06 doc cleanup — pruned stale/superseded docs, added*
 *`HANDOVER.md` as the current-state entry point. Update this file when*
 *conventions or architecture change — not on every fix; day-to-day state*
 *lives in `HANDOVER.md` + release notes.*
