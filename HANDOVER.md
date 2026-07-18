@@ -4,7 +4,23 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-07-16** (v3.0.0-nightly.1 accounts + cross-device sync).
+> **Last updated: 2026-07-17** (v3.0.0-nightly.1 accounts + cross-device sync;
+> synced-row history-rail fixes queued for the next nightly).
+
+---
+
+## Sibling apps (one product, three clients)
+
+wispr-fox is three clients sharing one Supabase backend. Keep this block in
+sync across all three handovers.
+
+- **Desktop** — `./HANDOVER.md` (Tauri 2 + Rust + Svelte 5, Windows/macOS) ← you are here
+- **Web** — `../wispr-fox-web/HANDOVER.md` (SvelteKit on Vercel)
+- **Android** — `../wispr-fox-android/HANDOVER.md` (Kotlin + Jetpack Compose)
+
+Shared backend spec: `../wispr-fox-web/docs/SYNC_DESIGN.md` · one-time
+account/backend setup: `../wispr-fox-web/SETUP_ACCOUNTS.md` (secrets in the
+gitignored `../wispr-fox-web/SECRETS.local.md`).
 
 ---
 
@@ -19,6 +35,28 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **Unreleased on `main` (rides the next nightly), 2026-07-17** — synced-row
+  history fixes: the action rail stays aligned on rows synced from other
+  devices even though they have no local audio to play (`880b828`), and the
+  source chips moved next to the version tabs (`3b6b481`). Also on `main`:
+  `22cd8f0` includes `user_id` in device/notes/settings writes (fixes the
+  "Sync paused — will retry" banner caused by the NOT NULL + RLS check). Not
+  yet tagged.
+- **Delete policy — migrated to ownership-scoped + Purge (2026-07-17).**
+  `delete_recordings(ids)` (`src-tauri/src/commands.rs`) dropped the What/Where
+  matrix: a client may delete only the rows it originated (`remote == false`
+  locally; `tombstone_remote` scopes the cloud PATCH to `device_id=eq.<this
+  device>`). Transcript and audio die together; "delete all" hits only this
+  device's rows; `HistoryRow` hides the delete control on remote rows. New
+  `purge_account` command (Account panel, hold-to-arm + confirm) stamps
+  `user_settings.purged_at` and hard-deletes every note, and `run_sync` applies
+  a newer `purged_at` by wiping local history — the account-wide reset that also
+  clears orphans. Full protocol in `../wispr-fox-web/docs/SYNC_DESIGN.md`
+  ("Purge"). Also fixed a latent bug: `tombstone_remote` never bumped
+  `updated_at`, so desktop deletes never reached other devices' pulls — it does
+  now. All three clients now share this policy. **Runtime-unverified** (no live
+  Supabase run on this box): the delete/purge HTTP paths are typechecked +
+  `cargo check`-green, not observed.
 - **Nightly: `v3.0.0-nightly.1`** (2026-07-16) — **accounts + cross-device
   sync** (major). Optional sign-in (Google via loopback-PKCE `127.0.0.1:43117`,
   or email/password) against a shared **Supabase** backend. Signed-in clients
@@ -45,9 +83,10 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   mic-specific telemetry); STT providers now forward uploads with the correct
   MIME per extension (m4a/mp3/etc. — no local transcoding). `transcribe_upload`
   command. See `src/lib/UploadDialog.svelte`.
-- **Sibling project: `../wispr-fox-web/`** — password-gated browser version
-  (SvelteKit + Vercel serverless proxy). Separate repo, deploy pending. See its
-  own `HANDOVER`-equivalent `README.md` / `DEPLOY.md`.
+- **Sibling project: `../wispr-fox-web/`** — browser version (SvelteKit +
+  Vercel serverless proxy). Separate repo, now **LIVE** at
+  <https://wispr-fox-web.vercel.app> (sign-in replaced the old password gate;
+  push to `main` auto-deploys). See its `HANDOVER.md` / `README.md` / `DEPLOY.md`.
 - The v2.1.0 nightly cycle that led to stable (kept for history):
 
   | Nightly | What landed |

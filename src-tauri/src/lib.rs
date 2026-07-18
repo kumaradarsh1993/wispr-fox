@@ -328,6 +328,7 @@ pub fn run() {
             commands::list_history,
             commands::delete_recording,
             commands::delete_recordings,
+            commands::purge_account,
             commands::retry_recording,
             commands::auth_status,
             commands::sign_in_email,

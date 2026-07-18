@@ -481,96 +481,80 @@ pub fn set_device_name(flow: State<'_, Flow>, name: String) {
     flow.set_settings(s);
 }
 
-/// The reworked delete (v3.0.0). See SYNC_DESIGN.md "Delete rework":
-///   - `what.audio`       delete local voice files
-///   - `what.transcripts` delete the transcript rows
-///   - scope "device"     local only (transcripts → add to sync_exclusions
-///                        when signed in, so a pull won't resurrect them)
-///   - scope "everywhere" tombstone the cloud rows (deleted_at + null text),
-///                        then delete locally; other devices apply on pull
-/// `ids = None` means "all recordings".
-#[derive(Deserialize)]
-pub struct DeleteWhat {
-    pub audio: bool,
-    pub transcripts: bool,
-}
-
+/// Ownership-scoped delete (v3.0.0, supersedes the What/Where matrix). See
+/// SYNC_DESIGN.md "Delete — ownership-scoped": a client may delete only the
+/// transcripts it originated. Locally that is any non-`remote` row — rows with
+/// `remote = 1` were pulled from another device and belong to it, so they are
+/// refused here (and the UI hides their delete control entirely). A transcript
+/// and its recording die together — there is no audio-only option any more.
+///
+/// For owned rows we also tombstone the cloud copy (`deleted_at` + nulled text,
+/// scoped to our `device_id`) so every other device drops it on its next pull.
+/// Deleting a row whose local audio is already gone succeeds quietly.
+///
+/// `ids = None` means "all of THIS device's recordings" — other devices'
+/// synced transcripts are untouched, locally and on the server.
 #[tauri::command]
 pub async fn delete_recordings(
     app: AppHandle,
     history: State<'_, History>,
-    scope: String,
-    what: DeleteWhat,
     ids: Option<Vec<String>>,
 ) -> Result<u64, String> {
-    if !what.audio && !what.transcripts {
-        return Ok(0);
-    }
-    let everywhere = scope == "everywhere";
-    let signed_in = crate::sync::config::is_configured()
-        && crate::sync::auth::current_user().is_some();
-
-    // Resolve the target id set.
-    let target_ids: Vec<String> = match ids {
-        Some(list) => list,
-        None => history
-            .list_recent(100_000)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|r| r.id)
-            .collect(),
+    // Resolve the target rows.
+    let targets: Vec<Recording> = match ids {
+        Some(list) => {
+            let mut v = Vec::with_capacity(list.len());
+            for id in list {
+                if let Some(r) = history.get(&id).map_err(|e| e.to_string())? {
+                    v.push(r);
+                }
+            }
+            v
+        }
+        None => history.list_recent(100_000).map_err(|e| e.to_string())?,
     };
 
-    // Cloud tombstones first (best-effort) when deleting transcripts
-    // everywhere — so other devices converge even if the local half below
-    // hits a snag.
-    if everywhere && what.transcripts && signed_in {
-        crate::sync::engine::tombstone_remote(&target_ids).await;
+    // Ownership guard: only rows this device originated may be deleted. Remote
+    // rows (pulled from another device) are silently skipped — the UI never
+    // offers a delete control on them, so this is belt-and-suspenders.
+    let owned: Vec<Recording> = targets.into_iter().filter(|r| !r.remote).collect();
+    if owned.is_empty() {
+        return Ok(0);
     }
+    let owned_ids: Vec<String> = owned.iter().map(|r| r.id.clone()).collect();
 
-    let mut affected = 0u64;
-    for id in &target_ids {
-        let Some(rec) = history.get(id).map_err(|e| e.to_string())? else {
-            continue;
-        };
-
-        if what.transcripts {
-            // Row (and its audio) goes entirely.
-            let _ = std::fs::remove_file(&rec.audio_path);
-            if everywhere {
-                // Tombstone already sent above; just delete locally.
-                history.delete(id).map_err(|e| e.to_string())?;
-            } else {
-                // This-device-only: delete locally and, when signed in,
-                // remember the id so a later pull won't bring it back.
-                if signed_in {
-                    let _ = history.exclusion_add(id);
-                }
-                history.delete(id).map_err(|e| e.to_string())?;
-            }
-            affected += 1;
-        } else if what.audio {
-            // Audio-only: drop the file, keep the row (playback UI shows the
-            // audio as missing). `clear_audio` blanks audio_path so
-            // audio_data_url_for returns a clean error the frontend handles.
-            history.clear_audio(id).map_err(|e| e.to_string())?;
-            affected += 1;
+    // Cloud tombstones first (best-effort) so other devices converge even if
+    // the local half below hits a snag. Scoped to our device_id server-side.
+    let signed_in = crate::sync::config::is_configured()
+        && crate::sync::auth::current_user().is_some();
+    if signed_in {
+        if let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() {
+            let device_id = engine.device_id();
+            crate::sync::engine::tombstone_remote(&owned_ids, &device_id).await;
         }
     }
 
-    // Wipe empty audio date-folders if we did a full transcript delete of
-    // everything, matching clear_all_history's "leave nothing behind".
-    if what.transcripts {
-        if let Ok(dir) = app.path().app_data_dir() {
-            let audio = dir.join("audio");
-            if audio.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&audio) {
-                    for e in entries.flatten() {
-                        if e.path().is_dir() {
-                            if let Ok(mut c) = std::fs::read_dir(e.path()) {
-                                if c.next().is_none() {
-                                    let _ = std::fs::remove_dir(e.path());
-                                }
+    let mut affected = 0u64;
+    for rec in &owned {
+        // Transcript and audio die together. A row whose audio was already
+        // pruned (GC) or never had a local file still deletes cleanly — the
+        // remove_file error is ignored on purpose.
+        let _ = std::fs::remove_file(&rec.audio_path);
+        history.delete(&rec.id).map_err(|e| e.to_string())?;
+        affected += 1;
+    }
+
+    // Wipe now-empty audio date-folders, matching clear_all_history's "leave
+    // nothing behind".
+    if let Ok(dir) = app.path().app_data_dir() {
+        let audio = dir.join("audio");
+        if audio.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&audio) {
+                for e in entries.flatten() {
+                    if e.path().is_dir() {
+                        if let Ok(mut c) = std::fs::read_dir(e.path()) {
+                            if c.next().is_none() {
+                                let _ = std::fs::remove_dir(e.path());
                             }
                         }
                     }
@@ -581,6 +565,24 @@ pub async fn delete_recordings(
 
     let _ = app.emit("wispr:history_changed", ());
     Ok(affected)
+}
+
+/// Initiate an account-wide purge — the deliberate "reset my entire account
+/// history everywhere" escape hatch, and the only delete allowed to cross
+/// device ownership (it also clears undeletable orphans whose originating
+/// device is gone). Sets the synced `purged_at` marker, hard-deletes every
+/// note server-side, and wipes local state. Destructive and irreversible; the
+/// UI gates it behind press-and-hold + an explicit confirm. No-op-safe when
+/// signed out (returns an error the caller surfaces) — the control is only
+/// shown while signed in.
+#[tauri::command]
+pub async fn purge_account(app: AppHandle) -> Result<(), String> {
+    let engine = app
+        .try_state::<crate::sync::engine::SyncEngine>()
+        .ok_or_else(|| "sync engine unavailable".to_string())?
+        .inner()
+        .clone();
+    engine.purge_all().await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]

@@ -92,8 +92,10 @@ impl SyncEngine {
 
     /// This install's persistent device id — generated once and stored in
     /// `sync_meta` (survives across settings.json rewrites, unlike a plain
-    /// setting would).
-    fn device_id(&self) -> String {
+    /// setting would). Public because the ownership-scoped delete
+    /// (`commands::delete_recordings`) needs it to scope the server tombstone
+    /// to rows this device originated.
+    pub fn device_id(&self) -> String {
         if let Ok(Some(id)) = self.history.meta_get("device_id") {
             return id;
         }
@@ -140,6 +142,11 @@ impl SyncEngine {
     async fn run_sync(&self) -> anyhow::Result<()> {
         let token = auth::ensure_access_token().await?;
         self.register_device(&token).await?;
+        // Account purge is checked BEFORE we trust any pulled notes: if another
+        // device reset the whole account, we must wipe local state and advance
+        // our cursor past the purge marker first, otherwise the pull below would
+        // re-seed rows the reset was meant to clear.
+        self.apply_purge(&token).await?;
         self.push_notes(&token).await?;
         self.pull_notes(&token).await?;
         // API-key sync is a nice-to-have layered on top of the notes sync
@@ -369,6 +376,144 @@ impl SyncEngine {
         }
         Ok(())
     }
+
+    /// Apply an account-wide purge initiated on any device. The synced marker
+    /// is `user_settings['purged_at']` (an RFC3339 UTC timestamp); locally we
+    /// remember the last one we applied in `applied_purge_at`. When the server
+    /// marker is newer than ours, every local transcript + its audio is wiped
+    /// and the pull cursor is jumped to the marker so nothing before the reset
+    /// comes back. A fresh install (empty `applied_purge_at`) simply advances
+    /// its marker/cursor — wiping empty local state is a harmless no-op.
+    ///
+    /// `purged_at` is deliberately read here on its own rather than through the
+    /// API-key settings loop, so it is never echoed back up or treated as a
+    /// round-tripping setting — it is write-on-purge, read-on-sync only.
+    async fn apply_purge(&self, token: &str) -> anyhow::Result<()> {
+        let url = format!(
+            "{}/rest/v1/user_settings?key=eq.purged_at&select=value",
+            config::SUPABASE_URL
+        );
+        let resp = http()
+            .get(&url)
+            .header("apikey", config::SUPABASE_ANON_KEY)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("purge check: {e}"))?;
+        if !resp.status().is_success() {
+            // Never let a purge-marker read failure sink the whole cycle — the
+            // normal push/pull is what matters most; we'll re-check next tick.
+            return Ok(());
+        }
+        let rows: Vec<PurgeRow> = resp.json().await.unwrap_or_default();
+        let Some(purged_at) = rows.into_iter().next().map(|r| r.value) else {
+            return Ok(());
+        };
+        let applied = self
+            .history
+            .meta_get("applied_purge_at")?
+            .unwrap_or_default();
+        // RFC3339 UTC strings sort lexicographically the same as chronologically.
+        if purged_at.as_str() > applied.as_str() {
+            tracing::info!(purged_at = %purged_at, "sync: applying account purge (wiping local history)");
+            self.wipe_all_local();
+            self.history.meta_set("applied_purge_at", &purged_at)?;
+            self.history.meta_set("pull_cursor", &purged_at)?;
+            let _ = self.app.emit("wispr:history_changed", ());
+        }
+        Ok(())
+    }
+
+    /// Initiate an account-wide purge from this device — the one operation
+    /// allowed to cross device ownership. Sets the synced `purged_at` marker
+    /// FIRST (so the reset still propagates to every other device even if the
+    /// bulk server delete below fails), then best-effort hard-DELETEs all of
+    /// the user's notes (own rows, other devices' rows, AND orphans whose
+    /// originating device is gone), then wipes local state and advances the
+    /// local markers so this device doesn't re-apply its own purge on the next
+    /// sync. Destructive and irreversible — the UI gates it behind an explicit
+    /// press-and-hold + confirm.
+    pub async fn purge_all(&self) -> anyhow::Result<()> {
+        if !config::is_configured() {
+            anyhow::bail!("Sync not configured in this build");
+        }
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("purge: not signed in"))?;
+        let token = auth::ensure_access_token().await?;
+        let now = Utc::now().to_rfc3339();
+
+        // 1. Set the synced marker first. This is the durable signal every
+        //    other device reads on sync; if the delete half fails, propagation
+        //    still happens.
+        let settings_url = format!("{}/rest/v1/user_settings", config::SUPABASE_URL);
+        let resp = http()
+            .post(&settings_url)
+            .header("apikey", config::SUPABASE_ANON_KEY)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Prefer", "resolution=merge-duplicates")
+            .json(&serde_json::json!({
+                "user_id": user_id,
+                "key": "purged_at",
+                "value": now,
+                "updated_at": now,
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("purge marker: {e}"))?;
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("purge marker HTTP failed: {body}");
+        }
+
+        // 2. Best-effort hard delete of every note on the account. RLS already
+        //    scopes to this user; the explicit `user_id` filter also satisfies
+        //    PostgREST's guard against an unfiltered bulk delete.
+        let notes_url = format!(
+            "{}/rest/v1/notes?user_id=eq.{}",
+            config::SUPABASE_URL,
+            percent_encode(&user_id),
+        );
+        if let Err(e) = http()
+            .delete(&notes_url)
+            .header("apikey", config::SUPABASE_ANON_KEY)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+        {
+            tracing::warn!("purge: server note wipe failed (marker set, will still propagate): {e:#}");
+        }
+
+        // 3. Wipe local state and advance our own markers so we treat this
+        //    purge as already applied.
+        self.wipe_all_local();
+        self.history.meta_set("applied_purge_at", &now)?;
+        self.history.meta_set("pull_cursor", &now)?;
+        let _ = self.app.emit("wispr:history_changed", ());
+        Ok(())
+    }
+
+    /// Delete every local transcript row + its audio file, then clear the audio
+    /// directory outright so nothing orphaned survives on disk. Used by both
+    /// `purge_all` (this device initiated) and `apply_purge` (a purge arrived
+    /// from another device).
+    fn wipe_all_local(&self) {
+        if let Ok(recs) = self.history.list_recent(1_000_000) {
+            for r in &recs {
+                if !r.audio_path.as_os_str().is_empty() {
+                    let _ = std::fs::remove_file(&r.audio_path);
+                }
+                let _ = self.history.delete(&r.id);
+            }
+        }
+        if let Ok(dir) = self.app.path().app_data_dir() {
+            let audio = dir.join("audio");
+            if audio.is_dir() {
+                let _ = std::fs::remove_dir_all(&audio);
+                let _ = std::fs::create_dir_all(&audio);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -408,6 +553,12 @@ struct SettingsRow {
     key: String,
     value: String,
     updated_at: String,
+}
+
+/// The single `user_settings` row that carries the account purge marker.
+#[derive(Debug, Deserialize)]
+struct PurgeRow {
+    value: String,
 }
 
 fn percent_encode(s: &str) -> String {
@@ -452,13 +603,15 @@ pub fn spawn_background_poll(engine: SyncEngine) {
     });
 }
 
-/// Best-effort cloud tombstone for an "everywhere" delete: sets `deleted_at`
-/// and blanks the text columns so other devices remove their local copies on
-/// their next pull. Local deletion proceeds regardless of whether this
-/// succeeds — the user's local intent shouldn't be blocked by a network
-/// hiccup, and the exclusion list (for "this device only" deletes) has no
-/// bearing here since this is the "delete everywhere" path.
-pub async fn tombstone_remote(ids: &[String]) {
+/// Best-effort cloud tombstone for an ownership-scoped delete: sets
+/// `deleted_at` and blanks the text columns so other devices remove their
+/// local copies on their next pull. Scoped server-side to `device_id` so this
+/// can only ever tombstone rows THIS device originated — the delete policy is
+/// "a client may delete only what it originated", and RLS alone proves a row
+/// belongs to the user, never that it belongs to this device. Local deletion
+/// proceeds regardless of whether this succeeds — the user's local intent
+/// shouldn't be blocked by a network hiccup.
+pub async fn tombstone_remote(ids: &[String], device_id: &str) {
     if ids.is_empty() || !config::is_configured() || auth::current_user().is_none() {
         return;
     }
@@ -470,9 +623,18 @@ pub async fn tombstone_remote(ids: &[String]) {
         .map(|s| s.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    let url = format!("{}/rest/v1/notes?id=in.({id_list})", config::SUPABASE_URL);
+    let url = format!(
+        "{}/rest/v1/notes?id=in.({id_list})&device_id=eq.{}",
+        config::SUPABASE_URL,
+        percent_encode(device_id),
+    );
+    // updated_at MUST advance: other devices pull by `updated_at > cursor`, so
+    // a tombstone that leaves it untouched would never reach them (the schema
+    // has no trigger to bump it). Web and Android tombstones set it too.
+    let now = Utc::now().to_rfc3339();
     let body = serde_json::json!({
-        "deleted_at": Utc::now().to_rfc3339(),
+        "deleted_at": now,
+        "updated_at": now,
         "title": null,
         "transcript": null,
         "cleaned_text": null,

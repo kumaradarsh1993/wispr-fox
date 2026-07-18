@@ -80,12 +80,6 @@ export interface SyncStatusEvent {
   last_synced_at: string | null;
 }
 
-/** What to delete + where, for the reworked delete flow. */
-export interface DeleteWhat {
-  audio: boolean;
-  transcripts: boolean;
-}
-
 export interface Recording {
   id: string;
   created_at: string;
@@ -287,12 +281,14 @@ export const api = {
     invoke<void>("set_settings", { settings }),
   listHistory: (limit = 100) => invoke<Recording[]>("list_history", { limit }),
   deleteRecording: (id: string) => invoke<void>("delete_recording", { id }),
-  /** Reworked delete. scope = "device" | "everywhere"; ids omitted = all. */
-  deleteRecordings: (
-    scope: "device" | "everywhere",
-    what: DeleteWhat,
-    ids?: string[] | null,
-  ) => invoke<number>("delete_recordings", { scope, what, ids: ids ?? null }),
+  /** Ownership-scoped delete: removes only rows this device originated
+   *  (transcript + audio together), tombstoning the cloud copy so other
+   *  devices drop it too. `ids` omitted = all of this device's recordings. */
+  deleteRecordings: (ids?: string[] | null) =>
+    invoke<number>("delete_recordings", { ids: ids ?? null }),
+  /** Account-wide purge — resets the entire account history on every device,
+   *  including orphaned rows. Deliberate, irreversible; signed-in only. */
+  purgeAccount: () => invoke<void>("purge_account"),
   retryRecording: (id: string) => invoke<void>("retry_recording", { id }),
   // ── Accounts + cross-device sync ──────────────────────────────────────
   authStatus: () => invoke<AuthStatus>("auth_status"),

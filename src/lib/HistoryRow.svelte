@@ -485,17 +485,22 @@
               </svg>
               <span>{isError ? "Retry" : "Re-run transcription"}</span>
             </button>
-            <button
-              class="kebab-item danger"
-              role="menuitem"
-              disabled={busy}
-              onclick={() => { kebabOpen = false; remove(); }}
-            >
-              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-                <path d="M 3 4 L 13 4 M 5 4 V 13 A 1 1 0 0 0 6 14 H 10 A 1 1 0 0 0 11 13 V 4 M 7 7 V 11 M 9 7 V 11 M 6 4 V 3 A 1 1 0 0 1 7 2 H 9 A 1 1 0 0 1 10 3 V 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              <span>Delete recording</span>
-            </button>
+            <!-- Delete is ownership-scoped: only rows this device originated can
+                 be deleted, so it's hidden entirely on rows synced from another
+                 device (a disabled-but-visible control reads as a bug). -->
+            {#if !rec.remote}
+              <button
+                class="kebab-item danger"
+                role="menuitem"
+                disabled={busy}
+                onclick={() => { kebabOpen = false; remove(); }}
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M 3 4 L 13 4 M 5 4 V 13 A 1 1 0 0 0 6 14 H 10 A 1 1 0 0 0 11 13 V 4 M 7 7 V 11 M 9 7 V 11 M 6 4 V 3 A 1 1 0 0 1 7 2 H 9 A 1 1 0 0 1 10 3 V 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                <span>Delete recording</span>
+              </button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -530,10 +535,14 @@
       <div role="presentation" onclick={(e) => e.stopPropagation()}>
       <!-- Delete used to live in the action button row. Moved here so it
            takes a deliberate click instead of being a thumb-reachable
-           danger button alongside Play/Copy/Retry. Still confirms. -->
-      <div class="expanded-actions">
-        <button class="delete-link" onclick={remove} disabled={busy}>Delete recording</button>
-      </div>
+           danger button alongside Play/Copy/Retry. Still confirms. Hidden on
+           rows synced from another device — ownership-scoped delete can only
+           remove what this device originated. -->
+      {#if !rec.remote}
+        <div class="expanded-actions">
+          <button class="delete-link" onclick={remove} disabled={busy}>Delete recording</button>
+        </div>
+      {/if}
       </div>
     {/if}
   </div>

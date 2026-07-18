@@ -138,6 +138,66 @@
         return `Last synced ${relativeTime(account.sync.last_synced_at)}`;
     }
   });
+
+  // ── Purge: reset the entire account history on every device ──────────────
+  // The one operation that crosses device ownership (it also clears orphaned
+  // rows whose originating device is gone). Gated behind a press-and-hold that
+  // only ARMS it, then an explicit confirm modal that spells out the stakes.
+  // Same HOLD_MS as the History "Clear all" affordance.
+  const HOLD_MS = 1500;
+  let purgeHoldActive = $state(false);
+  let purgeHoldProgress = $state(0); // 0..1
+  let purgeConfirmOpen = $state(false);
+  let purgeBusy = $state(false);
+  let purgeError = $state("");
+  let purgeDone = $state("");
+  let _purgeStart = 0;
+  let _purgeRAF: number | null = null;
+  let _purgeReachedFull = false;
+
+  function purgeTick() {
+    const t = Math.min(1, (Date.now() - _purgeStart) / HOLD_MS);
+    purgeHoldProgress = t;
+    if (t >= 1) {
+      _purgeRAF = null;
+      _purgeReachedFull = true;
+      purgeHoldActive = false;
+      purgeHoldProgress = 0;
+      purgeConfirmOpen = true;
+      return;
+    }
+    _purgeRAF = requestAnimationFrame(purgeTick);
+  }
+  function startPurgeHold() {
+    purgeHoldActive = true;
+    purgeError = "";
+    purgeDone = "";
+    _purgeReachedFull = false;
+    _purgeStart = Date.now();
+    _purgeRAF = requestAnimationFrame(purgeTick);
+  }
+  function cancelPurgeHold() {
+    if (_purgeRAF !== null) {
+      cancelAnimationFrame(_purgeRAF);
+      _purgeRAF = null;
+    }
+    purgeHoldActive = false;
+    purgeHoldProgress = 0;
+  }
+
+  async function doPurge() {
+    purgeBusy = true;
+    purgeError = "";
+    try {
+      await api.purgeAccount();
+      purgeConfirmOpen = false;
+      purgeDone = "Account history purged on every device.";
+    } catch (e) {
+      purgeError = `${e}`;
+    } finally {
+      purgeBusy = false;
+    }
+  }
 </script>
 
 <div class="account" class:compact>
@@ -176,6 +236,35 @@
         <button class="btn ghost" onclick={signOut} disabled={busy}>Sign out</button>
       </div>
       {#if error}<p class="err">{error}</p>{/if}
+
+      <!-- Purge — the account-wide reset, kept at the very bottom of Account.
+           This is the only delete that crosses device ownership, so it's the
+           most dangerous control in the app: press-and-hold to arm, then an
+           explicit confirm. -->
+      <div class="danger-zone">
+        <div class="dz-head">Reset account history</div>
+        <p class="dz-body">
+          Deletes every transcript on your account across <strong>all</strong> devices —
+          including devices you no longer have — and clears any leftover entries
+          whose device is gone. Your API keys and sign-in stay. This can't be undone.
+        </p>
+        <button
+          class="hold-purge"
+          class:armed={purgeHoldActive}
+          style="--hold:{purgeHoldProgress}"
+          onmousedown={startPurgeHold}
+          onmouseup={cancelPurgeHold}
+          onmouseleave={cancelPurgeHold}
+          title="Press and hold to reset your entire account history"
+        >
+          <span class="hold-fill"></span>
+          <span class="hold-text">
+            {#if purgeHoldActive}Keep holding…{:else}Purge account history{/if}
+          </span>
+        </button>
+        {#if purgeDone}<p class="dz-done">{purgeDone}</p>{/if}
+        {#if purgeError && !purgeConfirmOpen}<p class="err">{purgeError}</p>{/if}
+      </div>
     </div>
   {:else}
     <div class="signed-out">
@@ -222,6 +311,36 @@
     </div>
   {/if}
 </div>
+
+<!-- Purge confirm — the second gate after the press-and-hold. Reachable only
+     while signed in. Spells out the irreversible, cross-device consequence in
+     plain words before the final button. -->
+{#if purgeConfirmOpen}
+  <div
+    class="overlay"
+    role="button"
+    tabindex="-1"
+    onclick={() => (purgeConfirmOpen = false)}
+    onkeydown={(e) => { if (e.key === "Escape") purgeConfirmOpen = false; }}
+  >
+    <div class="confirm-card" role="dialog" aria-modal="true" aria-label="Reset account history" onclick={(e) => e.stopPropagation()} onkeydown={() => {}} tabindex="-1">
+      <h3>Reset your entire account history?</h3>
+      <p>
+        This permanently deletes every transcript on your account, on
+        <strong>every device</strong> — including devices you no longer have —
+        and clears any leftover entries whose device is gone.
+      </p>
+      <p>Your API keys and sign-in are kept. <strong>This cannot be undone.</strong></p>
+      {#if purgeError}<p class="err">{purgeError}</p>{/if}
+      <div class="confirm-actions">
+        <button class="btn ghost" onclick={() => (purgeConfirmOpen = false)} disabled={purgeBusy}>Cancel</button>
+        <button class="btn danger" onclick={doPurge} disabled={purgeBusy}>
+          {purgeBusy ? "Purging…" : "Purge everything"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .account {
@@ -415,5 +534,119 @@
   .actions-row {
     display: flex;
     gap: 8px;
+  }
+
+  /* Danger zone — the account-wide purge. Set apart with a red-tinted border
+     and kept at the bottom so it's never a stray click near the everyday
+     controls. */
+  .danger-zone {
+    margin-top: 24px;
+    padding: 14px 16px;
+    border: 1px solid var(--danger);
+    border-radius: 12px;
+    background: var(--danger-fade);
+  }
+  .dz-head {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--danger);
+    margin-bottom: 6px;
+  }
+  .dz-body {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin: 0 0 12px;
+  }
+  .dz-done {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 10px 0 0;
+  }
+
+  /* Press-and-hold purge button — a danger fill sweeps left→right while held;
+     releasing before it completes cancels. Mirrors the History "Clear all"
+     hold affordance. */
+  .hold-purge {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background: var(--bg-card);
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    padding: 9px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--danger);
+    user-select: none;
+    font-family: inherit;
+    transition: color 120ms ease;
+  }
+  .hold-purge.armed {
+    color: #fff;
+  }
+  .hold-fill {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    transform-origin: left center;
+    transform: scaleX(var(--hold, 0));
+    background: var(--danger);
+    transition: transform 60ms linear;
+  }
+  .hold-text {
+    position: relative;
+    white-space: nowrap;
+  }
+
+  /* Purge confirm modal. */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(30, 24, 16, 0.42);
+    backdrop-filter: blur(2px);
+    padding: 24px;
+  }
+  .confirm-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px 24px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 18px 60px rgba(40, 26, 10, 0.35);
+    color: var(--text-primary);
+    text-align: left;
+  }
+  .confirm-card h3 {
+    margin: 0 0 12px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .confirm-card p {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin: 0 0 10px;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .btn.danger {
+    background: var(--danger);
+    color: #fff;
+  }
+  .btn.danger:hover {
+    filter: brightness(1.05);
   }
 </style>

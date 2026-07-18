@@ -13,14 +13,21 @@
   // currentColor / 1.6-stroke style as the main sidebar nav.
   type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security" | "account";
   type NavItem = { href: string; label: string; icon: IconName };
+  // Canonical section order, shared across desktop / web / android:
+  // Transcription → Cleanup & modes → API keys → Appearance → Delivery/
+  // behaviour → Storage/Data → Account (with Purge at its bottom) → About.
+  // Desktop mapping: Providers folds Transcription + API keys; Modes = Cleanup
+  // & modes; Dictation = delivery/behaviour; Security (key-storage) sits with
+  // the data section; Account is second-to-last; General (data retention +
+  // updates/version) is the closest thing to "About" and stays last.
   const NAV: NavItem[] = [
     { href: "/settings/providers", label: "Providers", icon: "providers" },
     { href: "/settings/modes", label: "Modes", icon: "modes" },
-    { href: "/settings/dictation", label: "Dictation", icon: "dictation" },
     { href: "/settings/appearance", label: "Appearance", icon: "appearance" },
+    { href: "/settings/dictation", label: "Dictation", icon: "dictation" },
+    { href: "/settings/security", label: "Security", icon: "security" },
     { href: "/settings/account", label: "Account", icon: "account" },
     { href: "/settings/general", label: "General", icon: "general" },
-    { href: "/settings/security", label: "Security", icon: "security" },
   ];
 
   function isActive(href: string): boolean {

@@ -863,10 +863,12 @@ impl History {
         self.delete(id)
     }
 
-    /// Remove a recording's local audio file but keep its row — used by the
-    /// "voice files, this device" delete option. The row's `audio_path` is
-    /// blanked so playback UI (and `audio_data_url_for`) can tell cleanly
-    /// that there's nothing to play instead of hitting a raw fs error.
+    /// Remove a recording's local audio file but keep its row. Was the old
+    /// "voice files only" delete option; the ownership-scoped delete rework
+    /// dropped audio-only deletion (a transcript and its audio die together),
+    /// so nothing calls this now. Kept because it's a coherent piece of the
+    /// History API and a future feature may want it.
+    #[allow(dead_code)]
     pub fn clear_audio(&self, id: &str) -> Result<()> {
         let conn = self.inner.lock();
         let existing: Option<String> = conn
@@ -890,7 +892,11 @@ impl History {
 
     /// Ids the user chose to delete "this device only" while signed in — a
     /// pull must not resurrect them even though the cloud copy still exists
-    /// for other devices.
+    /// for other devices. The ownership-scoped delete rework removed the
+    /// "this device only" option, so nothing writes exclusions any more; the
+    /// table and `exclusion_contains` (read on pull) are retained so entries
+    /// legacy builds left behind still suppress resurrection.
+    #[allow(dead_code)]
     pub fn exclusion_add(&self, id: &str) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
