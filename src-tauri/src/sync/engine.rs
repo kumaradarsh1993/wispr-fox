@@ -13,6 +13,7 @@ use std::time::Duration;
 use chrono::Utc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::flow::Flow;
@@ -321,6 +322,18 @@ impl SyncEngine {
     /// devices. Deliberately lower-stakes than the notes sync above — a
     /// failure here is logged and swallowed by the caller so it never blocks
     /// transcript sync.
+    ///
+    /// Push is dedup'd on content, not on "is present" — mirrors the Android
+    /// client's `pushProviderKeys`/`pullProviderKeys` design
+    /// (`wispr-fox-android` `SyncEngine.kt`). The old code pushed EVERY
+    /// locally-present key with `updated_at = now()` on every ~60s tick. Since
+    /// the server does last-write-wins by `updated_at`, and desktop always
+    /// stamped "now" regardless of whether the value actually changed, a key
+    /// edited on web/Android was pulled here, then immediately re-pushed with
+    /// a fresher timestamp on the very next cycle — clobbering the other
+    /// device's edit within a minute. Tracking a per-key content hash lets us
+    /// push only when the local value has genuinely changed since our last
+    /// successful push.
     async fn sync_settings(&self, token: &str) -> anyhow::Result<()> {
         // user_settings.user_id is NOT NULL + RLS-checked too — without it the
         // key push 4xxs (silently, since the caller swallows this), so keys
@@ -328,27 +341,40 @@ impl SyncEngine {
         let user_id = auth::current_user()
             .map(|u| u.user_id)
             .ok_or_else(|| anyhow::anyhow!("settings sync: not signed in"))?;
-        let mut push_rows = Vec::new();
         for (key_name, secret_key) in SETTINGS_KEYS {
-            if let Ok(Some(value)) = secrets::get(secret_key) {
-                push_rows.push(serde_json::json!({
-                    "user_id": user_id,
-                    "key": key_name,
-                    "value": value,
-                    "updated_at": Utc::now().to_rfc3339(),
-                }));
+            let Ok(Some(value)) = secrets::get(secret_key) else {
+                continue;
+            };
+            let hash = content_hash(&value);
+            let hash_meta_key = push_hash_meta_key(key_name);
+            // No stored hash (fresh install / first sign-in) is treated as
+            // "changed" so the very first cycle still pushes every present
+            // key once, same as before this fix.
+            if self.history.meta_get(&hash_meta_key)?.as_deref() == Some(hash.as_str()) {
+                continue;
             }
-        }
-        if !push_rows.is_empty() {
             let url = format!("{}/rest/v1/user_settings", config::SUPABASE_URL);
-            let _ = http()
+            let row = serde_json::json!({
+                "user_id": user_id,
+                "key": key_name,
+                "value": value,
+                "updated_at": Utc::now().to_rfc3339(),
+            });
+            let resp = http()
                 .post(&url)
                 .header("apikey", config::SUPABASE_ANON_KEY)
                 .header("Authorization", format!("Bearer {token}"))
                 .header("Prefer", "resolution=merge-duplicates")
-                .json(&push_rows)
+                .json(&row)
                 .send()
                 .await;
+            // Only remember the hash as "pushed" once the server actually
+            // accepted it — a network hiccup or 4xx must retry the push next
+            // cycle rather than being silently treated as delivered.
+            let pushed_ok = matches!(resp, Ok(r) if r.status().is_success());
+            if pushed_ok {
+                self.history.meta_set(&hash_meta_key, &hash)?;
+            }
         }
 
         let url = format!("{}/rest/v1/user_settings", config::SUPABASE_URL);
@@ -364,7 +390,8 @@ impl SyncEngine {
         }
         let rows: Vec<SettingsRow> = resp.json().await.unwrap_or_default();
         for row in rows {
-            let Some((_, secret_key)) = SETTINGS_KEYS.iter().find(|(k, _)| *k == row.key) else {
+            let Some((key_name, secret_key)) = SETTINGS_KEYS.iter().find(|(k, _)| *k == row.key)
+            else {
                 continue;
             };
             let cursor_key = format!("settings_cursor:{}", row.key);
@@ -372,6 +399,13 @@ impl SyncEngine {
             if row.updated_at.as_str() > last.as_str() {
                 let _ = secrets::set(*secret_key, &row.value);
                 self.history.meta_set(&cursor_key, &row.updated_at)?;
+                // Adopt the pulled value's hash as "already pushed" too, so
+                // the next cycle doesn't see a "changed" local value (relative
+                // to whatever we'd pushed before, if anything) and immediately
+                // push it straight back up — which is exactly the clobbering
+                // bug this fix exists to close.
+                self.history
+                    .meta_set(&push_hash_meta_key(key_name), &content_hash(&row.value))?;
             }
         }
         Ok(())
@@ -559,6 +593,25 @@ struct SettingsRow {
 #[derive(Debug, Deserialize)]
 struct PurgeRow {
     value: String,
+}
+
+/// The `sync_meta` key that tracks the content hash of the last successfully
+/// pushed value for a given `user_settings.key` (e.g. `key_groq`). Shared by
+/// both the push and pull halves of `sync_settings` so a freshly-pulled value
+/// and a freshly-pushed value are tracked under the exact same slot.
+fn push_hash_meta_key(settings_key: &str) -> String {
+    format!("keypush_hash_{settings_key}")
+}
+
+/// Stable content hash used to decide whether an API key value has changed
+/// since we last pushed it — see `sync_settings`. Not a security hash, just a
+/// cheap way to dedup a push against a stored fingerprint; `sha2` is already a
+/// workspace dependency (see `sync::auth::code_challenge_s256`).
+fn content_hash(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn percent_encode(s: &str) -> String {
