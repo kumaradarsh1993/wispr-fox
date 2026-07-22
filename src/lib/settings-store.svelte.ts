@@ -36,6 +36,8 @@ const FALLBACK: AppSettings = {
   auto_clean_in_advanced: true,
   auto_clean_in_drafting: true,
   auto_title: true,
+  title_provider: "groq",
+  title_model: "llama-3.1-8b-instant",
   stt_provider: "groq",
   llm_provider: "groq",
   llm_model: "llama-3.3-70b-versatile",
@@ -248,6 +250,17 @@ class SettingsStore {
           `settings.init: saved LLM model "${this.s.llm_model}" is no longer offered by ${this.s.llm_provider}; falling back to ${llmOptions[0].id}`,
         );
         this.s.llm_model = llmOptions[0].id;
+        migrated = true;
+      }
+      // Same coercion for the title pick. Installs upgrading from before the
+      // picker existed land on the serde defaults, which are always valid —
+      // this only catches a model retired after the user chose it.
+      const titleOptions = llmModelsFor(this.s.title_provider);
+      if (titleOptions.length > 0 && !titleOptions.some((m) => m.id === this.s.title_model)) {
+        console.info(
+          `settings.init: saved title model "${this.s.title_model}" is no longer offered by ${this.s.title_provider}; falling back to ${titleOptions[0].id}`,
+        );
+        this.s.title_model = titleOptions[0].id;
         migrated = true;
       }
     }

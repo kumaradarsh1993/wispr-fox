@@ -50,11 +50,20 @@ pub struct AppSettings {
     pub auto_clean_in_drafting: bool,
 
     /// Auto-name each recording with a one-line LLM descriptor after the
-    /// pipeline finishes (parallel track — never blocks paste). Uses a light
-    /// Groq model regardless of the main LLM selection; costs ~a sentence
-    /// of tokens per recording.
+    /// pipeline finishes (parallel track — never blocks paste). Costs ~a
+    /// sentence of tokens per recording.
     #[serde(default = "default_true")]
     pub auto_title: bool,
+
+    /// Provider + model for the auto-title call. Deliberately independent of
+    /// `llm_provider`/`llm_model`: naming a note is a tiny, latency-tolerant
+    /// job that suits the cheapest fast model, and nobody should have to
+    /// downgrade their cleanup model to get cheap titles. Defaults to Groq's
+    /// 8B — the key nearly every install already has.
+    #[serde(default = "default_title_provider")]
+    pub title_provider: String,
+    #[serde(default = "default_title_model")]
+    pub title_model: String,
 
     // ── Models ────────────────────────────────────────────────────────────
     // Simplified May 2026: ONE STT choice + ONE LLM choice. All three modes
@@ -199,6 +208,8 @@ impl Default for AppSettings {
             auto_clean_in_advanced: true,
             auto_clean_in_drafting: true,
             auto_title: true,
+            title_provider: default_title_provider(),
+            title_model: default_title_model(),
             // Simplified globals.
             stt_provider: "groq".to_string(),
             stt_model: "whisper-large-v3-turbo".to_string(),
@@ -293,6 +304,21 @@ fn default_force_clean_hotkey() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+/// Title defaults. `TITLE_MODEL` in `flow.rs` used to hardcode these; they
+/// live here now so the picker in Settings → General has something to reset
+/// to, and so installs upgrading from before the picker keep today's
+/// behaviour byte-for-byte.
+pub const DEFAULT_TITLE_PROVIDER: &str = "groq";
+pub const DEFAULT_TITLE_MODEL: &str = "llama-3.1-8b-instant";
+
+fn default_title_provider() -> String {
+    DEFAULT_TITLE_PROVIDER.to_string()
+}
+
+fn default_title_model() -> String {
+    DEFAULT_TITLE_MODEL.to_string()
 }
 
 fn default_force_clean_sticky_hotkey() -> String {

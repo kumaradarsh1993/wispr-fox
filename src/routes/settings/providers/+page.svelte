@@ -9,6 +9,8 @@
     applyLlmProvider,
     applySttModel,
     applySttProvider,
+    applyTitleModel,
+    applyTitleProvider,
     llmModelsFor,
     llmReady,
     providerLabel,
@@ -113,6 +115,22 @@
     flash(`Cleanup model: ${label}`);
   }
 
+  async function changeAutoTitle(on: boolean) {
+    await settings.set("auto_title", on as any);
+    flash(on ? "Recording titles on" : "Recording titles off");
+  }
+
+  async function changeTitleProvider(provider: string) {
+    await applyTitleProvider(provider);
+    flash(`Title provider: ${providerLabel(provider)}`);
+  }
+
+  async function changeTitleModel(modelId: string) {
+    await applyTitleModel(modelId);
+    const label = llmModelsFor(settings.s.title_provider).find((m) => m.id === modelId)?.label ?? modelId;
+    flash(`Title model: ${label}`);
+  }
+
   onMount(() => {
     refreshSecrets();
   });
@@ -183,6 +201,49 @@
         </select>
       </div>
     </div>
+  </div>
+
+  <!-- Recording titles. Its own provider/model pick rather than riding on the
+       cleanup choice: a title is five words, so it should be free to run on
+       the cheapest fast model while cleanup uses whatever you actually want.
+       The toggle lives here (not in General) so everything about titles is in
+       one place. -->
+  <div class="settings-card model-choice-card">
+    <h3>Recording titles</h3>
+    <label class="check-row">
+      <input
+        type="checkbox"
+        checked={settings.s.auto_title}
+        onchange={(e) => changeAutoTitle((e.currentTarget as HTMLInputElement).checked)}
+      />
+      <span>Name each recording automatically — a 3-7 word title on every history card</span>
+    </label>
+    {#if settings.s.auto_title}
+      <div class="provider-model-row">
+        <div class="field-block field-half">
+          <label for="title-provider">Service</label>
+          <select id="title-provider" value={settings.s.title_provider} onchange={(e) => changeTitleProvider((e.currentTarget as HTMLSelectElement).value)}>
+            {#each Object.keys(LLM_MODELS) as provider}
+              <option value={provider} disabled={!llmReady(secretCheck, provider)}>
+                {providerLabel(provider)} {llmReady(secretCheck, provider) ? "" : "(add key first)"}
+              </option>
+            {/each}
+          </select>
+        </div>
+        <div class="field-block field-half">
+          <label for="title-model">Model</label>
+          <select id="title-model" value={settings.s.title_model} onchange={(e) => changeTitleModel((e.currentTarget as HTMLSelectElement).value)}>
+            {#each llmModelsFor(settings.s.title_provider) as m (m.id)}
+              <option value={m.id}>{m.label} - {m.quality}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <p class="hint">
+        Runs as a separate call after each recording — it never delays your paste, and a
+        failure just leaves the card unnamed. A small fast model is the right call here.
+      </p>
+    {/if}
   </div>
 
   <details class="key-manager">

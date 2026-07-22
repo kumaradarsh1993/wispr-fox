@@ -239,25 +239,26 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
 /// Model + prompt for the auto-title nicety. Deliberately a light Groq model
 /// regardless of the user's main LLM pick — naming a note should be fast and
 /// near-free, and Groq is the one key every install has.
-const TITLE_MODEL: &str = "llama-3.1-8b-instant";
 const TITLE_SYSTEM: &str = "You title voice notes. Reply with ONLY a short title \
 for the user's dictation: 3-7 words, plain language, no quotes, no trailing \
 punctuation, written in the same language as the dictation.";
 
 /// One-line descriptor for a finished recording. Ok(None) = transcript too
 /// short to be worth an LLM call (the time/duration header is enough).
-async fn generate_title(text: &str) -> Result<Option<String>> {
+///
+/// `provider`/`model` come from the Settings picker rather than the main LLM
+/// pick — see `AppSettings::title_provider`. Any provider works, but the
+/// default stays Groq's 8B because a title is five words and shouldn't cost
+/// a frontier-model call.
+async fn generate_title(text: &str, provider: &str, model: &str) -> Result<Option<String>> {
     let trimmed = text.trim();
     if trimmed.split_whitespace().count() < 8 {
         return Ok(None);
     }
-    let key = secrets::get(SecretKey::GroqLlm)?
-        .or_else(|| secrets::get(SecretKey::GroqStt).ok().flatten())
-        .ok_or_else(|| anyhow!("no Groq key for auto-title"))?;
     // The opening of a dictation carries its topic; don't ship a 15-minute
     // monologue to the model just to get five words back.
     let snippet: String = trimmed.chars().take(1200).collect();
-    let llm = GroqLlm::new(key, TITLE_MODEL.to_string());
+    let llm = build_llm_provider(provider, model.to_string())?;
     let out = llm.complete(TITLE_SYSTEM, &snippet, 0.3).await?;
     let title = out
         .text
@@ -1055,13 +1056,20 @@ impl Flow {
         // descriptor so the history card headers read like a table of contents.
         // Fire-and-forget on a light Groq model — never blocks the paste,
         // failures are a log line, not a user-visible error.
-        if self.settings.lock().auto_title {
+        // Read the whole title config under one lock — the spawned task
+        // outlives this scope and must not hold the settings mutex.
+        let title_cfg = {
+            let s = self.settings.lock();
+            s.auto_title
+                .then(|| (s.title_provider.clone(), s.title_model.clone()))
+        };
+        if let Some((title_provider, title_model)) = title_cfg {
             let history = self.history.clone();
             let app_for_title = app.clone();
             let rid = record_id.clone();
             let text_for_title = final_text.clone();
             tauri::async_runtime::spawn(async move {
-                match generate_title(&text_for_title).await {
+                match generate_title(&text_for_title, &title_provider, &title_model).await {
                     Ok(Some(title)) => {
                         if let Err(e) = history.set_title(&rid, &title) {
                             tracing::warn!("auto-title: db write failed (non-fatal): {e:#}");
@@ -1461,13 +1469,20 @@ impl Flow {
         }
 
         // Auto-title, same fire-and-forget path as a dictation.
-        if self.settings.lock().auto_title {
+        let title_cfg = {
+            let s = self.settings.lock();
+            s.auto_title
+                .then(|| (s.title_provider.clone(), s.title_model.clone()))
+        };
+        if let Some((title_provider, title_model)) = title_cfg {
             let history = self.history.clone();
             let app_for_title = app.clone();
             let rid = record_id.to_string();
             let text_for_title = transcript.text.clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(Some(title)) = generate_title(&text_for_title).await {
+                if let Ok(Some(title)) =
+                    generate_title(&text_for_title, &title_provider, &title_model).await
+                {
                     if history.set_title(&rid, &title).is_ok() {
                         let _ = app_for_title.emit("wispr:history_changed", ());
                     }
@@ -1518,12 +1533,17 @@ impl Flow {
         // On-demand "generate cleaned/drafted version" from History has no
         // app-context — the original target window is long gone. Skip the
         // hint and let the LLM pick register from the brief's content.
-        let cleaned = clippy::clean(
+        //
+        // Generous deadline: this path is a button click with a spinner, not
+        // a paste the user is waiting on, so let a slow model finish rather
+        // than handing back the raw transcript.
+        let cleaned = clippy::clean_with_timeout(
             transcript,
             ClippyMode::from(mode),
             custom.as_deref(),
             None,
             llm.as_ref(),
+            clippy::ON_DEMAND_TIMEOUT,
         )
         .await;
         self.usage
@@ -1636,12 +1656,15 @@ impl Flow {
             // want app-adapted output.
             tl.mark(format!("retry cleanup request → {} ({})", llm.name(), model));
             let clean_t0 = std::time::Instant::now();
-            let cleaned = clippy::clean(
+            // Same reasoning as generate_alt_version: a retry is user-initiated
+            // from History, so favour finishing over failing fast.
+            let cleaned = clippy::clean_with_timeout(
                 &transcript.text,
                 ClippyMode::from(mode),
                 custom.as_deref(),
                 None,
                 llm.as_ref(),
+                clippy::ON_DEMAND_TIMEOUT,
             )
             .await;
             let clean_elapsed = clean_t0.elapsed().as_millis() as i64;

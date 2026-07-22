@@ -50,6 +50,18 @@ pub struct LlmOutput {
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &'static str;
+
+    /// How long the live dictation path should wait on this provider before
+    /// giving up and pasting the raw transcript.
+    ///
+    /// This exists because a single shared deadline is wrong: Groq's Llama
+    /// answers in 1-3s, while Gemini's thinking phase alone can outlast the
+    /// old flat 8s wall — which is exactly why every Gemini cleanup used to
+    /// come back as `clippy_timeout`. Providers that need more room say so.
+    fn timeout_hint(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(8)
+    }
+
     async fn complete(
         &self,
         system: &str,

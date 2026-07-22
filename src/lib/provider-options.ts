@@ -147,6 +147,21 @@ export async function applyLlmModel(modelId: string): Promise<void> {
   await settings.set("llm_model", modelId as any);
 }
 
+/** Switch the auto-title provider, keeping the current model if valid, else
+ *  its first. Same shape as applyLlmProvider — titles get their own pick so a
+ *  five-word name doesn't have to run on the cleanup model. */
+export async function applyTitleProvider(provider: string): Promise<void> {
+  const options = llmModelsFor(provider);
+  const title_model = options.some((m) => m.id === settings.s.title_model)
+    ? settings.s.title_model
+    : options[0].id;
+  await settings.setMany({ title_provider: provider, title_model } as any);
+}
+
+export async function applyTitleModel(modelId: string): Promise<void> {
+  await settings.set("title_model", modelId as any);
+}
+
 export function shortModel(name: string | undefined): string {
   if (!name) return "-";
   if (name.startsWith("whisper-large-v3-turbo")) return "Whisper Turbo";

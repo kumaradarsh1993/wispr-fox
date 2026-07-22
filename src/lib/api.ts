@@ -31,6 +31,10 @@ export interface AppSettings {
   auto_clean_in_advanced: boolean;
   auto_clean_in_drafting: boolean;
   auto_title: boolean;
+  /** Provider + model for the auto-title call — independent of the main
+   *  llm_provider/llm_model so a title stays cheap. */
+  title_provider: string;
+  title_model: string;
   stt_provider: string;
   stt_model: string;
   llm_provider: string;

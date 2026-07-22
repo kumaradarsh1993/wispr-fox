@@ -3,6 +3,8 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { history } from "./history-store.svelte";
   import { api, type Recording } from "./api";
+  import { settings } from "./settings-store.svelte";
+  import { shortModel } from "./provider-options";
   import DeleteDialog from "./DeleteDialog.svelte";
 
   let { rec } = $props<{ rec: Recording }>();
@@ -234,6 +236,14 @@
       alert("No raw transcript yet — retry the recording first.");
       return;
     }
+    await runAlt(kind);
+  }
+
+  /// Fire the backend generate command and fold the result back into the row.
+  /// Shared by the tab click (generate-if-missing) and the kebab's re-run
+  /// (regenerate over existing text) — the backend call is identical, it
+  /// always regenerates against the CURRENTLY selected LLM provider + model.
+  async function runAlt(kind: "cleaned" | "drafted") {
     generating = kind;
     try {
       await api.generateAltVersion(rec.id, kind);
@@ -246,6 +256,31 @@
     } finally {
       generating = null;
     }
+  }
+
+  // Label the current LLM pick so the re-run menu items read as "try it with
+  // THIS model" — the whole point of the feature is switching model in the
+  // sidebar and having another go.
+  let llmLabel = $derived(shortModel(settings.s.llm_model));
+
+  /// Re-run cleanup / draft on an existing recording, the LLM-side twin of
+  /// "Re-run transcription". Change the model in the sidebar, come here, run
+  /// it again. Confirms when it would overwrite text that already exists,
+  /// for the same reason retry() does: it's a one-click way to lose output.
+  async function rerunAlt(kind: "cleaned" | "drafted") {
+    if (!rec.transcript) {
+      alert("No raw transcript yet — re-run transcription first.");
+      return;
+    }
+    const existing = kind === "cleaned" ? rec.cleaned_text : rec.drafted_text;
+    const what = kind === "cleaned" ? "cleanup" : "draft";
+    if (existing) {
+      const ok = confirm(
+        `Re-run ${what} with ${llmLabel}? The current ${what} will be replaced.`,
+      );
+      if (!ok) return;
+    }
+    await runAlt(kind);
   }
 
   // Per-row delete now opens the reworked dialog (voice files / transcripts,
@@ -485,6 +520,38 @@
               </svg>
               <span>{isError ? "Retry" : "Re-run transcription"}</span>
             </button>
+            <!-- LLM-side twins of "Re-run transcription": swap the model in
+                 the sidebar, then take another pass at cleanup or draft
+                 without burning a fresh STT call. Both need a transcript to
+                 work from, so they're hidden until one exists. -->
+            {#if rec.transcript}
+              <button
+                class="kebab-item"
+                role="menuitem"
+                disabled={busy || generating !== null}
+                onclick={() => { kebabOpen = false; rerunAlt("cleaned"); }}
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <path d="M 3 12 L 6 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                <span>{rec.cleaned_text ? "Re-run cleanup" : "Cleanup"} · {llmLabel}</span>
+              </button>
+              <button
+                class="kebab-item"
+                role="menuitem"
+                disabled={busy || generating !== null}
+                onclick={() => { kebabOpen = false; rerunAlt("drafted"); }}
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <path d="M 3 11 L 7 11 M 3 13.5 L 5.5 13.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                <span>{rec.drafted_text ? "Re-run draft" : "Draft"} · {llmLabel}</span>
+              </button>
+            {/if}
             <!-- Delete is ownership-scoped: only rows this device originated can
                  be deleted, so it's hidden entirely on rows synced from another
                  device (a disabled-but-visible control reads as a bug). -->
