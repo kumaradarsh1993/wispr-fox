@@ -47,6 +47,43 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.1.0-nightly.2`** (2026-07-22, this local core machine) — **the Gemini
+  fix**, plus re-run cleanup/draft and a title-model picker. Notes:
+  `docs/RELEASE_NOTES_v3.1.0-nightly.2.md`. ⚠️ **Owed: one live test against a
+  real Gemini key.** The fix typechecks and the diagnosis is solid, but it has
+  not been run against Google's API from a built binary. Do that before this
+  ports to web/Android or goes anywhere near stable.
+  - **Why every Gemini model failed.** `clippy::clean` wrapped every LLM call
+    in a flat 8s deadline sized for Groq's Llama (1-3s, no thinking phase).
+    Gemini 2.5 and the whole Gemini 3 line have **thinking on by default**, and
+    the silent reasoning phase alone outruns 8s — so the timeout fired
+    mid-thought on *every* Gemini model and the user got the raw transcript
+    back with a `clippy_timeout` note. **Model ids were never the problem**
+    (they were re-verified against Google's live model list on 2026-07-22);
+    the earlier theory that they were hallucinated is wrong.
+  - Fix: `llm/gemini.rs` asks for the minimum thinking each family allows
+    (`thinkingLevel` MINIMAL/LOW on 3.x, `thinkingBudget: 0` on 2.5 flash —
+    the two fields are mutually exclusive and family-specific, so a 400 while
+    sending one retries once without it). `LlmProvider::timeout_hint()` makes
+    the deadline per-provider (Gemini 25s, everyone else the old 8s), and
+    `clean_with_timeout` + `ON_DEMAND_TIMEOUT` (90s) covers History-initiated
+    runs where nothing blocks a paste. Also: join all non-thought parts
+    (`parts[0]` alone truncated long drafts), `maxOutputTokens` 2048 → 8192
+    (thinking is charged against it), and report the real `finishReason`.
+  - **Re-run cleanup / draft** in the HistoryRow kebab, labelled with the model
+    they'll use. The backend `generate_alt_version` already regenerated against
+    the current provider+model — the UI just never reached it once a version
+    existed, so a bad result was unfixable without re-transcribing.
+  - **Title picker.** `title_provider`/`title_model` settings (defaulting to
+    the previously-hardcoded Groq `llama-3.1-8b-instant`) with a picker in
+    Settings → Providers. The `auto_title` toggle **moved there from General**
+    so the switch and its model can't drift apart.
+  - **Free-tier note for model choice:** Groq caps *tokens*/day
+    (`llama-3.3-70b-versatile` = 100k TPD, which is only ~50-200 cleanups),
+    Gemini caps *requests*/day. For long dictations Gemini's shape is the
+    better free tier. Groq `llama-3.1-8b-instant` (500k TPD / 14,400 RPD) is
+    generous and stays the right default for titles.
+
 - **Stable: `v3.0.0`** (2026-07-18, "Latest") — the major accounts + sync line,
   promoted to stable on the user's "bump to stable" signal (tagged `v3.0.0` on
   commit `be3e5a1`; CI published all-platform installers as Latest). Rolls up
