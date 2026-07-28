@@ -47,10 +47,11 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
-- **Unreleased (2026-07-28, this local core machine) — the sign-in audit.** Five
-  fixes to accounts/sync + one to the paste path, all reported from live use on
-  Windows. Typechecked (`npm run check` 0 errors, `cargo check` clean); **not
-  yet run from a built binary** — needs a nightly to verify.
+- **`v3.1.0-nightly.3`** (2026-07-28, this local core machine) — **the sign-in
+  audit.** Six fixes to accounts/sync + one to the paste path, all reported from
+  live use on Windows. Notes: `docs/RELEASE_NOTES_v3.1.0-nightly.3.md`.
+  Typechecked (`npm run check` 0 errors, `cargo check` clean); **not run from a
+  built binary** — this nightly exists to be tested.
   - **Sign-in didn't survive a restart. Root cause: the refresh token's keyring
     write was never verified.** `sync/auth.rs::save_refresh_token` trusted
     `set_password(..).is_ok()` and then *deleted the fallback file*. Windows
@@ -88,10 +89,33 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
     now retries (`current_foreground_state_settled`, 3×25ms) and, if still
     unreadable, restores the captured window and pastes normally. Logged to the
     flight recorder so it's visible if it recurs.
+  - **Transcripts pulled from other devices stopped accepting updates after a
+    second sign-in — including tombstones.** Found while auditing the owed
+    delete/purge debt, and the most serious of the batch.
+    `History::mark_all_done_dirty` (run by `after_sign_in`) marked **every**
+    done row dirty, remote rows included. `list_dirty` correctly refuses to push
+    remote rows, so `mark_clean` never cleared them and they stayed `dirty = 1`
+    permanently — and `upsert_remote` skips any locally-dirty row. From then on
+    those rows ignored every cloud update forever: deleting such a transcript on
+    the device that owned it never removed this device's copy. Fixed by scoping
+    the mark to `remote = 0` (matching `list_dirty`), plus an idempotent repair
+    in the schema init that clears `dirty` on remote rows so existing installs
+    heal on first launch. **This is a plausible root cause for any "I deleted it
+    there and it's still here" report.**
   - ⚠️ **Not addressed:** only API keys sync, not preferences. `SETTINGS_KEYS`
     in `sync/engine.rs` is five key rows; nothing else in `AppSettings` crosses
     devices. Web/Android share the same five names — extending this is a
     three-client change.
+  - ⚠️ **The v3.0.0 live delete/purge test is STILL owed** — it needs a built
+    binary against a live account and cannot be done from this machine (no local
+    builds). The code audit above is not a substitute. Suggested run: two signed-in
+    devices → delete a transcript on its owning device → confirm it disappears on
+    the other; then Purge from one → confirm both wipe.
+  - **Android carries the same `markAllDoneDirty` query mismatch**
+    (`RecordingDao.kt:97` has no `remote = 0`, `listDirtyDone` does) but its
+    `applyRemoteNote` gates on `updatedAt`, not `dirty` — so there the stuck flag
+    is **inert, not corrupting**. Left alone deliberately (separate repo/session);
+    worth hardening if anyone ever adds a dirty-guard to the Android pull.
 
 - **`v3.1.0-nightly.2`** (2026-07-22, this local core machine) — **the Gemini
   fix**, plus re-run cleanup/draft and a title-model picker. Notes:

@@ -280,6 +280,20 @@ impl History {
         );
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN remote INTEGER", []);
 
+        // Repair for the `mark_all_done_dirty` defect shipped in v3.0.0: it
+        // marked PULLED rows dirty as well as local ones. `list_dirty` refuses
+        // to push remote rows, so `mark_clean` never cleared them and they were
+        // stuck dirty forever — and `upsert_remote` skips locally-dirty rows,
+        // so those transcripts stopped accepting any further cloud update,
+        // tombstones included (a delete on the owning device never reached this
+        // one). `dirty` has no meaning on a remote row: it exists solely to say
+        // "this device has local work to push", and by definition a remote row
+        // has none. Clearing it is therefore always safe, and idempotent.
+        let _ = conn.execute(
+            "UPDATE recordings SET dirty = 0 WHERE COALESCE(remote, 0) = 1 AND dirty = 1",
+            [],
+        );
+
         // For existing rows where the user pressed F9 (drafting): their
         // drafted output landed in `cleaned_text` under the old single-
         // output schema. Move it into `drafted_text` so the new history
@@ -775,11 +789,25 @@ impl History {
         Ok(())
     }
 
-    /// On first sign-in, every existing `done` row becomes eligible for the
-    /// initial push — the user's whole pre-existing history goes up.
+    /// On first sign-in, every existing LOCALLY-ORIGINATED `done` row becomes
+    /// eligible for the initial push — the user's whole pre-existing history
+    /// goes up.
+    ///
+    /// The `remote = 0` filter is load-bearing and must stay in lockstep with
+    /// `list_dirty`'s. Without it this marked pulled rows dirty too, and since
+    /// `list_dirty` correctly refuses to push them they never got cleaned by
+    /// `mark_clean` — leaving them stuck at `dirty = 1` forever. `upsert_remote`
+    /// skips any locally-dirty row, so from that point on those rows silently
+    /// ignored every further update from the cloud, **including tombstones**:
+    /// deleting such a transcript on the device that owns it would never remove
+    /// this device's copy. One sign-out/sign-in cycle was enough to trigger it.
     pub fn mark_all_done_dirty(&self) -> Result<usize> {
         let conn = self.inner.lock();
-        let n = conn.execute("UPDATE recordings SET dirty = 1 WHERE status = 'done'", [])?;
+        let n = conn.execute(
+            "UPDATE recordings SET dirty = 1 \
+             WHERE status = 'done' AND COALESCE(remote, 0) = 0",
+            [],
+        )?;
         Ok(n)
     }
 
