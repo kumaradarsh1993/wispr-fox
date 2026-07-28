@@ -53,15 +53,17 @@ pub struct DenoiseOutcome {
 pub fn denoise_to_side_file(src: &Path, level: NoiseReduction) -> Result<DenoiseOutcome> {
     let t0 = std::time::Instant::now();
 
-    let reader = hound::WavReader::open(src)
-        .with_context(|| format!("opening WAV for denoise: {src:?}"))?;
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let samples: Vec<f32> = reader
-        .into_samples::<i16>()
-        .filter_map(|s| s.ok())
-        .map(|s| s as f32)
-        .collect();
+    // Format-tolerant read. This used to be `into_samples::<i16>()` with a
+    // `filter_map(ok)`, which meant a 24-bit or 32-bit-float file (any external
+    // field recorder's default) decoded to ZERO samples, tripped the empty
+    // guard below, and fell back to raw — so noise reduction silently did
+    // nothing on exactly the recordings most likely to need it.
+    //
+    // The filters below work in i16-scale amplitude (RNNoise's native
+    // convention), so scale up from the normalised -1.0..1.0 the reader gives.
+    let decoded = super::wavio::read_mono_f32(src)?;
+    let sample_rate = decoded.sample_rate;
+    let samples: Vec<f32> = decoded.samples.iter().map(|s| s * 32768.0).collect();
     anyhow::ensure!(!samples.is_empty(), "empty WAV");
 
     // Stage 1 (both tiers): 90 Hz high-pass at the file's native rate.

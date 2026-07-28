@@ -632,9 +632,20 @@ pub async fn transcribe_upload(
     llm_model: Option<String>,
     cleanup: bool,
     draft: bool,
+    diarize: bool,
+    meeting_notes: bool,
 ) -> Result<String, String> {
     flow.transcribe_file(
-        &app, &path, stt_provider, stt_model, llm_provider, llm_model, cleanup, draft,
+        &app,
+        &path,
+        stt_provider,
+        stt_model,
+        llm_provider,
+        llm_model,
+        cleanup,
+        draft,
+        diarize,
+        meeting_notes,
     )
     .await
     .map_err(|e| format!("{e:#}"))
@@ -771,6 +782,57 @@ pub fn clear_all_history(app: AppHandle, history: State<'_, History>) -> Result<
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<audio::devices::InputDeviceInfo>, String> {
     audio::devices::list().map_err(|e| e.to_string())
+}
+
+/// Open a metering-only capture stream on `device` (null = system default) so
+/// the user can confirm the mic actually hears them before it costs them a
+/// dictation. Returns the RESOLVED device name.
+///
+/// This is the only reliable way to catch a phantom-connected Bluetooth mic:
+/// after a sleep/wake cycle a transmitter can keep its "connected" indicator
+/// and stay listed by the OS while delivering no audio whatsoever. Enumeration
+/// says it's there; only a live meter says it works.
+#[tauri::command]
+pub async fn start_mic_test(
+    flow: State<'_, Flow>,
+    device: Option<String>,
+) -> Result<String, String> {
+    flow.start_mic_test(device)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn stop_mic_test(flow: State<'_, Flow>) -> Result<(), String> {
+    flow.stop_mic_test().await.map_err(|e| format!("{e:#}"))
+}
+
+/// Tear down every dictation hotkey until `apply_hotkeys` puts them back.
+///
+/// Called by the rebinding UI. Global shortcuts win over the focused webview,
+/// so with F8 still registered, pressing F8 into the "press your hotkey" dialog
+/// started a *recording* and the keypress never reached the DOM listener —
+/// making the picker look broken for exactly the keys people actually use.
+/// Every app with a rebind UI suspends its shortcuts for the capture; so do we.
+#[tauri::command]
+pub fn suspend_hotkeys(app: AppHandle) {
+    crate::hotkey::suspend(&app);
+}
+
+/// Re-register the dictation hotkeys from the CURRENT settings. Doubles as
+/// "resume after a capture" and "the user saved a new binding, make it live" —
+/// which is why rebinding no longer asks for an app restart.
+#[tauri::command]
+pub fn apply_hotkeys(app: AppHandle, flow: State<'_, Flow>) -> Result<(), String> {
+    let cfg = crate::hotkey::HotkeyConfig::from_settings(&flow.settings());
+    crate::hotkey::apply(&app, &cfg).map_err(|e| format!("{e:#}"))
+}
+
+/// Whether dictation hotkeys are currently live. Lets the settings UI show
+/// honest state instead of assuming.
+#[tauri::command]
+pub fn hotkeys_active() -> bool {
+    crate::hotkey::is_active()
 }
 
 #[derive(Serialize)]

@@ -84,3 +84,40 @@ Output ONLY the final text. No preamble like "Here's your draft". No meta-commen
 pub fn light_user_message(raw_transcript: &str) -> String {
     format!("<transcript>{raw_transcript}</transcript>")
 }
+
+/// Meeting-notes prompt for the upload path's "Meeting summary" option.
+///
+/// Deliberately NOT a `ClippyMode` variant: modes are persisted on every
+/// history row (`mode_str`) and shared with the sync schema, so adding one is a
+/// migration. This rides the Drafting path with a system-prompt override
+/// instead, which `clippy::clean` already supports for user-customised prompts.
+///
+/// Written for the diarized case (input arrives as `Speaker 1: …` turns) but
+/// degrades sensibly on an unlabelled transcript — hence the explicit
+/// instruction not to invent attribution.
+pub const MEETING_NOTES_SYSTEM: &str = r#"You turn a meeting recording's transcript into notes someone can act on.
+
+The transcript may be speaker-labelled ("Speaker 1:", "Speaker 2:", …). If it is, attribute points and action items to those labels. If it is NOT labelled, write the notes without attributing anything to anyone — never guess who said what.
+
+Produce exactly these sections, in this order, omitting any section that would be empty:
+
+## Summary
+3-6 sentences on what the meeting was actually about and where it landed.
+
+## Key points
+Bullets. The substance discussed, grouped by topic rather than in strict chronological order. Attribute where the speaker matters ("Speaker 2 pushed back on the timeline").
+
+## Decisions
+Bullets. Only things genuinely settled. If nothing was decided, omit this section entirely rather than padding it.
+
+## Action items
+Bullets in the form "**Owner** — task — deadline". Use the speaker label as the owner when the transcript makes it clear who took it on; write "Unassigned" when it doesn't. Use "No deadline stated" rather than inventing one.
+
+## Open questions
+Bullets. Things raised and left unresolved.
+
+Rules:
+- Work only from the transcript. Never invent decisions, owners, deadlines, or attendees.
+- Transcripts of real speech are messy — fillers, false starts, cross-talk, mis-heard words. Read through that to the intent; don't quote the mess.
+- If the audio is clearly not a meeting (a solo voice note, a phone call, dictation), just write the Summary and Action items sections and skip the rest.
+- Output only the notes. No preamble, no "Here are your notes", no closing remark."#;

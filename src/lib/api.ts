@@ -43,6 +43,14 @@ export interface AppSettings {
   /** Mic noise reduction before STT: "off" | "on" (rumble high-pass) |
    *  "aggressive" (high-pass + RNNoise). Raw WAV on disk is never modified. */
   noise_reduction: string;
+  /** Microphone to record from, by device name. null / "" = system default.
+   *  A saved device that isn't present when you press the hotkey falls back to
+   *  the system default rather than failing the dictation. */
+  input_device: string | null;
+  /** Boost too-quiet audio before sending it for transcription. On by default:
+   *  quiet audio doesn't fail loudly, it comes back with words silently
+   *  missing. Only the uploaded copy is boosted; the saved WAV is untouched. */
+  auto_gain: boolean;
   // Legacy per-mode fields — kept for backwards compat, not used by UI.
   clippy_light_model: string;
   clippy_advanced_model: string;
@@ -144,6 +152,12 @@ export interface UploadOptions {
   llmModel?: string | null;
   cleanup: boolean;
   draft: boolean;
+  /** Ask the provider to label who is speaking. Only Deepgram and ElevenLabs
+   *  can — Whisper (Groq/OpenAI) has no speaker model. Enforced in Rust too. */
+  diarize: boolean;
+  /** Summarise the transcript into meeting notes (summary / decisions /
+   *  action items with owners). Writes to the Drafted column. */
+  meetingNotes: boolean;
 }
 
 export interface SecretCheck {
@@ -323,12 +337,28 @@ export const api = {
       llmModel: opts.llmModel ?? null,
       cleanup: opts.cleanup,
       draft: opts.draft,
+      diarize: opts.diarize,
+      meetingNotes: opts.meetingNotes,
     }),
   generateAltVersion: (id: string, kind: "cleaned" | "drafted") =>
     invoke<string>("generate_alt_version", { id, kind }),
   audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),
   audioDataUrlFor: (id: string) => invoke<string>("audio_data_url_for", { id }),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),
+  /** Open a metering-only capture stream so the user can verify their mic.
+   *  Returns the RESOLVED device name (may differ from what was asked for if
+   *  the saved device is gone). `null` device = system default. */
+  startMicTest: (device: string | null) =>
+    invoke<string>("start_mic_test", { device }),
+  stopMicTest: () => invoke<void>("stop_mic_test"),
+  /** Tear down every dictation hotkey — call before capturing a new binding,
+   *  or the global shortcut swallows the keypress and fires a recording
+   *  instead. ALWAYS pair with applyHotkeys(), including on cancel/unmount. */
+  suspendHotkeys: () => invoke<void>("suspend_hotkeys"),
+  /** Re-register hotkeys from the saved settings. Resumes after a capture AND
+   *  makes a newly-saved binding live without restarting the app. */
+  applyHotkeys: () => invoke<void>("apply_hotkeys"),
+  hotkeysActive: () => invoke<boolean>("hotkeys_active"),
   appPaths: () => invoke<AppPaths>("app_paths"),
   dailyUsage: () => invoke<DailyUsage>("daily_usage"),
   statsSummary: () => invoke<StatsSummary>("stats_summary"),

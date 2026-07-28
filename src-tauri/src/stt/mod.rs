@@ -14,13 +14,50 @@ pub mod deepgram;
 pub mod elevenlabs;
 pub mod groq;
 pub mod openai;
+pub mod speakers;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcript {
     pub text: String,
     pub language: Option<String>,
     pub duration_seconds: Option<f64>,
+    /// Speaker-attributed turns, present only when diarization was requested
+    /// AND the provider returned per-word speaker labels. `text` is rendered
+    /// from these when they exist, so downstream code that only reads `text`
+    /// transparently gets the labelled version.
+    #[serde(default)]
+    pub speakers: Option<Vec<SpeakerTurn>>,
 }
+
+impl Transcript {
+    /// Plain transcript with no speaker attribution — the common case.
+    pub fn plain(text: String, language: Option<String>, duration_seconds: Option<f64>) -> Self {
+        Self { text, language, duration_seconds, speakers: None }
+    }
+}
+
+/// Per-request STT knobs. Grouped into a struct rather than added as more
+/// positional parameters so adding the next option doesn't touch all four
+/// provider implementations again.
+#[derive(Debug, Clone, Default)]
+pub struct SttOptions {
+    /// ISO-639-1 hint, or `None` for auto-detect.
+    pub language: Option<String>,
+    /// Ask the provider to attribute speech to speakers. Silently ignored by
+    /// providers that can't do it — the caller is responsible for not offering
+    /// the option there (see `provider_supports_diarization`).
+    pub diarize: bool,
+}
+
+impl SttOptions {
+    pub fn language(&self) -> Option<&str> {
+        self.language.as_deref()
+    }
+}
+
+pub use speakers::{
+    provider_supports_diarization, render_turns, speaker_count, turns_from_words, SpeakerTurn,
+};
 
 /// Audio container extensions we accept for uploaded files. The cloud STT
 /// providers (Groq/OpenAI Whisper, Deepgram, ElevenLabs) all decode these
@@ -79,10 +116,10 @@ pub enum SttError {
 pub trait SttProvider: Send + Sync {
     fn name(&self) -> &'static str;
     /// Transcribe `wav_path` (16 kHz mono i16 WAV expected).
-    /// `hint_lang` is an ISO-639-1 code or `None` for auto-detect.
     async fn transcribe(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError>;
 }
+

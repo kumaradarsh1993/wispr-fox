@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use hound::{WavReader, WavWriter};
+use hound::WavWriter;
 
 /// Target byte ceiling for each chunk. Set well below Groq's 25 MB hard
 /// limit so WAV header overhead + any encoding-size drift can't push us
@@ -40,26 +40,31 @@ pub fn split_wav_if_needed(src: &Path, target_max_bytes: u64) -> Result<Vec<Path
         return Ok(vec![src.to_path_buf()]);
     }
 
-    let reader = WavReader::open(src)
-        .with_context(|| format!("opening WAV {src:?}"))?;
-    let spec = reader.spec();
+    // Format-tolerant decode to mono f32, then write chunks as 16-bit mono.
+    //
+    // This used to be `into_samples::<i16>()` collected with `?`, which meant a
+    // 24-bit or 32-bit-float WAV over the threshold failed the ENTIRE
+    // transcription with a hound decode error. External field recorders write
+    // 24-bit by default — at 48 kHz mono that is 144 KB/s, so every upload past
+    // ~2.3 minutes hit it. Uploads are normally canonicalised to 16-bit on
+    // ingest now (`audio::wavio::canonicalize_in_place`), so this path should
+    // rarely see anything exotic; keeping it tolerant means a future caller
+    // that skips ingest can't reintroduce the same hard failure.
+    let decoded = crate::audio::wavio::read_mono_f32(src)?;
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: decoded.sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let samples: Vec<i16> = decoded
+        .samples
+        .iter()
+        .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+        .collect();
+    anyhow::ensure!(!samples.is_empty(), "WAV {src:?} contains no audio");
 
-    // Bytes per audio frame: bits/sample → bytes/sample × channels.
-    // hound `duration()` returns frame count (NOT sample count) for
-    // multi-channel files; for mono they're equal.
-    let bytes_per_frame = (spec.bits_per_sample as u64 / 8) * spec.channels as u64;
-    if bytes_per_frame == 0 {
-        anyhow::bail!("invalid WAV spec: {spec:?}");
-    }
-
-    // Read everything in. For typical dictation (< 10 min) this is at most
-    // ~60 MB of i16 — comfortably in-memory. Streaming chunker is a future
-    // optimisation if we ever support hour-long recordings.
-    let samples: Vec<i16> = reader
-        .into_samples::<i16>()
-        .collect::<Result<Vec<_>, _>>()
-        .context("reading WAV samples")?;
-
+    let bytes_per_frame = 2u64;
     let total_bytes = samples.len() as u64 * 2; // i16
     // Number of chunks needed so each is ≤ target_max_bytes. Ceiling div.
     let n_chunks = ((total_bytes + target_max_bytes - 1) / target_max_bytes) as usize;

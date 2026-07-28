@@ -11,7 +11,7 @@ use reqwest::multipart;
 use serde::Deserialize;
 use tokio::fs;
 
-use super::{chunk, SttError, SttProvider, Transcript};
+use super::{chunk, SttError, SttOptions, SttProvider, Transcript};
 
 const ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
 pub const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
@@ -38,7 +38,7 @@ impl OpenAiStt {
     async fn transcribe_one(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
         let filename = wav_path
@@ -57,7 +57,7 @@ impl OpenAiStt {
             .text("model", self.model.clone())
             .text("response_format", "json");
 
-        if let Some(lang) = hint_lang {
+        if let Some(lang) = opts.language() {
             form = form.text("language", lang.to_owned());
         }
 
@@ -86,11 +86,9 @@ impl OpenAiStt {
             .await
             .map_err(|e| SttError::Decode(e.to_string()))?;
 
-        Ok(Transcript {
-            text: parsed.text,
-            language: hint_lang.map(str::to_owned),
-            duration_seconds: None,
-        })
+        // Whisper has no speaker model; diarization is refused for this
+        // provider at the UI layer rather than silently ignored here.
+        Ok(Transcript::plain(parsed.text, opts.language.clone(), None))
     }
 }
 
@@ -103,12 +101,12 @@ impl SttProvider for OpenAiStt {
     async fn transcribe(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let meta = fs::metadata(wav_path).await?;
 
         if meta.len() <= chunk::TARGET_CHUNK_BYTES {
-            return self.transcribe_one(wav_path, hint_lang).await;
+            return self.transcribe_one(wav_path, opts).await;
         }
 
         let chunks = chunk::split_wav_if_needed(wav_path, chunk::TARGET_CHUNK_BYTES)
@@ -125,7 +123,7 @@ impl SttProvider for OpenAiStt {
 
         let mut parts = Vec::with_capacity(chunks.len());
         for chunk_path in &chunks {
-            match self.transcribe_one(chunk_path, hint_lang).await {
+            match self.transcribe_one(chunk_path, opts).await {
                 Ok(t) => parts.push(t.text),
                 Err(e) => {
                     chunk::cleanup_chunks(&chunks, wav_path);
@@ -135,10 +133,10 @@ impl SttProvider for OpenAiStt {
         }
 
         chunk::cleanup_chunks(&chunks, wav_path);
-        Ok(Transcript {
-            text: parts.iter().map(|s| s.trim()).collect::<Vec<_>>().join(" "),
-            language: hint_lang.map(str::to_owned),
-            duration_seconds: None,
-        })
+        Ok(Transcript::plain(
+            parts.iter().map(|s| s.trim()).collect::<Vec<_>>().join(" "),
+            opts.language.clone(),
+            None,
+        ))
     }
 }

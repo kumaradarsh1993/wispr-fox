@@ -13,7 +13,13 @@
   } from "$lib/avatar-visibility.svelte";
   import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
-  import { api, onSecretsChanged, type ModelUsage, type SecretCheck } from "$lib/api";
+  import {
+    api,
+    onSecretsChanged,
+    type InputDeviceInfo,
+    type ModelUsage,
+    type SecretCheck,
+  } from "$lib/api";
   import { account } from "$lib/account-store.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
@@ -133,6 +139,41 @@
   }
 
   let secretCheck = $state<SecretCheck | null>(null);
+
+  // ── Quick mic picker ─────────────────────────────────────────────────────
+  // Deliberately lists ONLY devices that are present right now: a mic that is
+  // switched off shouldn't look selectable. The saved-but-absent case gets its
+  // own explicit row instead of silently showing something else, because
+  // "which mic am I actually on?" is the whole reason this is in the sidebar.
+  //
+  // Kept structurally independent of the rest of the sidebar (one block, one
+  // derived value, no shared layout) so it can be pulled out cleanly if it
+  // turns out to be clutter in daily use.
+  let inputDevices = $state<InputDeviceInfo[]>([]);
+  let currentMic = $derived(settings.s.input_device ?? "");
+  let micMissing = $derived(
+    Boolean(currentMic) && inputDevices.length > 0 && !inputDevices.some((d) => d.name === currentMic),
+  );
+
+  /** Trim the OS's decoration so the sidebar doesn't need 300px of width.
+   *  "Headset (DJI MIC2 Hands-Free AG Audio)" → "DJI MIC2 Hands-Free AG Audio" */
+  function shortMic(name: string): string {
+    const inner = name.match(/\(([^)]+)\)\s*$/);
+    return (inner ? inner[1] : name).trim();
+  }
+
+  async function refreshInputDevices() {
+    try {
+      inputDevices = await api.listInputDevices();
+    } catch (e) {
+      console.warn("sidebar mic list failed", e);
+      inputDevices = [];
+    }
+  }
+
+  async function changeMic(name: string) {
+    await settings.set("input_device", name || null);
+  }
 
   async function refreshSidebarSecrets() {
     try {
@@ -282,6 +323,7 @@
     (async () => {
       await settings.init();
       await refreshSidebarSecrets();
+      await refreshInputDevices();
       if (!settings.s.open_silently) {
         try {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -575,6 +617,35 @@
                   {/each}
                 </select>
               </div>
+            </div>
+
+            <!-- Mic picker. Same store and same persisted value as Settings →
+                 Dictation: one source of truth, two views. -->
+            <div class="model-row">
+              <div class="model-row-head">
+                <span>MIC</span>
+                <a href="/settings/dictation" title="Test your microphone">Test</a>
+              </div>
+              <div class="model-selects">
+                <select
+                  aria-label="Microphone"
+                  value={currentMic}
+                  disabled={flowBusy}
+                  onfocus={refreshInputDevices}
+                  onchange={(e) => changeMic((e.currentTarget as HTMLSelectElement).value)}
+                >
+                  <option value="">System default</option>
+                  {#each inputDevices as d (d.name)}
+                    <option value={d.name}>{shortMic(d.name)}</option>
+                  {/each}
+                  {#if micMissing}
+                    <option value={currentMic}>{shortMic(currentMic)} — not connected</option>
+                  {/if}
+                </select>
+              </div>
+              {#if micMissing}
+                <div class="mic-note">Not connected — recordings will use the system default.</div>
+              {/if}
             </div>
           </div>
         {/if}
@@ -1145,6 +1216,13 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .mic-note {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--danger);
+    margin-top: 4px;
   }
 
   .model-selects select {

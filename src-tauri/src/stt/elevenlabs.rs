@@ -8,7 +8,7 @@ use reqwest::multipart;
 use serde::Deserialize;
 use tokio::fs;
 
-use super::{SttError, SttProvider, Transcript};
+use super::{SttError, SttOptions, SttProvider, Transcript};
 
 const ENDPOINT: &str = "https://api.elevenlabs.io/v1/speech-to-text";
 pub const DEFAULT_MODEL: &str = "scribe_v2";
@@ -37,6 +37,23 @@ struct ElevenLabsResponse {
     text: String,
     #[serde(default)]
     language_code: Option<String>,
+    #[serde(default)]
+    words: Vec<ElevenLabsWord>,
+}
+
+#[derive(Deserialize)]
+struct ElevenLabsWord {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    speaker_id: Option<String>,
+    #[serde(default)]
+    start: Option<f64>,
+    /// "word" | "spacing" | "audio_event". Only real words carry meaning for
+    /// turn grouping; spacing entries are whitespace and audio events are
+    /// things like (laughter).
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
 }
 
 #[async_trait]
@@ -48,7 +65,7 @@ impl SttProvider for ElevenLabsStt {
     async fn transcribe(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
         let filename = wav_path
@@ -66,8 +83,16 @@ impl SttProvider for ElevenLabsStt {
             .part("file", file_part)
             .text("model_id", self.model.clone());
 
-        if let Some(lang) = hint_lang {
+        if let Some(lang) = opts.language() {
             form = form.text("language_code", lang.to_owned());
+        }
+
+        if opts.diarize {
+            // Scribe includes diarization in the base per-hour price — no
+            // surcharge — and v2 handles up to 32 speakers. `num_speakers` is
+            // left unset so the model decides; we don't know how many people
+            // were in the room.
+            form = form.text("diarize", "true");
         }
 
         let resp = self
@@ -90,10 +115,30 @@ impl SttProvider for ElevenLabsStt {
             .await
             .map_err(|e| SttError::Decode(e.to_string()))?;
 
-        Ok(Transcript {
-            text: parsed.text,
-            language: parsed.language_code.or_else(|| hint_lang.map(str::to_owned)),
-            duration_seconds: None,
-        })
+        let language = parsed.language_code.or_else(|| opts.language.clone());
+
+        if opts.diarize {
+            let turns = super::turns_from_words(parsed.words.into_iter().filter_map(|w| {
+                // Skip spacing and audio-event entries — only real words carry
+                // speaker attribution worth grouping on.
+                if w.kind.as_deref().is_some_and(|k| k != "word") {
+                    return None;
+                }
+                let speaker = w.speaker_id?;
+                let text = w.text?;
+                Some((speaker, text, w.start))
+            }));
+            if !turns.is_empty() {
+                return Ok(Transcript {
+                    text: super::render_turns(&turns),
+                    language,
+                    duration_seconds: None,
+                    speakers: Some(turns),
+                });
+            }
+            tracing::info!("diarization requested but ElevenLabs returned no speaker labels");
+        }
+
+        Ok(Transcript::plain(parsed.text, language, None))
     }
 }

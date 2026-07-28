@@ -14,7 +14,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,8 +29,87 @@ use tokio::sync::oneshot;
 pub mod cues;
 pub mod denoise;
 pub mod devices;
+pub mod level;
+pub mod wavio;
 
 type SharedWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
+
+/// Live capture telemetry, shared between the cpal callback (writer) and the
+/// event-emitter task in `lib.rs` (reader). All lock-free — the callback runs
+/// on a real-time audio thread and must never block.
+///
+/// `ready_ms` is the load-bearing one. The app used to behave as though
+/// recording begins the instant the hotkey is pressed; with a Bluetooth mic
+/// that is false by 2–10 seconds (the transmitter has to negotiate out of its
+/// noise-cancellation mode, then the SCO link has to come up), and everything
+/// spoken in that window is simply not in the WAV. The head-gap was already
+/// measured — but only at *stop*, as a post-mortem. Publishing it live is what
+/// lets the avatar say "hold on" until audio is genuinely flowing.
+#[derive(Debug)]
+pub struct Meter {
+    /// Perceptually-stretched level (f32 bits, 0.0–1.0) for the wave skin.
+    level: AtomicU32,
+    /// True RMS of the last buffer (f32 bits, 0.0–1.0), un-stretched — the
+    /// meter in Settings needs real dBFS, not a pretty curve.
+    rms: AtomicU32,
+    /// Peak absolute amplitude of the last buffer (f32 bits, 0.0–1.0).
+    peak: AtomicU32,
+    /// True while any capture stream — dictation or mic test — is live.
+    active: AtomicBool,
+    /// Milliseconds from the start command to the first audio callback.
+    /// -1 while we are still waiting. Reset to -1 on every start/stop.
+    ready_ms: AtomicI64,
+}
+
+impl Meter {
+    fn new() -> Self {
+        Self {
+            level: AtomicU32::new(0),
+            rms: AtomicU32::new(0),
+            peak: AtomicU32::new(0),
+            active: AtomicBool::new(false),
+            ready_ms: AtomicI64::new(-1),
+        }
+    }
+
+    /// Called on start: arm the meter and clear the previous run's readings.
+    fn arm(&self) {
+        self.ready_ms.store(-1, Ordering::Relaxed);
+        self.level.store(0, Ordering::Relaxed);
+        self.rms.store(0, Ordering::Relaxed);
+        self.peak.store(0, Ordering::Relaxed);
+        self.active.store(true, Ordering::Relaxed);
+    }
+
+    /// Called on stop: park everything back at rest.
+    fn disarm(&self) {
+        self.active.store(false, Ordering::Relaxed);
+        self.level.store(0, Ordering::Relaxed);
+        self.rms.store(0, Ordering::Relaxed);
+        self.peak.store(0, Ordering::Relaxed);
+        self.ready_ms.store(-1, Ordering::Relaxed);
+    }
+
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+    pub fn rms(&self) -> f32 {
+        f32::from_bits(self.rms.load(Ordering::Relaxed))
+    }
+    pub fn peak(&self) -> f32 {
+        f32::from_bits(self.peak.load(Ordering::Relaxed))
+    }
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
+    /// Head-gap in ms, or `None` while the mic still hasn't delivered a buffer.
+    pub fn ready_ms(&self) -> Option<i64> {
+        match self.ready_ms.load(Ordering::Relaxed) {
+            n if n < 0 => None,
+            n => Some(n),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct FinishedRecording {
@@ -55,48 +134,67 @@ pub struct FinishedRecording {
     /// under 500ms. Windows "audio enhancements" / exclusive-mode arbitration
     /// can stretch it to 3–8s. -1 if no callback ever fired.
     pub mic_ready_ms: i64,
+    /// Input device the capture actually ran on. This is the RESOLVED name,
+    /// not the user's saved preference — if the chosen mic was unplugged or
+    /// unpaired we silently fall back to the system default, and the flight
+    /// recorder needs to be able to answer "why did it use the laptop mic?".
+    pub device_name: String,
+    /// True when the user had picked a specific device and we could not find
+    /// it, so this recording used the system default instead.
+    pub device_fallback: bool,
 }
 
 enum AudioCmd {
     Start {
         path: PathBuf,
+        device: Option<String>,
         reply: oneshot::Sender<Result<()>>,
     },
     Stop {
         reply: oneshot::Sender<Result<FinishedRecording>>,
+    },
+    /// Open a capture stream that feeds the meter but writes no file — the
+    /// Settings "test your mic" path. Independent of the dictation flow so a
+    /// user can check their input without producing a history row.
+    StartPreview {
+        device: Option<String>,
+        reply: oneshot::Sender<Result<String>>,
+    },
+    StopPreview {
+        reply: oneshot::Sender<Result<()>>,
     },
 }
 
 #[derive(Clone)]
 pub struct AudioController {
     tx: mpsc::Sender<AudioCmd>,
-    /// Live input level (f32 bits, 0.0–1.0), written by the cpal callback
-    /// while a recording is in flight and pinned to 0.0 otherwise. Read by
-    /// the `wispr:level` emitter task that feeds the wave-bar avatar.
-    level: Arc<AtomicU32>,
+    meter: Arc<Meter>,
 }
 
 impl AudioController {
     pub fn spawn() -> Self {
         let (tx, rx) = mpsc::channel::<AudioCmd>();
-        let level = Arc::new(AtomicU32::new(0));
-        let level_for_worker = level.clone();
+        let meter = Arc::new(Meter::new());
+        let meter_for_worker = meter.clone();
         std::thread::Builder::new()
             .name("wispr-audio".into())
-            .spawn(move || worker_loop(rx, level_for_worker))
+            .spawn(move || worker_loop(rx, meter_for_worker))
             .expect("spawn audio thread");
-        Self { tx, level }
+        Self { tx, meter }
     }
 
-    /// Shared handle to the live mic level for the emitter task.
-    pub fn level_handle(&self) -> Arc<AtomicU32> {
-        self.level.clone()
+    /// Shared handle to the live capture telemetry for the emitter task.
+    pub fn meter(&self) -> Arc<Meter> {
+        self.meter.clone()
     }
 
-    pub async fn start(&self, path: PathBuf) -> Result<()> {
+    /// `device` is the user's saved input-device name, or `None` for "system
+    /// default". A saved device that is no longer present falls back to the
+    /// default rather than failing — a missing mic must never cost a dictation.
+    pub async fn start(&self, path: PathBuf, device: Option<String>) -> Result<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
-            .send(AudioCmd::Start { path, reply: reply_tx })
+            .send(AudioCmd::Start { path, device, reply: reply_tx })
             .map_err(|_| anyhow!("audio worker thread is gone"))?;
         reply_rx
             .await
@@ -107,6 +205,27 @@ impl AudioController {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(AudioCmd::Stop { reply: reply_tx })
+            .map_err(|_| anyhow!("audio worker thread is gone"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow!("audio worker dropped reply"))?
+    }
+
+    /// Start the mic-test preview. Returns the resolved device name.
+    pub async fn start_preview(&self, device: Option<String>) -> Result<String> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(AudioCmd::StartPreview { device, reply: reply_tx })
+            .map_err(|_| anyhow!("audio worker thread is gone"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow!("audio worker dropped reply"))?
+    }
+
+    pub async fn stop_preview(&self) -> Result<()> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(AudioCmd::StopPreview { reply: reply_tx })
             .map_err(|_| anyhow!("audio worker thread is gone"))?;
         reply_rx
             .await
@@ -131,9 +250,12 @@ struct ActiveRecording {
     cmd_received_at: Instant,
     /// Stamped by the capture callback when the first buffer arrives.
     first_callback: Arc<Mutex<Option<Instant>>>,
+    /// Resolved capture device, and whether we fell back to the default.
+    device_name: String,
+    device_fallback: bool,
 }
 
-fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
+fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
     // True cold-start: build a fresh cpal stream on every F8 press, drop it
     // on release. This handles device changes (user toggling Windows audio
     // settings, plugging headphones, etc.) without needing to restart the app.
@@ -143,15 +265,25 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
     // drivers, can be 1-5s on Realtek with audio enhancements enabled).
 
     let mut active: Option<ActiveRecording> = None;
+    // The mic-test preview stream. Parked on this thread for the same reason
+    // the recording stream is: cpal's `Stream` is `!Send` on Windows.
+    let mut preview: Option<Stream> = None;
     let writer: SharedWriter = Arc::new(Mutex::new(None));
 
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            AudioCmd::Start { path, reply } => {
+            AudioCmd::Start { path, device, reply } => {
                 if active.is_some() {
                     tracing::debug!("ignoring duplicate start (key repeat)");
                     let _ = reply.send(Err(anyhow!("recording already in progress")));
                     continue;
+                }
+
+                // A dictation always wins over a mic test. Dropping the preview
+                // also releases the device, which matters on drivers that only
+                // allow one capture client.
+                if preview.take().is_some() {
+                    tracing::debug!("dropping mic preview — dictation takes priority");
                 }
 
                 let t0 = Instant::now();
@@ -160,31 +292,81 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                     std::fs::create_dir_all(parent).ok();
                 }
 
+                meter.arm();
+
                 // Build a fresh stream + open WAV writer.
-                match begin_cold_recording(&path, &writer, level.clone()) {
-                    Ok((stream, sample_rate, samples_written, stream_error, first_callback)) => {
+                match begin_cold_recording(&path, &writer, meter.clone(), device.as_deref(), t0) {
+                    Ok(started) => {
                         let setup_ms = t0.elapsed().as_millis();
-                        tracing::info!(?path, setup_ms, sample_rate, "recording started (cold)");
+                        tracing::info!(
+                            ?path,
+                            setup_ms,
+                            sample_rate = started.sample_rate,
+                            device = %started.device_name,
+                            fallback = started.device_fallback,
+                            "recording started (cold)"
+                        );
                         active = Some(ActiveRecording {
                             path: path.clone(),
                             started_at: Instant::now(),
-                            _stream: stream,
-                            sample_rate,
-                            samples_written,
-                            stream_error,
+                            _stream: started.stream,
+                            sample_rate: started.sample_rate,
+                            samples_written: started.samples_written,
+                            stream_error: started.stream_error,
                             cmd_received_at: t0,
-                            first_callback,
+                            first_callback: started.first_callback,
+                            device_name: started.device_name,
+                            device_fallback: started.device_fallback,
                         });
                         let _ = reply.send(Ok(()));
                     }
                     Err(e) => {
                         // Ensure gate is closed if begin_cold_recording partially set it.
                         *writer.lock() = None;
-                        level.store(0, Ordering::Relaxed);
+                        meter.disarm();
                         tracing::error!("begin_cold_recording failed: {e:#}");
                         let _ = reply.send(Err(e));
                     }
                 }
+            }
+
+            AudioCmd::StartPreview { device, reply } => {
+                if active.is_some() {
+                    let _ = reply.send(Err(anyhow!(
+                        "can't test the mic while a recording is in progress"
+                    )));
+                    continue;
+                }
+                // Restarting the preview (e.g. the user picked a different
+                // device) must drop the old stream first, or two clients fight
+                // over the same device.
+                preview = None;
+                meter.arm();
+                let t0 = Instant::now();
+                match begin_preview(meter.clone(), device.as_deref(), t0) {
+                    Ok((stream, name)) => {
+                        tracing::info!(device = %name, "mic preview started");
+                        preview = Some(stream);
+                        let _ = reply.send(Ok(name));
+                    }
+                    Err(e) => {
+                        meter.disarm();
+                        tracing::warn!("mic preview failed: {e:#}");
+                        let _ = reply.send(Err(e));
+                    }
+                }
+            }
+
+            AudioCmd::StopPreview { reply } => {
+                let had = preview.take().is_some();
+                // Only park the meter if a dictation isn't using it.
+                if active.is_none() {
+                    meter.disarm();
+                }
+                if had {
+                    tracing::debug!("mic preview stopped");
+                }
+                let _ = reply.send(Ok(()));
             }
 
             AudioCmd::Stop { reply } => {
@@ -228,10 +410,12 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                     sample_rate,
                     samples_written,
                     stream_error,
+                    device_name,
+                    device_fallback,
                     ..
                 } = rec;
                 drop(_stream);
-                level.store(0, Ordering::Relaxed);
+                meter.disarm();
 
                 // Convert the real sample count into milliseconds of audio. This
                 // is the ground truth we compare against the wall-clock timer to
@@ -260,6 +444,8 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
                     captured_ms,
                     stream_errored,
                     mic_ready_ms,
+                    device_name,
+                    device_fallback,
                 }));
             }
         }
@@ -268,18 +454,82 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, level: Arc<AtomicU32>) {
     tracing::debug!("audio worker exiting");
 }
 
+/// Pick the capture device for this run.
+///
+/// `preferred` is the user's saved device name (`None` = system default). The
+/// fallback is deliberate and load-bearing: the common case for an external mic
+/// is that it is *switched off or unpaired* when the user presses the hotkey,
+/// and a picker that hard-fails there would turn "I forgot to turn my mic on"
+/// into "the app is broken and ate my dictation". So a missing device silently
+/// drops to the system default, and we report that it happened so the UI can
+/// say so afterwards.
+///
+/// Matching is exact-then-prefix. Windows sometimes decorates the enumerated
+/// name (`"Headset (DJI MIC2 Hands-Free AG Audio)"`), and a saved name from an
+/// earlier session can differ in that trailing decoration alone.
+fn resolve_input_device(
+    host: &cpal::Host,
+    preferred: Option<&str>,
+) -> Result<(cpal::Device, String, bool)> {
+    let default = || {
+        host.default_input_device().ok_or_else(|| {
+            anyhow!("no default input device — check Windows mic privacy settings")
+        })
+    };
+
+    let Some(want) = preferred.map(str::trim).filter(|s| !s.is_empty()) else {
+        let dev = default()?;
+        let name = dev.name().unwrap_or_else(|_| "<unnamed>".into());
+        return Ok((dev, name, false));
+    };
+
+    if let Ok(devices) = host.input_devices() {
+        let mut prefix_match: Option<(cpal::Device, String)> = None;
+        for dev in devices {
+            let Ok(name) = dev.name() else { continue };
+            if name == want {
+                return Ok((dev, name, false));
+            }
+            if prefix_match.is_none() && (name.starts_with(want) || want.starts_with(&name)) {
+                prefix_match = Some((dev, name));
+            }
+        }
+        if let Some((dev, name)) = prefix_match {
+            tracing::info!(saved = want, resolved = %name, "input device matched by prefix");
+            return Ok((dev, name, false));
+        }
+    }
+
+    let dev = default()?;
+    let name = dev.name().unwrap_or_else(|_| "<unnamed>".into());
+    tracing::warn!(
+        saved = want,
+        fallback = %name,
+        "saved input device not present — using system default for this recording"
+    );
+    Ok((dev, name, true))
+}
+
+struct StartedStream {
+    stream: Stream,
+    sample_rate: u32,
+    samples_written: Arc<AtomicU64>,
+    stream_error: Arc<AtomicBool>,
+    first_callback: Arc<Mutex<Option<Instant>>>,
+    device_name: String,
+    device_fallback: bool,
+}
+
 /// Build cpal stream, query device fresh, play it. Returns the live stream.
-#[allow(clippy::type_complexity)]
 fn begin_cold_recording(
     out_path: &Path,
     writer: &SharedWriter,
-    level: Arc<AtomicU32>,
-) -> Result<(Stream, u32, Arc<AtomicU64>, Arc<AtomicBool>, Arc<Mutex<Option<Instant>>>)> {
+    meter: Arc<Meter>,
+    preferred_device: Option<&str>,
+    cmd_at: Instant,
+) -> Result<StartedStream> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no default input device — check Windows mic privacy settings"))?;
-    let device_name = device.name().unwrap_or_else(|_| "<unnamed>".into());
+    let (device, device_name, device_fallback) = resolve_input_device(&host, preferred_device)?;
     let config: SupportedStreamConfig = device
         .default_input_config()
         .context("querying default input config")?;
@@ -322,18 +572,86 @@ fn begin_cold_recording(
         tracing::error!("audio stream error (recording may be truncated): {e}");
     };
 
+    let ctx = CaptureCtx {
+        writer: Some(writer.clone()),
+        channels,
+        meter,
+        samples_written: samples_written.clone(),
+        first_callback: first_callback.clone(),
+        cmd_at,
+    };
+
     let stream = match sample_format {
-        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
-        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
-        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, writer.clone(), channels, level, samples_written.clone(), first_callback.clone(), err_fn),
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, ctx, err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, ctx, err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, ctx, err_fn),
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     }?;
 
     stream.play().with_context(|| format!("stream.play() on device '{device_name}'"))?;
 
-    Ok((stream, sample_rate, samples_written, stream_error, first_callback))
+    Ok(StartedStream {
+        stream,
+        sample_rate,
+        samples_written,
+        stream_error,
+        first_callback,
+        device_name,
+        device_fallback,
+    })
 }
 
+/// Build a capture stream that feeds the meter only — no WAV, no history row.
+///
+/// This is the mic test. It matters more than it sounds: after a sleep/wake
+/// cycle a Bluetooth transmitter can keep its "connected" LED and stay listed
+/// by Windows while delivering **no audio at all**, recoverable only by
+/// power-cycling the device. A device list can't see that; a live meter can,
+/// and so can the head-gap number this stream also produces.
+fn begin_preview(
+    meter: Arc<Meter>,
+    preferred_device: Option<&str>,
+    cmd_at: Instant,
+) -> Result<(Stream, String)> {
+    let host = cpal::default_host();
+    let (device, device_name, _fallback) = resolve_input_device(&host, preferred_device)?;
+    let config: SupportedStreamConfig = device
+        .default_input_config()
+        .context("querying default input config")?;
+
+    let sample_rate = config.sample_rate().0;
+    let channels = config.channels();
+    let sample_format = config.sample_format();
+    let mut stream_config: cpal::StreamConfig = config.clone().into();
+    stream_config.buffer_size = cpal::BufferSize::Fixed(sample_rate / 100);
+
+    let err_fn = move |e: cpal::StreamError| {
+        tracing::warn!("mic preview stream error: {e}");
+    };
+
+    let ctx = CaptureCtx {
+        writer: None,
+        channels,
+        meter,
+        samples_written: Arc::new(AtomicU64::new(0)),
+        first_callback: Arc::new(Mutex::new(None)),
+        cmd_at,
+    };
+
+    let stream = match sample_format {
+        SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, ctx, err_fn),
+        SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, ctx, err_fn),
+        SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, ctx, err_fn),
+        other => return Err(anyhow!("unsupported sample format: {other:?}")),
+    }?;
+
+    stream
+        .play()
+        .with_context(|| format!("stream.play() on device '{device_name}'"))?;
+    Ok((stream, device_name))
+}
+
+#[allow(dead_code)]
 fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
     while let Ok(cmd) = rx.recv() {
         match cmd {
@@ -343,25 +661,48 @@ fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
             AudioCmd::Stop { reply, .. } => {
                 let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
             }
+            AudioCmd::StartPreview { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
+            AudioCmd::StopPreview { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Everything the capture callback needs, bundled so the two stream builders
+/// (dictation and mic-test preview) share one code path. `writer: None` is the
+/// preview case — meter only, nothing hits disk.
+struct CaptureCtx {
+    writer: Option<SharedWriter>,
+    channels: u16,
+    meter: Arc<Meter>,
+    samples_written: Arc<AtomicU64>,
+    first_callback: Arc<Mutex<Option<Instant>>>,
+    /// Anchor for the head-gap measurement — when the start command was issued.
+    cmd_at: Instant,
+}
+
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    writer: SharedWriter,
-    input_channels: u16,
-    level: Arc<AtomicU32>,
-    samples_written: Arc<AtomicU64>,
-    first_callback: Arc<Mutex<Option<Instant>>>,
+    ctx: CaptureCtx,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<Stream>
 where
     T: cpal::SizedSample + ToI16Sample + Send + 'static,
 {
     use std::sync::atomic::AtomicU64;
+
+    let CaptureCtx {
+        writer,
+        channels: input_channels,
+        meter,
+        samples_written,
+        first_callback,
+        cmd_at,
+    } = ctx;
 
     let callback_count = Arc::new(AtomicU64::new(0));
 
@@ -378,7 +719,17 @@ where
                     let mut slot = fc.lock();
                     if slot.is_none() {
                         *slot = Some(Instant::now());
-                        tracing::info!(samples = data.len(), "FIRST audio callback fired");
+                        // Publish the head-gap the moment it is known, not at
+                        // stop. This is what the "hold on" avatar state waits
+                        // for — until this fires, nothing the user says is
+                        // reaching the WAV, and they deserve to see that.
+                        let gap = cmd_at.elapsed().as_millis() as i64;
+                        meter.ready_ms.store(gap, Ordering::Relaxed);
+                        tracing::info!(
+                            samples = data.len(),
+                            mic_ready_ms = gap,
+                            "FIRST audio callback fired"
+                        );
                     }
                 } else if n.is_multiple_of(200) {
                     // Check sample energy to see if audio is silent or live.
@@ -395,24 +746,35 @@ where
                     );
                 }
 
-                // Fast path: if not recording, discard immediately.
-                let mut guard = writer.lock();
-                let Some(wav) = guard.as_mut() else { return };
-
-                // Live level for the wave-bar avatar: RMS over this ~10ms
-                // buffer, perceptually stretched (sqrt) so normal speech
-                // spans roughly 0.2–0.9. Written only while the gate is
-                // open; worker_loop pins it back to 0 on stop.
+                // Meter first, and unconditionally — the preview has no writer,
+                // and even during a dictation the level should reflect what the
+                // mic is delivering. RMS is kept raw (for true dBFS in the mic
+                // test) alongside the perceptually-stretched value the wave
+                // skin has always used.
                 if !data.is_empty() {
                     let mut sum_sq = 0.0f32;
+                    let mut peak = 0.0f32;
                     for &s in data {
                         let v = s.to_i16_sample() as f32 / 32768.0;
                         sum_sq += v * v;
+                        let a = v.abs();
+                        if a > peak {
+                            peak = a;
+                        }
                     }
                     let rms = (sum_sq / data.len() as f32).sqrt();
                     let perceptual = (rms.sqrt() * 2.4).min(1.0);
-                    level.store(perceptual.to_bits(), Ordering::Relaxed);
+                    meter.level.store(perceptual.to_bits(), Ordering::Relaxed);
+                    meter.rms.store(rms.to_bits(), Ordering::Relaxed);
+                    meter.peak.store(peak.to_bits(), Ordering::Relaxed);
                 }
+
+                // Preview stream: metering is the whole job, nothing to write.
+                let Some(writer) = writer.as_ref() else { return };
+
+                // Fast path: if not recording, discard immediately.
+                let mut guard = writer.lock();
+                let Some(wav) = guard.as_mut() else { return };
 
                 // Count mono samples ACTUALLY written (write_sample Ok). A write
                 // that fails mid-recording used to be silently dropped; now a

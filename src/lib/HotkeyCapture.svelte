@@ -3,39 +3,110 @@
   // Output format matches Tauri's Shortcut::from_str: e.g.
   // "CommandOrControl+Super+F8".
   //
-  // While capturing, a modal overlay covers the page to:
-  //   - prevent the keystroke from leaking into other focused inputs
-  //   - give the user clear feedback that capture is active
-  //   - reserve focus so the keydown listener gets every event first
+  // ── Why capture suspends the global hotkeys ────────────────────────────
+  // A registered global shortcut is consumed by the OS before the focused
+  // window ever sees the key. So with F8 still registered, pressing F8 into
+  // this dialog started a DICTATION and the keydown never reached the listener
+  // below — the picker appeared to do nothing for exactly the keys people
+  // actually want to bind (F8, F9, and anything already in use). No amount of
+  // preventDefault/stopPropagation in the webview can fix that; the event is
+  // never delivered. Every app with a rebind UI (Discord, Raycast, Alfred,
+  // OBS) handles it the same way: unregister the shortcuts for the duration of
+  // the capture, re-register when it ends. `api.suspendHotkeys()` /
+  // `api.applyHotkeys()` are that pair, and they are paired in a `finally` so
+  // a thrown error, an Escape, or an unmount can never strand the user with no
+  // working hotkeys.
   //
   // Note: the Windows key (Super) is special on Windows — Win alone opens
   // the Start menu (the OS intercepts before the app sees it), and Win+Space
   // is the IME picker. Combinations like Win+F8/F9/F10 work fine.
 
-  let { value = $bindable(""), label = "Hotkey" } = $props<{
+  import { onDestroy } from "svelte";
+  import { api } from "$lib/api";
+
+  let {
+    value = $bindable(""),
+    label = "Hotkey",
+    // Called with the newly captured combo. The parent persists it and makes
+    // it live; returning a rejected promise (or a string) reports a problem —
+    // e.g. the combo already belongs to another binding.
+    oncommit = undefined,
+  } = $props<{
     value: string;
     label?: string;
+    oncommit?: (combo: string) => void | Promise<void>;
   }>();
 
   let capturing = $state(false);
   let captured = $state("");
+  let error = $state("");
   let overlayEl: HTMLDivElement | null = $state(null);
+  /** Set while the global shortcuts are torn down, so we only ever restore
+   *  what we actually suspended. */
+  let suspended = false;
 
-  function startCapture() {
+  async function startCapture() {
     capturing = true;
     captured = "";
+    error = "";
     // Defer to next frame so the overlay element exists, then focus it.
     queueMicrotask(() => {
       if (overlayEl) overlayEl.focus();
     });
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", onKeyUp, true);
+    try {
+      await api.suspendHotkeys();
+      suspended = true;
+    } catch (e) {
+      // Capture still half-works (non-conflicting combos come through), so
+      // don't block the user — but tell them why F8 might misbehave.
+      console.warn("suspendHotkeys failed", e);
+      error = "Couldn't pause the current hotkeys — pressing one may start a recording instead.";
+    }
+  }
+
+  /** Always restore the global hotkeys. Safe to call when nothing is suspended. */
+  async function resumeHotkeys() {
+    if (!suspended) return;
+    suspended = false;
+    try {
+      await api.applyHotkeys();
+    } catch (e) {
+      console.error("applyHotkeys failed — hotkeys may be inactive until restart", e);
+    }
   }
 
   function stopCapture() {
     capturing = false;
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("keyup", onKeyUp, true);
+    void resumeHotkeys();
+  }
+
+  // A navigation or a parent re-render mid-capture must not leave the app with
+  // its hotkeys torn down.
+  onDestroy(() => {
+    window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("keyup", onKeyUp, true);
+    void resumeHotkeys();
+  });
+
+  async function commit(combo: string) {
+    const previous = value;
+    value = combo;
+    if (!oncommit) return true;
+    try {
+      await oncommit(combo);
+      return true;
+    } catch (e) {
+      // Rejected — the parent refused this combo (duplicate binding, etc.).
+      // Put the old value back so the row doesn't show a binding that isn't real.
+      value = previous;
+      captured = "";
+      error = e instanceof Error ? e.message : String(e);
+      return false;
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -66,9 +137,14 @@
 
     const combo = [...mods, keyName].join("+");
     captured = combo;
-    value = combo;
-    // Brief delay before closing so the user sees what they captured.
-    setTimeout(stopCapture, 250);
+    error = "";
+    // Persist first; only close the dialog if the parent accepted it. A
+    // rejected combo keeps the overlay open with the reason showing, so the
+    // user can immediately try a different key.
+    void commit(combo).then((ok) => {
+      // Brief delay so the user sees what they captured.
+      if (ok) setTimeout(stopCapture, 250);
+    });
   }
 
   function onKeyUp(e: KeyboardEvent) {
@@ -150,8 +226,14 @@
       </div>
       <div class="capture-title">Press your hotkey…</div>
       <div class="capture-shown">{captured || "Waiting…"}</div>
+      {#if error}
+        <div class="capture-error">{error}</div>
+      {/if}
       <div class="capture-hint">
         Hold modifiers (Ctrl / Alt / Shift / Win) then press the key.
+        <br />
+        Your current hotkeys are paused, so <em>F8</em> and <em>F9</em> won't start a
+        recording while this is open.
         <br />
         <em>Esc</em> to cancel. Win+F8/F9/F10 work great; avoid Win+Space (Windows reserves it for IME).
       </div>
@@ -253,6 +335,16 @@
     color: var(--text-primary);
     min-width: 200px;
     text-align: center;
+  }
+  .capture-error {
+    font-size: 12px;
+    color: var(--danger);
+    background: var(--danger-fade);
+    border-radius: 8px;
+    padding: 7px 12px;
+    text-align: center;
+    max-width: 360px;
+    line-height: 1.45;
   }
   .capture-hint {
     font-size: 12px;

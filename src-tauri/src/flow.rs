@@ -43,6 +43,40 @@ impl Drop for TempFileGuard {
 /// settings without nagging them every dictation.
 static SLOW_MIC_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Head-gap past which the mic is "slow enough that it's eating your opening
+/// words". Also the threshold the floater's waiting state escalates at.
+pub const SLOW_MIC_MS: i64 = 2500;
+
+/// Heuristic: does this device name look like a Bluetooth audio endpoint?
+/// Windows decorates them consistently enough to be useful — "Headset
+/// (DJI MIC2 Hands-Free AG Audio)", "Hands-Free AG Audio", "… Stereo" — and
+/// getting this wrong only costs the user slightly-off advice, never a
+/// dictation. No device-specific branching: any Bluetooth mic has the same
+/// profile-negotiation delay.
+fn looks_bluetooth(device: &str) -> bool {
+    let d = device.to_ascii_lowercase();
+    ["hands-free", "handsfree", "headset", "bluetooth", " ag audio", "wireless"]
+        .iter()
+        .any(|needle| d.contains(needle))
+}
+
+/// The slow-mic remediation text. Split by transport because the two causes
+/// have genuinely different fixes and the wrong one sends the user hunting
+/// through a settings pane that can't help them. Written to fit the floater
+/// bubble's hard 2-line cap.
+fn slow_mic_message(mic_ready_ms: i64, device: &str) -> String {
+    let secs = (mic_ready_ms as f64) / 1000.0;
+    if looks_bluetooth(device) {
+        format!(
+            "Bluetooth mic took {secs:.1}s to start — your first words were cut. Turn noise cancellation OFF on the mic before connecting; that's usually most of the delay."
+        )
+    } else {
+        format!(
+            "Your mic took {secs:.1}s to wake up — the first words of every recording are being cut. Usual fix: turn OFF the mic's audio enhancements and exclusive control (Sound settings → your microphone → Properties)."
+        )
+    }
+}
+
 /// Pretty display name for a provider id (as returned by `*.name()`).
 fn pretty_provider(name: &str) -> &str {
     match name {
@@ -607,8 +641,20 @@ impl Flow {
             .unwrap_or_default();
         let _ = app.emit("wispr:active_app", friendly);
 
+        // The user's chosen input device, or None for "system default". A saved
+        // device that has since gone away falls back to the default inside the
+        // audio worker — never an error, because "my Bluetooth mic was off" is
+        // the single most likely reason for it to be missing and losing the
+        // dictation over that would be indefensible.
+        let input_device = self
+            .settings
+            .lock()
+            .input_device
+            .clone()
+            .filter(|s| !s.trim().is_empty());
+
         self.audio
-            .start(path.clone())
+            .start(path.clone(), input_device)
             .await
             .context("starting audio capture")?;
         crate::audio::cues::play_start();
@@ -666,6 +712,19 @@ impl Flow {
         outcome
     }
 
+    /// Start the Settings mic test on `device` (None = system default).
+    /// Returns the resolved device name. Metering only — no file, no history
+    /// row; see `commands::start_mic_test` for why this exists.
+    pub async fn start_mic_test(&self, device: Option<String>) -> Result<String> {
+        self.audio
+            .start_preview(device.filter(|s| !s.trim().is_empty()))
+            .await
+    }
+
+    pub async fn stop_mic_test(&self) -> Result<()> {
+        self.audio.stop_preview().await
+    }
+
     /// Write the flight-recorder timings/event-log for a recording. Best-effort:
     /// a failure here is a log line, never a pipeline error (diagnostics must
     /// not break the thing they're diagnosing).
@@ -702,6 +761,8 @@ impl Flow {
             captured_ms,
             stream_errored,
             mic_ready_ms,
+            device_name: capture_device,
+            device_fallback,
         } = self.audio.stop().await?;
         crate::audio::cues::play_stop();
         self.history
@@ -714,6 +775,25 @@ impl Flow {
         // (timeline + a user-facing warning) instead of silently pasting a
         // fragment and calling it a success. Retrying can't recover lost audio.
         let capture_gap = stream_errored || captured_ms + 1000 < duration_ms;
+        // Which mic this actually ran on. Recorded unconditionally so "why did
+        // it use the laptop mic?" is answerable from the (i) inspector after
+        // the fact, instead of being a guess.
+        tl.mark(format!(
+            "input device · {capture_device}{}",
+            if device_fallback {
+                " (saved device not found — fell back to system default)"
+            } else {
+                ""
+            }
+        ));
+        if device_fallback {
+            let _ = app.emit(
+                "wispr:clippy_warning",
+                format!(
+                    "Your chosen mic wasn't available — recorded with {capture_device} instead. Turn the mic on (or re-pair it) before the next dictation."
+                ),
+            );
+        }
         tl.mark(format!(
             "audio · {:.1}s recorded / {:.1}s captured{}",
             (duration_ms.max(0) as f64) / 1000.0,
@@ -760,15 +840,19 @@ impl Flow {
             "wispr:mic_diag",
             MicDiag { mic_ready_ms, duration_ms, captured_ms, stream_errored },
         );
-        if mic_ready_ms > 2500
+        if mic_ready_ms > SLOW_MIC_MS
             && !SLOW_MIC_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
         {
+            // Two different mechanisms, two different fixes, and the wrong
+            // advice wastes the user's time. A wired/built-in mic that is slow
+            // is almost always Windows audio enhancements or exclusive-mode
+            // arbitration. A Bluetooth mic that is slow is the headset profile
+            // link coming up — and on a DJI transmitter specifically, the
+            // dominant term is it negotiating ITSELF out of noise-cancellation
+            // mode, which takes ~7-8s and is fixed by leaving NC off.
             let _ = app.emit(
                 "wispr:clippy_warning",
-                format!(
-                    "Your mic took {:.1}s to wake up — the first words of every recording are being cut. Usual fix: turn OFF the mic's audio enhancements and exclusive control (Sound settings → your microphone → Properties).",
-                    (mic_ready_ms as f64) / 1000.0
-                ),
+                slow_mic_message(mic_ready_ms, &capture_device),
             );
         }
 
@@ -836,6 +920,77 @@ impl Flow {
             (path.clone(), None)
         };
 
+        // Level check + quiet-audio rescue. This is cheap (one pass over a
+        // short WAV) and it addresses a failure mode that is otherwise
+        // invisible: audio around -46 dBFS transcribes to a plausible-looking
+        // transcript with whole phrases silently deleted — no error, nothing in
+        // the UI, the user can't tell. Measured on a real external-mic clip.
+        // Boosting a copy to -3 dBFS peak recovered the dropped speech with
+        // zero clipped samples.
+        //
+        // Fail-open throughout: a measurement problem falls back to the audio
+        // we already had. The recording on disk is never modified.
+        let (stt_input, _gain_guard, level_stats) = if stt_settings.auto_gain {
+            let src = stt_input.clone();
+            match tokio::task::spawn_blocking(move || crate::audio::level::analyze_and_rescue(&src))
+                .await
+                .map_err(anyhow::Error::new)
+                .and_then(|r| r)
+            {
+                Ok(outcome) => {
+                    tl.mark(format!(
+                        "level · {:.1} dBFS RMS / {:.1} dBFS peak",
+                        outcome.stats.rms_dbfs, outcome.stats.peak_dbfs
+                    ));
+                    match outcome.normalized {
+                        Some(boosted) => {
+                            tl.mark(format!(
+                                "quiet audio · boosted {:.1} dB before transcription",
+                                outcome.gain_db
+                            ));
+                            let guard = TempFileGuard(boosted.clone());
+                            (boosted, Some(guard), Some((outcome.stats, true)))
+                        }
+                        None => (stt_input, None, Some((outcome.stats, false))),
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("level analysis failed (non-fatal): {e:#}");
+                    (stt_input, None, None)
+                }
+            }
+        } else {
+            // Auto-gain off: still measure, so the flight recorder can explain
+            // a bad transcript even when the user opted out of the fix.
+            let src = stt_input.clone();
+            let measured = tokio::task::spawn_blocking(move || {
+                crate::audio::wavio::read_mono_f32(&src)
+                    .map(|d| crate::audio::level::measure_samples(&d.samples))
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok());
+            if let Some(stats) = measured {
+                tl.mark(format!(
+                    "level · {:.1} dBFS RMS / {:.1} dBFS peak (auto-gain off)",
+                    stats.rms_dbfs, stats.peak_dbfs
+                ));
+            }
+            (stt_input, None, measured.map(|s| (s, false)))
+        };
+
+        // Warn on genuinely quiet input even when we rescued it — the fix at
+        // the source (move the mic closer, raise its gain) is better than
+        // relying on a software boost every time.
+        if let Some((stats, rescued)) = level_stats {
+            if stats.is_quiet() {
+                let _ = app.emit(
+                    "wispr:clippy_warning",
+                    crate::audio::level::quiet_warning(&stats, rescued),
+                );
+            }
+        }
+
         let wav_size = tokio::fs::metadata(&stt_input)
             .await
             .map(|m| m.len())
@@ -865,7 +1020,14 @@ impl Flow {
         // measure it explicitly and record it on the timeline for EVERY outcome
         // (ok / provider error / 120s timeout) before propagating.
         let stt_t0 = std::time::Instant::now();
-        let stt_future = stt.transcribe(&stt_input, stt_settings.language_hint.as_deref());
+        // Live dictation never diarizes — it's one person talking into their
+        // own mic, and the surcharge/latency would buy nothing. Diarization is
+        // an upload-path option (see `run_upload_pipeline`).
+        let stt_opts = crate::stt::SttOptions {
+            language: stt_settings.language_hint.clone(),
+            diarize: false,
+        };
+        let stt_future = stt.transcribe(&stt_input, &stt_opts);
         let stt_result = tokio::time::timeout(std::time::Duration::from_secs(120), stt_future).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
         tl.stt_ms = Some(stt_elapsed);
@@ -1251,6 +1413,8 @@ impl Flow {
         llm_model: Option<String>,
         do_cleanup: bool,
         do_draft: bool,
+        do_diarize: bool,
+        do_meeting_notes: bool,
     ) -> Result<String> {
         let src = PathBuf::from(src_path);
         if !src.is_file() {
@@ -1277,6 +1441,33 @@ impl Flow {
         let dest = dir.join(format!("{id_seed}.{ext}"));
         std::fs::copy(&src, &dest).with_context(|| format!("copying upload to {dest:?}"))?;
 
+        // Normalise exotic WAVs to 16 kHz mono 16-bit PCM at ingest.
+        //
+        // This is the hard blocker for meeting capture. External field
+        // recorders (DJI, Zoom, Tascam) write 24-bit by default — 144 KB/s at
+        // 48 kHz mono, so any recording past ~2.3 minutes crossed the 20 MB
+        // chunk threshold and then failed outright, because the chunker read
+        // samples as i16. An hour-long meeting is ~520 MB and never had a
+        // chance. Transcoding here fixes the failure AND shrinks the upload
+        // about 9x at no cost to the transcript (every provider resamples to
+        // 16 kHz internally anyway).
+        //
+        // Best-effort: a file we can't decode is left exactly as it was and
+        // handed to the provider, which may well cope with it server-side.
+        if ext == "wav" {
+            let dest_for_convert = dest.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::audio::wavio::canonicalize_in_place(&dest_for_convert)
+            })
+            .await
+            {
+                Ok(Ok(true)) => tracing::info!(?dest, "upload transcoded for transcription"),
+                Ok(Ok(false)) => {}
+                Ok(Err(e)) => tracing::warn!("upload transcode skipped (non-fatal): {e:#}"),
+                Err(e) => tracing::warn!("upload transcode task failed (non-fatal): {e}"),
+            }
+        }
+
         let device_name = self.settings.lock().device_name.clone();
         let record_id = self
             .history
@@ -1295,6 +1486,8 @@ impl Flow {
                 llm_model,
                 do_cleanup,
                 do_draft,
+                do_diarize,
+                do_meeting_notes,
             )
             .await;
 
@@ -1327,6 +1520,8 @@ impl Flow {
         llm_model: Option<String>,
         do_cleanup: bool,
         do_draft: bool,
+        do_diarize: bool,
+        do_meeting_notes: bool,
     ) -> Result<()> {
         let mut tl = Timeline::new();
         let base_settings = self.settings();
@@ -1363,16 +1558,35 @@ impl Flow {
         }
         let stt = build_stt_provider(&stt_settings)?;
         let stt_name = stt.name();
+
+        // Diarization is only honoured on providers that actually have a
+        // speaker model. The dialog greys the option out for Groq/OpenAI, but
+        // enforce it here too — a per-batch provider override could otherwise
+        // route a diarize request to Whisper, which would return an unlabelled
+        // wall of text with no indication anything was dropped.
+        let diarize = do_diarize && crate::stt::provider_supports_diarization(stt_name);
+        if do_diarize && !diarize {
+            tl.mark(format!(
+                "diarization skipped · {} has no speaker model",
+                pretty_provider(stt_name)
+            ));
+        }
+
         tl.mark(format!(
-            "upload STT → {} ({})",
+            "upload STT → {} ({}){}",
             pretty_provider(stt_name),
-            stt_settings.stt_model
+            stt_settings.stt_model,
+            if diarize { " · diarized" } else { "" }
         ));
 
         // Uploaded files can be long (a whole voice memo), so give STT a wider
         // 180s ceiling than the 120s live-dictation cap.
         let stt_t0 = std::time::Instant::now();
-        let stt_future = stt.transcribe(audio_path, stt_settings.language_hint.as_deref());
+        let stt_opts = crate::stt::SttOptions {
+            language: stt_settings.language_hint.clone(),
+            diarize,
+        };
+        let stt_future = stt.transcribe(audio_path, &stt_opts);
         let stt_result =
             tokio::time::timeout(std::time::Duration::from_secs(180), stt_future).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
@@ -1397,13 +1611,36 @@ impl Flow {
                 });
             }
             Ok(Ok(t)) => {
+                let speakers = t
+                    .speakers
+                    .as_ref()
+                    .map(|turns| {
+                        let distinct = turns
+                            .iter()
+                            .map(|x| x.speaker.as_str())
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len();
+                        format!(" · {distinct} speakers, {} turns", turns.len())
+                    })
+                    .unwrap_or_default();
                 tl.mark(format!(
-                    "STT ok · {stt_elapsed}ms · {} chars",
+                    "STT ok · {stt_elapsed}ms · {} chars{speakers}",
                     t.text.chars().count()
                 ));
                 t
             }
         };
+
+        // Diarization was asked for and the provider ran, but the audio had no
+        // detectable speaker split (one person, or speakers too similar). The
+        // transcript is still fine — say so rather than leaving the user to
+        // wonder why there are no labels.
+        if diarize && transcript.speakers.is_none() {
+            let _ = app.emit(
+                "wispr:clippy_message",
+                "Transcribed, but no separate speakers were detected in this recording.",
+            );
+        }
 
         // We didn't record the file, so its length comes from the provider's
         // reported audio duration (Groq/Deepgram return it). captured == duration
@@ -1425,7 +1662,13 @@ impl Flow {
 
         // Optional cleanup and/or draft. Both may be requested from the dialog;
         // each writes into its own column so the history row shows both tabs.
-        if do_cleanup || do_draft {
+        //
+        // Meeting notes ride the Drafted column with a system-prompt override
+        // rather than a new `ClippyMode` variant — mode is persisted on every
+        // row and shared with the sync schema, so adding one is a migration for
+        // no user-visible gain. Draft and Meeting notes therefore write to the
+        // same place, and the dialog presents them as one either/or choice.
+        if do_cleanup || do_draft || do_meeting_notes {
             let provider_id = llm_provider
                 .clone()
                 .unwrap_or_else(|| base_settings.llm_provider.clone());
@@ -1460,17 +1703,36 @@ impl Flow {
                 )?;
             }
 
-            if do_draft {
+            if do_draft || do_meeting_notes {
                 let llm = build_llm_provider(&provider_id, model.clone())?;
-                let custom = custom_prompt_for(&base_settings, Mode::Drafting);
-                tl.mark(format!("draft → {} ({})", llm.name(), model));
+                // Meeting notes override the Drafting prompt; a user's custom
+                // draft prompt still wins for a plain draft.
+                let custom = if do_meeting_notes {
+                    Some(crate::llm::prompts::MEETING_NOTES_SYSTEM.to_string())
+                } else {
+                    custom_prompt_for(&base_settings, Mode::Drafting)
+                };
+                tl.mark(format!(
+                    "{} → {} ({})",
+                    if do_meeting_notes { "meeting notes" } else { "draft" },
+                    llm.name(),
+                    model
+                ));
                 let t0 = std::time::Instant::now();
-                let drafted = clippy::clean(
+                // A meeting transcript is long and the user is watching a
+                // progress row, not waiting on a paste — give the model the
+                // generous on-demand deadline instead of the paste-latency one.
+                let drafted = clippy::clean_with_timeout(
                     &transcript.text,
                     ClippyMode::Drafting,
                     custom.as_deref(),
                     None,
                     llm.as_ref(),
+                    if do_meeting_notes {
+                        clippy::ON_DEMAND_TIMEOUT
+                    } else {
+                        llm.timeout_hint()
+                    },
                 )
                 .await;
                 let d = t0.elapsed().as_millis() as i64;
@@ -1623,9 +1885,15 @@ impl Flow {
         ));
 
         let stt_t0 = std::time::Instant::now();
-        let stt_res = stt
-            .transcribe(&rec.audio_path, stt_settings.language_hint.as_deref())
-            .await;
+        // A retry re-runs the original request. Diarization isn't re-requested
+        // here: it's an upload-dialog choice we don't persist per row, and
+        // silently adding a billable option on a retry would be worse than the
+        // user re-uploading with the box ticked.
+        let retry_opts = crate::stt::SttOptions {
+            language: stt_settings.language_hint.clone(),
+            diarize: false,
+        };
+        let stt_res = stt.transcribe(&rec.audio_path, &retry_opts).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
         tl.stt_ms = Some(stt_elapsed);
         let transcript = match stt_res {

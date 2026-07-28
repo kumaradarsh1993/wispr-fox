@@ -675,6 +675,10 @@
   function mapFlow(s: string): ClippyState {
     switch (s) {
       case "recording":
+        // NOTE: this is "the hotkey went down", NOT "audio is flowing". With a
+        // Bluetooth mic those are 2-10s apart and everything said in between is
+        // lost. `micWaiting` (below) holds a distinct waiting presentation over
+        // this state until `wispr:mic_live` confirms the mic actually woke up.
         return "listening";
       // Denoising rides the "thinking" pose (every skin has one) — only the
       // bubble label differs, via the `denoising` flag set in the listener.
@@ -723,7 +727,17 @@
     let unlistenLlmProv: (() => void) | undefined;
     let unlistenWarn: (() => void) | undefined;
     let unlistenLevel: (() => void) | undefined;
+    let unlistenMicLive: (() => void) | undefined;
     let unlistenFarewell: (() => void) | undefined;
+    // The mic went live: audio is genuinely reaching the recorder now. Until
+    // this fires, the bubble says "hold on" instead of "listening", because
+    // claiming to listen while the mic is still waking up is exactly how the
+    // user loses their opening sentence without ever knowing it happened.
+    listen<number>("wispr:mic_live", (e) => {
+      console.log("[clippy] wispr:mic_live", e.payload, "ms");
+      micWaiting = false;
+      micReadyMs = e.payload;
+    }).then((u) => (unlistenMicLive = u));
     listen<string>("wispr:clippy_message", (e) => {
       console.log("[clippy] wispr:clippy_message", e.payload);
       showToast(e.payload, "info", 3000);
@@ -751,6 +765,16 @@
       // queue) so the bubble reads "clearing noise" for exactly as long as
       // the denoiser actually runs — the user asked to SEE this cost.
       denoising = e.payload === "denoising";
+      // A recording just started: assume the mic is NOT live until the audio
+      // layer says otherwise. On a healthy built-in mic that's a sub-100ms
+      // flicker; on Bluetooth it's the several seconds the user needs to see.
+      if (e.payload === "recording") {
+        micWaiting = true;
+        micReadyMs = null;
+      } else if (e.payload === "idle") {
+        micWaiting = false;
+        micReadyMs = null;
+      }
       flowState = next;
       // Clear stale provider labels at the start/end of a run so a finished
       // pipeline doesn't leave "transcribing · Groq" hanging around.
@@ -996,6 +1020,7 @@
       unlistenLlmProv?.();
       unlistenWarn?.();
       unlistenLevel?.();
+      unlistenMicLive?.();
       unlistenFarewell?.();
       if (waveRaf != null) cancelAnimationFrame(waveRaf);
       cancelPendingAutoHide();
@@ -1051,6 +1076,29 @@
   // True only while the Rust denoise stage is actually running (between the
   // "denoising" and "transcribing" state events).
   let denoising = $state(false);
+
+  // ── Mic handover ("hold on") ────────────────────────────────────────────
+  // True from hotkey-down until the audio layer reports its first buffer.
+  // `micWaitElapsed` drives escalating copy: a fast mic never gets past the
+  // first tier, a Bluetooth mic sits in the later ones long enough for the
+  // user to understand that the delay is the DEVICE, not the app hanging.
+  let micWaiting = $state(false);
+  let micReadyMs = $state<number | null>(null);
+  let micWaitElapsed = $state(0);
+  $effect(() => {
+    if (!micWaiting || displayState !== "listening") return;
+    micWaitElapsed = 0;
+    const t = setInterval(() => { micWaitElapsed += 1; }, 1000);
+    return () => clearInterval(t);
+  });
+
+  function waitLabel(secs: number): string {
+    if (secs < 2) return "hold on — waking the mic…";
+    if (secs < 4) return "hold on — mic still starting…";
+    if (secs < 8) return "still connecting the mic — don't start yet";
+    return "mic is taking a while — check it's on and connected";
+  }
+
   function prettyProvider(name: string): string {
     if (name === "deepgram") return "Deepgram";
     if (name === "elevenlabs") return "ElevenLabs";
@@ -1111,7 +1159,12 @@
   });
 
   let labels = $derived({
-    listening: listenLabel(listenElapsed, activeApp),
+    // Waiting on the mic takes over the listening label entirely — saying
+    // "listening…" while no audio is arriving is the lie this whole feature
+    // exists to stop telling.
+    listening: micWaiting
+      ? waitLabel(micWaitElapsed)
+      : listenLabel(listenElapsed, activeApp),
     thinking: denoising
       ? "clearing noise…"
       : sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : runLines.think,
@@ -1473,6 +1526,7 @@
 <div
   class="clippy-stage"
   class:stage-hidden={!stageVisible}
+  class:mic-waiting={micWaiting && displayState === "listening"}
   class:arrive-enter={arriveClass === "enter"}
   class:arrive-exit={arriveClass === "exit"}
   data-arrive-origin={isMinimalSkin(skin) ? "center" : "bottom"}
@@ -2339,6 +2393,32 @@
   .clippy-stage.stage-hidden {
     opacity: 0;
     transition: none;
+  }
+
+  /* ── Mic handover ("hold on") ──────────────────────────────────────────
+     From hotkey-down until audio actually reaches the recorder. On a healthy
+     built-in mic this is a sub-100ms flicker you'll never notice; on a
+     Bluetooth mic it's the 2-10 seconds during which the app used to LOOK like
+     it was listening while capturing nothing. A slow breathing dim reads as
+     "not ready yet" without competing with the recording state that follows.
+     Deliberately opacity-only: it composites on the GPU, applies to every skin
+     including the wave/siri pills, and can't disturb the two-box sizing model
+     (a transform here would fight the arrival animations). */
+  .clippy-stage.mic-waiting {
+    animation: mic-waiting-breathe 1.1s ease-in-out infinite;
+  }
+  @keyframes mic-waiting-breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.82; }
+  }
+  /* Respect the OS setting — a pulsing always-on-top window is exactly the
+     kind of motion reduced-motion users are opting out of. Hold a steady dim
+     so the waiting state is still legible. */
+  @media (prefers-reduced-motion: reduce) {
+    .clippy-stage.mic-waiting {
+      animation: none;
+      opacity: 0.6;
+    }
   }
 
   /* ── Enter / exit arrival animations ──────────────────────────────────

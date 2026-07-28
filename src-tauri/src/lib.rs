@@ -95,21 +95,56 @@ pub fn run() {
             // it goes quiet, so idle costs nothing on the event bus.
             {
                 use tauri::Emitter;
-                let level = audio_ctrl.level_handle();
+                let meter = audio_ctrl.meter();
                 let app_for_level = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    #[derive(Clone, serde::Serialize)]
+                    struct MicMeter {
+                        rms_dbfs: f32,
+                        peak_dbfs: f32,
+                    }
                     let mut ticker =
                         tokio::time::interval(std::time::Duration::from_millis(90));
                     let mut last = 0.0f32;
+                    let mut announced_live = false;
                     loop {
                         ticker.tick().await;
-                        let v = f32::from_bits(
-                            level.load(std::sync::atomic::Ordering::Relaxed),
-                        );
+
+                        let v = meter.level();
                         if v > 0.0 || last > 0.0 {
                             let _ = app_for_level.emit("wispr:level", v);
                         }
                         last = v;
+
+                        // The mic went live. Until this fires, nothing the user
+                        // says is reaching the WAV — with a Bluetooth mic that
+                        // window is 2-10s. Publishing it as an event is what
+                        // lets the avatar hold a "hold on" state instead of
+                        // pretending recording began the instant the key went
+                        // down. Emitted once per capture.
+                        match meter.ready_ms() {
+                            Some(ms) if !announced_live => {
+                                announced_live = true;
+                                let _ = app_for_level.emit("wispr:mic_live", ms);
+                            }
+                            None => announced_live = false,
+                            _ => {}
+                        }
+
+                        // True-dBFS meter for the Settings mic test. Only while
+                        // a capture stream is open, so idle costs nothing.
+                        if meter.is_active() {
+                            let to_db = |a: f32| {
+                                if a <= 1e-9 { -120.0 } else { 20.0 * a.log10() }
+                            };
+                            let _ = app_for_level.emit(
+                                "wispr:mic_meter",
+                                MicMeter {
+                                    rms_dbfs: to_db(meter.rms()),
+                                    peak_dbfs: to_db(meter.peak()),
+                                },
+                            );
+                        }
                     }
                 });
             }
@@ -134,16 +169,13 @@ pub fn run() {
             // behaviour for that mode, independent of the per-mode setting.
             let app_for_hotkey = app.handle().clone();
             let flow_for_hotkey = flow.clone();
-            if let Err(e) = hotkey::register(
+            // Registration is live from here on: `commands::suspend_hotkeys` /
+            // `apply_hotkeys` tear these down and rebuild them so the rebinding
+            // UI can capture F8 without F8 firing a recording, and so a saved
+            // rebind takes effect without restarting the app.
+            if let Err(e) = hotkey::install(
                 app.handle(),
-                &settings.light_hotkey,
-                &settings.advanced_hotkey,
-                &settings.drafting_hotkey,
-                &settings.light_sticky_hotkey,
-                &settings.advanced_sticky_hotkey,
-                &settings.drafting_sticky_hotkey,
-                &settings.force_clean_hotkey,
-                &settings.force_clean_sticky_hotkey,
+                &hotkey::HotkeyConfig::from_settings(&settings),
                 move |evt| {
                     flow_for_hotkey.handle_hotkey(&app_for_hotkey, evt);
                 },
@@ -350,6 +382,11 @@ pub fn run() {
             commands::audio_url_for,
             commands::audio_data_url_for,
             commands::list_input_devices,
+            commands::start_mic_test,
+            commands::stop_mic_test,
+            commands::suspend_hotkeys,
+            commands::apply_hotkeys,
+            commands::hotkeys_active,
             commands::app_paths,
             commands::reveal_folder,
             commands::check_for_updates,

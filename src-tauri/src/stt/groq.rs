@@ -11,7 +11,7 @@ use reqwest::multipart;
 use serde::Deserialize;
 use tokio::fs;
 
-use super::{chunk, SttError, SttProvider, Transcript};
+use super::{chunk, SttError, SttOptions, SttProvider, Transcript};
 
 const ENDPOINT: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
 const DEFAULT_MODEL: &str = "whisper-large-v3-turbo";
@@ -98,7 +98,7 @@ impl GroqStt {
     async fn transcribe_one(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
         let filename = wav_path
@@ -123,7 +123,7 @@ impl GroqStt {
                 .text("model", self.model.clone())
                 .text("response_format", "verbose_json");
 
-            if let Some(lang) = hint_lang {
+            if let Some(lang) = opts.language() {
                 form = form.text("language", lang.to_owned());
             }
 
@@ -146,11 +146,15 @@ impl GroqStt {
                         if attempt > 1 {
                             tracing::info!(attempt, "Groq STT succeeded after retry");
                         }
-                        return Ok(Transcript {
-                            text: parsed.text,
-                            language: parsed.language,
-                            duration_seconds: parsed.duration,
-                        });
+                        // Whisper has no speaker model, so `speakers` is always
+                        // None here; the upload dialog refuses to offer
+                        // diarization for this provider rather than silently
+                        // dropping the request.
+                        return Ok(Transcript::plain(
+                            parsed.text,
+                            parsed.language,
+                            parsed.duration,
+                        ));
                     }
 
                     let code = status.as_u16();
@@ -199,14 +203,14 @@ impl SttProvider for GroqStt {
     async fn transcribe(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let meta = fs::metadata(wav_path).await?;
 
         // Fast path: file fits in one request. The vast majority of clips
         // hit this — typical dictation is < 60s.
         if meta.len() <= chunk::TARGET_CHUNK_BYTES {
-            return self.transcribe_one(wav_path, hint_lang).await;
+            return self.transcribe_one(wav_path, opts).await;
         }
 
         // Slow path: file exceeds the per-request limit. Split into
@@ -240,7 +244,7 @@ impl SttProvider for GroqStt {
         let mut total_duration: f64 = 0.0;
 
         for (idx, chunk_path) in chunks.iter().enumerate() {
-            let t = match self.transcribe_one(chunk_path, hint_lang).await {
+            let t = match self.transcribe_one(chunk_path, opts).await {
                 Ok(t) => t,
                 Err(e) => {
                     chunk::cleanup_chunks(&chunks, wav_path);
@@ -270,10 +274,10 @@ impl SttProvider for GroqStt {
             joined.push_str(p.trim());
         }
 
-        Ok(Transcript {
-            text: joined,
-            language: detected_lang,
-            duration_seconds: if total_duration > 0.0 { Some(total_duration) } else { None },
-        })
+        Ok(Transcript::plain(
+            joined,
+            detected_lang,
+            if total_duration > 0.0 { Some(total_duration) } else { None },
+        ))
     }
 }

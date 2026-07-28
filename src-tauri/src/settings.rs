@@ -84,6 +84,26 @@ pub struct AppSettings {
     #[serde(default = "default_noise_reduction")]
     pub noise_reduction: String,
 
+    // ── Input device ───────────────────────────────────────────────────────
+    /// Which microphone to record from, by cpal device name. `None` (and the
+    /// empty string, which is what the UI's "System default" option sends)
+    /// means "whatever the OS default is" — byte-identical to the behaviour
+    /// before the picker existed.
+    ///
+    /// Resolution is deliberately forgiving: if the saved device isn't present
+    /// when the hotkey is pressed (mic switched off, Bluetooth unpaired — the
+    /// normal case for an external mic), we fall back to the system default and
+    /// keep recording rather than failing. See `audio::resolve_input_device`.
+    #[serde(default)]
+    pub input_device: Option<String>,
+
+    /// Boost audio that came in too quiet before sending it for transcription.
+    /// On by default: a quiet recording doesn't fail loudly, it comes back with
+    /// words silently missing, and peak-normalising costs nothing measurable.
+    /// The saved recording is never modified — only the copy that is uploaded.
+    #[serde(default = "default_true")]
+    pub auto_gain: bool,
+
     // Legacy per-mode fields. Kept so old settings.json files still
     // deserialize cleanly. New code uses llm_provider / llm_model.
     #[serde(default)]
@@ -217,6 +237,8 @@ impl Default for AppSettings {
             llm_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
             language_hint: None,
             noise_reduction: default_noise_reduction(),
+            input_device: None,
+            auto_gain: true,
             // Legacy per-mode fields — mirror the globals so any code that
             // still reads them gets a sane value.
             clippy_light_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),

@@ -29,8 +29,27 @@
   let llmModel = $state(settings.s.llm_model || llmModelsFor(llmProvider)[0].id);
   let cleanup = $state(false);
   let draft = $state(false);
+  let diarize = $state(false);
+  let meetingNotes = $state(false);
 
   let secrets = $state<SecretCheck | null>(null);
+
+  // Only Deepgram and ElevenLabs have a speaker model. Whisper (Groq/OpenAI)
+  // has none at all, so the checkbox is disabled with the reason rather than
+  // accepted and silently ignored — which would hand back an unlabelled wall
+  // of text and no clue why. Rust enforces the same rule server-side.
+  const DIARIZE_PROVIDERS = ["deepgram", "elevenlabs"];
+  const canDiarize = $derived(DIARIZE_PROVIDERS.includes(sttProvider));
+
+  // Diarization is priced differently by provider and this is a real cost
+  // decision for long meeting audio, so say it plainly at the point of choice.
+  const diarizeCostNote = $derived(
+    sttProvider === "elevenlabs"
+      ? "Included free with Scribe — no extra charge."
+      : sttProvider === "deepgram"
+        ? "Deepgram bills speaker labels as an add-on (~$0.002/min on top of the model rate)."
+        : "",
+  );
 
   // Per-file progress: keyed by path → "queued" | "working" | "done" | "error".
   type FileState = "queued" | "working" | "done" | "error";
@@ -53,7 +72,7 @@
 
   const sttModels = $derived(sttModelsFor(sttProvider));
   const llmModels = $derived(llmModelsFor(llmProvider));
-  const needsLlm = $derived(cleanup || draft);
+  const needsLlm = $derived(cleanup || draft || meetingNotes);
   const sttHasKey = $derived(sttReady(secrets, sttProvider));
   const llmHasKey = $derived(!needsLlm || llmReady(secrets, llmProvider));
   const canTranscribe = $derived(paths.length > 0 && sttHasKey && llmHasKey && !running);
@@ -62,6 +81,21 @@
   $effect(() => {
     if (!sttModels.some((m) => m.id === sttModel)) sttModel = sttModels[0].id;
   });
+  // Switching to a provider that can't diarize must clear the request, not
+  // leave a ticked box that won't do anything.
+  $effect(() => {
+    if (!canDiarize && diarize) diarize = false;
+  });
+  // Draft and Meeting notes both write the Drafted column, so they're an
+  // either/or rather than two independent outputs.
+  function pickDraft(on: boolean) {
+    draft = on;
+    if (on) meetingNotes = false;
+  }
+  function pickMeetingNotes(on: boolean) {
+    meetingNotes = on;
+    if (on) draft = false;
+  }
   $effect(() => {
     if (!llmModels.some((m) => m.id === llmModel)) llmModel = llmModels[0].id;
   });
@@ -118,6 +152,8 @@
           llmModel: needsLlm ? llmModel : null,
           cleanup,
           draft,
+          diarize: diarize && canDiarize,
+          meetingNotes,
         });
         statuses[p] = "done";
       } catch (e) {
@@ -219,20 +255,62 @@
         <p class="keywarn">No API key saved for {sttProvider} — add one in Settings → Providers first.</p>
       {/if}
 
+      <!-- Speaker labels. Sits directly under the engine picker because it's a
+           property of the transcription request, not a post-processing step. -->
+      <div class="checks">
+        <label class="check" class:disabled={!canDiarize}>
+          <input
+            type="checkbox"
+            bind:checked={diarize}
+            disabled={running || !canDiarize}
+          />
+          <span>
+            <strong>Label speakers</strong> — split the transcript into "Speaker 1 / Speaker 2"
+            turns. For meetings and interviews.
+            {#if !canDiarize}
+              <em class="why">Not available on {sttProvider === "groq" ? "Groq" : "OpenAI"} — Whisper has no speaker model. Switch to Deepgram or ElevenLabs above.</em>
+            {:else if diarizeCostNote}
+              <em class="why">{diarizeCostNote}</em>
+            {/if}
+          </span>
+        </label>
+      </div>
+
       <div class="checks">
         <label class="check">
           <input type="checkbox" bind:checked={cleanup} disabled={running} />
           <span><strong>Clean up</strong> — fix punctuation & paragraphs, keep my words</span>
         </label>
         <label class="check">
-          <input type="checkbox" bind:checked={draft} disabled={running} />
+          <input
+            type="checkbox"
+            checked={draft}
+            disabled={running}
+            onchange={(e) => pickDraft((e.currentTarget as HTMLInputElement).checked)}
+          />
           <span><strong>Draft</strong> — rewrite into a polished, structured version</span>
+        </label>
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={meetingNotes}
+            disabled={running}
+            onchange={(e) => pickMeetingNotes((e.currentTarget as HTMLInputElement).checked)}
+          />
+          <span>
+            <strong>Meeting notes</strong> — summary, decisions, and action items with owners.
+            {#if meetingNotes && !diarize && canDiarize}
+              <em class="why">Tip: turn on speaker labels too, so action items can be attributed.</em>
+            {/if}
+          </span>
         </label>
       </div>
 
       {#if needsLlm}
         <div class="opt-row sub-opt">
-          <label class="opt-label" for="llm-prov">Clean up / draft with</label>
+          <label class="opt-label" for="llm-prov">
+            {meetingNotes ? "Summarise with" : "Clean up / draft with"}
+          </label>
           <div class="selects">
             <select id="llm-prov" bind:value={llmProvider} disabled={running}>
               {#each LLM_PROVIDERS as p}
@@ -439,6 +517,16 @@
   }
   .check strong { color: var(--text-primary); font-weight: 600; }
   .check input { margin-top: 2px; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .check.disabled { opacity: 0.62; cursor: not-allowed; }
+  .check.disabled input { cursor: not-allowed; }
+  .why {
+    display: block;
+    margin-top: 2px;
+    font-style: normal;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    opacity: 0.9;
+  }
 
   .keywarn {
     font-size: 11.5px;

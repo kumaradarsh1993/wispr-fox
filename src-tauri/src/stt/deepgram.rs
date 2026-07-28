@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
 
-use super::{SttError, SttProvider, Transcript};
+use super::{SttError, SttOptions, SttProvider, Transcript};
 
 const ENDPOINT: &str = "https://api.deepgram.com/v1/listen";
 pub const DEFAULT_MODEL: &str = "nova-3";
@@ -78,6 +78,24 @@ struct DeepgramChannel {
 #[derive(Deserialize)]
 struct DeepgramAlternative {
     transcript: String,
+    /// Present on every response; carries `speaker` per word once diarization
+    /// is on. We only read it when we asked for speakers.
+    #[serde(default)]
+    words: Vec<DeepgramWord>,
+}
+
+#[derive(Deserialize)]
+struct DeepgramWord {
+    /// `punctuated_word` appears when smart_format/punctuate is on (it always
+    /// is for us) and is what a reader wants; `word` is the bare token.
+    #[serde(default)]
+    punctuated_word: Option<String>,
+    #[serde(default)]
+    word: Option<String>,
+    #[serde(default)]
+    speaker: Option<i64>,
+    #[serde(default)]
+    start: Option<f64>,
 }
 
 #[async_trait]
@@ -89,7 +107,7 @@ impl SttProvider for DeepgramStt {
     async fn transcribe(
         &self,
         wav_path: &Path,
-        hint_lang: Option<&str>,
+        opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
         let mut req = self
@@ -100,8 +118,17 @@ impl SttProvider for DeepgramStt {
             .header("Content-Type", super::mime_for_audio(wav_path))
             .body(bytes);
 
-        if let Some(lang) = hint_lang {
+        if let Some(lang) = opts.language() {
             req = req.query(&[("language", lang)]);
+        }
+
+        if opts.diarize {
+            // `diarize_model` both enables diarization and pins the version in
+            // one parameter; the older `diarize=true` still works but routes to
+            // v1. `latest` keeps us on Deepgram's current speaker model.
+            // Billing note: diarization is a per-minute surcharge on top of the
+            // base model rate, not a free flag.
+            req = req.query(&[("diarize_model", "latest")]);
         }
 
         let resp = req
@@ -124,16 +151,35 @@ impl SttProvider for DeepgramStt {
         let language = first_channel
             .as_ref()
             .and_then(|c| c.detected_language.clone())
-            .or_else(|| hint_lang.map(str::to_owned));
-        let text = first_channel
-            .and_then(|c| c.alternatives.into_iter().next())
-            .map(|a| a.transcript)
-            .unwrap_or_default();
+            .or_else(|| opts.language.clone());
+        let alternative = first_channel.and_then(|c| c.alternatives.into_iter().next());
 
-        Ok(Transcript {
-            text,
-            language,
-            duration_seconds: parsed.metadata.and_then(|m| m.duration),
-        })
+        let duration_seconds = parsed.metadata.and_then(|m| m.duration);
+        let Some(alt) = alternative else {
+            return Ok(Transcript::plain(String::new(), language, duration_seconds));
+        };
+
+        // Speaker labels, when we asked for them and Deepgram actually returned
+        // per-word speakers. Falling back to the flat transcript is deliberate:
+        // a mono recording of one person yields no speaker split, and that must
+        // read as a normal transcript rather than an error.
+        if opts.diarize {
+            let turns = super::turns_from_words(alt.words.into_iter().filter_map(|w| {
+                let speaker = w.speaker?;
+                let word = w.punctuated_word.or(w.word)?;
+                Some((speaker.to_string(), word, w.start))
+            }));
+            if !turns.is_empty() {
+                return Ok(Transcript {
+                    text: super::render_turns(&turns),
+                    language,
+                    duration_seconds,
+                    speakers: Some(turns),
+                });
+            }
+            tracing::info!("diarization requested but Deepgram returned no speaker labels");
+        }
+
+        Ok(Transcript::plain(alt.transcript, language, duration_seconds))
     }
 }
