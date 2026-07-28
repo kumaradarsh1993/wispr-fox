@@ -47,6 +47,70 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.1.0-nightly.4`** (2026-07-28, this local core machine) — **external
+  microphone support + meeting capture.** Driven by the DJI Mic 2 research in
+  `../dji-mic-utilization/CONTEXT-FOR-WISPRFOX-AGENT.md` (features F1–F8), plus
+  a hotkey-picker bug the owner hit mid-session. Notes:
+  `docs/RELEASE_NOTES_v3.1.0-nightly.4.md`. Typechecked (`cargo check` clean,
+  `npm run check` 0 errors) and the pure logic is unit-tested; **not run from a
+  built binary** — this nightly exists to be tested.
+  - **Mic picker** (Settings → Dictation + sidebar). `input_device` on
+    `AppSettings`; `audio::resolve_input_device` matches exact-then-prefix and
+    **falls back to the system default when the saved device is absent**, which
+    is the normal case for an external mic (switched off / unpaired). The
+    resolved device is written to the flight recorder.
+  - **Handover "hold on" state.** The first cpal callback now publishes
+    **`wispr:mic_live`** live (it was only computed at stop, as `mic_ready_ms`).
+    The floater holds a waiting presentation — escalating copy + a breathing dim
+    on `.clippy-stage` — until audio genuinely flows. With Bluetooth that gap is
+    2–10s and everything said inside it never reached the WAV.
+  - **Quiet-audio rescue — the highest-value change here.** Too-quiet audio does
+    not fail loudly; it returns a plausible transcript with phrases *deleted*.
+    Measured fixture: −46.4 dBFS RMS lost a whole sentence to a single "uh";
+    +24 dB peak-normalised recovered it with **zero clipped samples**. New
+    `audio::level` measures every recording, warns under −40 dBFS, and boosts a
+    **copy** under −30 dBFS. The WAV on disk is never modified. Opt out via
+    `auto_gain`.
+  - **Mic test** (`start_mic_test` → metering-only preview stream) with real
+    dBFS against a target band + the measured head-gap. This is the only way to
+    catch a **phantom-connected Bluetooth device**: after sleep/wake it keeps its
+    connected LED and stays enumerated while sending no audio. Enumeration can't
+    see that; a meter can.
+  - **Slow-mic guidance is now reachable.** It existed at `flow.rs` but fired
+    once per run, only *after* a damaged recording, into a 2-line-clamped bubble.
+    Now a permanent Settings section **split by transport** — audio-enhancements
+    /exclusive-control for wired, *noise-cancellation-off-before-connecting* for
+    Bluetooth. Different mechanisms, different fixes; the wrong advice wastes
+    the user's time. `looks_bluetooth()` picks the message at runtime too.
+  - **24-bit / 32-bit-float ingest (was a hard blocker).** `chunk.rs` read
+    `into_samples::<i16>()` and collected with `?`, so any 24-bit upload over
+    20 MB **failed the entire transcription** — that's every external-recorder
+    file past ~2.3 min at 48 kHz mono. `denoise.rs` shared the assumption via
+    `filter_map(ok)` and silently dropped every sample (noise reduction quietly
+    did nothing). New **`audio::wavio`** decodes 16/24/32-bit int + float,
+    downmixes to mono, and canonicalises uploads to 16 kHz mono PCM at ingest
+    (~9× smaller, no transcript cost).
+  - **Diarization + meeting notes.** `SttOptions` replaces the positional lang
+    hint across all four providers. Deepgram → `diarize_model=latest`,
+    ElevenLabs → `diarize=true`; `stt::speakers` groups words into turns and
+    normalises provider speaker ids to first-seen order. Upload dialog gains
+    "Label speakers" (**gated on provider capability** — Whisper has no speaker
+    model — with the cost difference shown) and "Meeting notes" (prompt override
+    on the Drafting path; **not** a new `ClippyMode`, which would be a
+    sync-schema migration).
+  - **Hotkey rebinding actually works.** Registration is live now
+    (`hotkey::install`/`apply`/`suspend` replace boot-only `register`).
+    Capturing suspends the global shortcuts first: with F8 still registered the
+    OS consumed the keypress and started a *recording*, so the keys users most
+    wanted to bind were exactly the ones that couldn't be. Bindings apply
+    instantly (no Save button, no restart) and duplicates are rejected by name.
+  - ⚠️ **`cargo test` still can't run locally** (the test binary dies with
+    STATUS_ENTRYPOINT_NOT_FOUND against Tauri), **and there is no CI test job** —
+    `release.yml` only builds. So the 18 new tests live in dependency-free leaf
+    modules (`audio::wavio`, `audio::level`, `stt::speakers`) and were run via a
+    scratch crate that `#[path]`-includes those files. If you touch that logic,
+    re-run them the same way, or add a test job.
+
 - **`v3.1.0-nightly.3`** (2026-07-28, this local core machine) — **the sign-in
   audit.** Six fixes to accounts/sync + one to the paste path, all reported from
   live use on Windows. Notes: `docs/RELEASE_NOTES_v3.1.0-nightly.3.md`.
@@ -238,6 +302,22 @@ AppImage/deb/rpm) on CI from the tagged commit.
 
 ## Open threads / what's next
 
+0. **Test `v3.1.0-nightly.4` against the real DJI Mic 2** — this is the whole
+   point of that nightly and none of it has been run from a binary. In order:
+   pair the TX over Bluetooth with **noise cancellation OFF**, pick it in
+   Settings → Dictation, hit **Test microphone** (confirms the meter, the
+   head-gap number, and that the device isn't phantom-connected), then dictate
+   and watch for the "hold on" state. Then drop
+   `../dji-mic-utilization/DJI_01_20260728_174153.WAV` in as an upload — it's the
+   −46.4 dBFS fixture, so it exercises the quiet-audio rescue, and a longer
+   24-bit recording exercises the ingest transcode. Finally a two-person
+   recording with **Label speakers + Meeting notes** on Deepgram or ElevenLabs.
+   - **Still unmeasured:** whether the residual ~2 s Bluetooth SCO setup can be
+     removed by an opt-in "keep the mic warm" setting (holding the input stream
+     open). That contradicts the deliberate cold-start-per-press design and
+     costs TX battery + pins the OS mic indicator on, so it's a real
+     architectural decision, not a tweak. Deferred until the measured gap with
+     NC off is known.
 1. **macOS signing** — user adds 3 GitHub secrets + uncomments the env block in
    `.github/workflows/release.yml` per `docs/MACOS_SIGNING.md`. Fixes the
    Accessibility re-grant reset on every update AND the Mac auto-paste report.
@@ -258,6 +338,25 @@ AppImage/deb/rpm) on CI from the tagged commit.
 
 ## Gotchas that have bitten us (don't repeat)
 
+- **A global shortcut beats the focused webview — always.** The rebind picker
+  looked broken for F8/F9 because the OS consumed the keypress and started a
+  recording before the DOM listener ever saw it. No amount of
+  `preventDefault`/`stopPropagation` helps; the event is never delivered.
+  `hotkey::suspend` for the duration of the capture is the only fix, and it must
+  be paired in a `finally` (plus `onDestroy`) or a navigation mid-capture strands
+  the user with no hotkeys at all.
+- **Quiet audio fails SILENTLY, and that is the dangerous part.** It doesn't
+  error — it returns a confident-looking transcript with content deleted, and
+  neither the user nor the provider reports anything. Any future audio work
+  should assume "it produced text" is not evidence it produced the *right* text.
+- **Don't assume the recorder's own format.** Several call sites hard-coded
+  `into_samples::<i16>()` because that's what we write. Anything a *user* hands
+  us is likely 24-bit (every external field recorder defaults to it). Use
+  `audio::wavio::read_mono_f32`.
+- **"Enumerated" ≠ "working" for Bluetooth input.** After a sleep/wake cycle a
+  transmitter can keep its connected LED, stay in the OS device list, and
+  deliver no audio at all until power-cycled. Any UI that only checks presence
+  will confidently select a dead mic. That's why the mic test exists.
 - **Never `npm run tauri build` locally** — 8 GB RAM, rustc OOMs on full LTO.
   Build profile stays `lto = "thin"`, `codegen-units = 16`. CI builds
   everything on tag push. `cargo check` locally is fine.
