@@ -1102,9 +1102,19 @@ impl Flow {
         //   (d) Different process AND pull_back_on_navigation == false →
         //       respect the new app. Silent clipboard delivery + Clippy
         //       bubble. No focus theft.
+        //   (e) Foreground unreadable (pid 0 after retries) → NOT (d). We have
+        //       no reading, not a reading of "somewhere else"; restore the
+        //       captured window and paste normally.
         let inj_settings = self.settings();
-        let (current_fg, current_ctrl, current_pid) = inject::focus::current_foreground_state();
+        let (current_fg, current_ctrl, current_pid) =
+            inject::focus::current_foreground_state_settled();
         let cap_ref = captured_focus.as_ref();
+        // A pid of 0 means the OS wouldn't tell us who is in front, even after
+        // retries — not that the user moved. Case (d) below MUST NOT fire on
+        // an unknown reading: doing so silently downgrades a normal paste to
+        // "Copied to clipboard" while the caret is still sitting in the box
+        // the user dictated into.
+        let foreground_unknown = current_pid == 0;
         let same_fg = cap_ref
             .map(|c| c.foreground_hwnd() == current_fg && current_fg != 0)
             .unwrap_or(false);
@@ -1115,8 +1125,23 @@ impl Flow {
             .map(|c| c.pid() == current_pid && current_pid != 0)
             .unwrap_or(false);
         let nothing_changed = same_fg && same_ctrl;
-        let should_restore_focus =
-            !nothing_changed && (same_process || inj_settings.pull_back_on_navigation);
+        // On an unknown reading, restore. If `GetForegroundWindow` really did
+        // return NULL then NO window owns focus at this instant, and SendInput
+        // would type into the void — putting the captured window back is both
+        // the safest guess and the user's stated intent.
+        let should_restore_focus = !nothing_changed
+            && (same_process || foreground_unknown || inj_settings.pull_back_on_navigation);
+
+        if foreground_unknown {
+            // Rare, and previously invisible — it presented to the user as a
+            // random "Copied to clipboard" instead of a paste. Record it so
+            // the per-recording timeline shows which path was taken.
+            tl.mark("foreground unreadable · restoring captured window and pasting");
+            tracing::warn!(
+                captured_pid = cap_ref.map(|c| c.pid()).unwrap_or(0),
+                "foreground window unreadable after retries; treating as 'user stayed put'"
+            );
+        }
 
         if let (Some(cap), true) = (cap_ref, should_restore_focus) {
             if let Err(e) = inject::focus::restore(cap) {
@@ -1126,7 +1151,11 @@ impl Flow {
             tracing::debug!("focus restore skipped: foreground + focused control unchanged");
         }
 
-        if !same_process && !inj_settings.pull_back_on_navigation && captured_focus.is_some() {
+        if !same_process
+            && !foreground_unknown
+            && !inj_settings.pull_back_on_navigation
+            && captured_focus.is_some()
+        {
             // Cross-process silent delivery. Don't paste anywhere — that
             // would either pollute the wrong app (Chrome address bar, etc.)
             // or fight the user's current task. Just leave it on clipboard

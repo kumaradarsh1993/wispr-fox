@@ -55,6 +55,14 @@ fn slot() -> &'static Mutex<Option<Session>> {
     SESSION.get_or_init(|| Mutex::new(None))
 }
 
+/// Held across the `.await` of a token refresh, so it must be the async
+/// mutex — `parking_lot`'s would block the runtime thread. Guards nothing but
+/// the refresh itself; `slot()` stays a fast sync lock for reads.
+static REFRESH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+fn refresh_lock() -> &'static tokio::sync::Mutex<()> {
+    REFRESH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 fn http() -> reqwest::Client {
     HTTP.get_or_init(|| {
@@ -86,15 +94,42 @@ fn keyring_entry() -> Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY).context("opening sync-token keyring entry")
 }
 
+/// Write the refresh token, keyring-first — but only TRUST the keyring after
+/// reading the value straight back out and confirming it matches.
+///
+/// A bare `set_password(..).is_ok()` is not proof of persistence on Windows:
+/// Credential Manager can accept a write that never survives (the exact
+/// failure mode `secrets.rs` already guards against with the same readback,
+/// see its `set()` / `keyring_probe()`). Without the readback we'd delete the
+/// fallback file on the strength of a write that silently evaporated, and the
+/// user would be signed out on the next app launch with the session having
+/// looked perfectly healthy for the whole preceding run.
 fn save_refresh_token(token: &str) {
-    let keyring_ok = keyring_entry()
-        .and_then(|e| e.set_password(token).map_err(|e| anyhow!(e)))
-        .is_ok();
-    if keyring_ok {
+    let verified = match keyring_entry() {
+        Ok(entry) => match entry.set_password(token) {
+            Ok(()) => entry.get_password().ok().as_deref() == Some(token),
+            Err(e) => {
+                tracing::warn!("sync: keyring write failed ({e})");
+                false
+            }
+        },
+        Err(e) => {
+            tracing::warn!("sync: could not open the keyring entry ({e:#})");
+            false
+        }
+    };
+
+    if verified {
         let _ = std::fs::remove_file(fallback_path());
-    } else {
-        tracing::warn!("sync: keyring write failed, falling back to a local token file");
-        let _ = std::fs::write(fallback_path(), token);
+        return;
+    }
+
+    tracing::warn!(
+        "sync: keyring did not verify the refresh token by readback — \
+         keeping a local token file so the session survives a restart"
+    );
+    if let Err(e) = std::fs::write(fallback_path(), token) {
+        tracing::error!("sync: fallback token write failed too ({e}) — sign-in will not persist");
     }
 }
 
@@ -248,13 +283,26 @@ pub async fn sign_up_email(email: String, password: String) -> Result<AuthUser> 
 /// stored refresh token) if needed. This is the one function everything else
 /// in the sync engine calls before making an authenticated request.
 pub async fn ensure_access_token() -> Result<String> {
-    let existing = slot().lock().clone();
-    if let Some(s) = &existing {
-        if s.expires_at > Utc::now() + chrono::Duration::seconds(30) {
-            return Ok(s.access_token.clone());
-        }
+    if let Some(token) = live_access_token() {
+        return Ok(token);
     }
-    let refresh_token = match &existing {
+
+    // Supabase ROTATES refresh tokens: spending one issues a replacement and
+    // retires the original. Two callers racing here (the 60s poll tick, a
+    // post-recording sync, a delete's `tombstone_remote`, a manual "Sync now")
+    // would each spend the SAME token, and the second redemption looks like
+    // token theft to GoTrue's reuse detection — which revokes the whole token
+    // family and signs the device out. Serialize the refresh so exactly one
+    // request is ever in flight.
+    let _guard = refresh_lock().lock().await;
+
+    // Another task may have refreshed while we waited for the lock; if so its
+    // fresh token is already in the slot and there is nothing left to do.
+    if let Some(token) = live_access_token() {
+        return Ok(token);
+    }
+
+    let refresh_token = match slot().lock().as_ref() {
         Some(s) => s.refresh_token.clone(),
         None => load_refresh_token().ok_or_else(|| anyhow!("not signed in"))?,
     };
@@ -273,24 +321,50 @@ pub async fn ensure_access_token() -> Result<String> {
         .clone())
 }
 
+/// The current access token if it is still comfortably valid, else `None`.
+/// Kept separate so `ensure_access_token` can re-check it after taking the
+/// refresh lock without duplicating the expiry margin.
+fn live_access_token() -> Option<String> {
+    slot()
+        .lock()
+        .as_ref()
+        .filter(|s| s.expires_at > Utc::now() + chrono::Duration::seconds(30))
+        .map(|s| s.access_token.clone())
+}
+
 /// Called once at app launch. If a refresh token is on disk (from a previous
 /// session) but nothing is loaded into memory yet, try to restore it. Best
 /// effort — a stale/revoked token just leaves the app signed-out, exactly
 /// like a fresh install.
 pub async fn try_restore_session() {
-    if !config::is_configured() {
+    if !config::is_configured() || slot().lock().is_some() {
         return;
     }
-    if slot().lock().is_some() {
-        return;
-    }
+    // Claim "restoring" BEFORE the keyring read, not after. The UI must say
+    // "Checking…" rather than "Not signed in" for the whole window this task
+    // is working — and that window opens at the keyring read, which on Windows
+    // Credential Manager is itself occasionally slow enough for the webview to
+    // get its `auth_status` answer in first. Cleared on every path out.
+    RESTORING.store(true, Ordering::SeqCst);
     if load_refresh_token().is_none() {
+        RESTORING.store(false, Ordering::SeqCst);
         return;
     }
     if let Err(e) = ensure_access_token().await {
         tracing::info!("sync: no session to restore ({e:#})");
     }
+    RESTORING.store(false, Ordering::SeqCst);
 }
+
+/// True while `try_restore_session` is awaiting the network. Surfaced through
+/// `commands::auth_status` so the account UI can distinguish "we don't know
+/// yet" from "definitely signed out".
+pub fn is_restoring() -> bool {
+    RESTORING.load(Ordering::SeqCst)
+}
+
+/// Set when a stored refresh token exists but hasn't been redeemed yet.
+static RESTORING: AtomicBool = AtomicBool::new(false);
 
 /// Sign out: best-effort server-side revoke, then always clear local state
 /// regardless of whether the network call succeeded — the user's intent is

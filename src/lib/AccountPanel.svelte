@@ -26,6 +26,7 @@
 
   let configured = $derived(account.status.configured);
   let signedIn = $derived(account.signedIn);
+  let restoring = $derived(account.status.restoring && !account.status.signed_in);
 
   // Tick for the relative "last synced" label — set up synchronously so the
   // async onMount below can stay a plain Promise (its return value isn't a
@@ -206,6 +207,15 @@
       <strong>Sync not configured in this build.</strong>
       <p>Accounts and cross-device sync aren't available in this build. Everything else works exactly as before — your transcripts stay on this device.</p>
     </div>
+  {:else if restoring}
+    <!-- A stored session exists and its token refresh is in flight. Rendering
+         the sign-in form here is what made a restart look like a logout: the
+         restore is a network round-trip and the webview always wins the race
+         to `auth_status`. -->
+    <div class="restoring">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Restoring your session…</span>
+    </div>
   {:else if signedIn}
     <div class="signed-in">
       <div class="who">
@@ -362,6 +372,33 @@
   .not-configured p {
     margin: 0;
     line-height: 1.5;
+  }
+
+  .restoring {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 2px;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .restoring .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: account-spin 0.7s linear infinite;
+  }
+  @keyframes account-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .restoring .spinner {
+      animation: none;
+    }
   }
 
   .explainer {

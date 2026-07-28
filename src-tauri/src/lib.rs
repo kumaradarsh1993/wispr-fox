@@ -170,11 +170,18 @@ pub fn run() {
             app.manage(sync_engine.clone());
             {
                 let engine_for_launch = sync_engine.clone();
+                let app_for_auth = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     // Restore a previous session (if any) before the first
                     // sync attempt — both are no-ops when signed out or when
                     // this build has no Supabase project configured.
                     sync::auth::try_restore_session().await;
+                    // The restore is a network round-trip, so the webview has
+                    // almost certainly already asked for `auth_status` and been
+                    // told "signed out". Push the settled answer out so the
+                    // account UI corrects itself instead of sitting on a stale
+                    // "Not signed in" until the next remount.
+                    commands::emit_auth_status(&app_for_auth);
                     engine_for_launch.sync_once().await;
                 });
             }

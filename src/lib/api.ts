@@ -76,6 +76,11 @@ export interface AuthStatus {
    *  signed-out regardless. */
   configured: boolean;
   signed_in: boolean;
+  /** A stored session is being restored right now (the launch-time token
+   *  refresh is in flight). `signed_in` is still false, but the UI must show
+   *  "Checking…" rather than "Not signed in" — rendering signed-out here is
+   *  what made the app look like it logged itself out on every restart. */
+  restoring: boolean;
   email: string | null;
   user_id: string | null;
 }
@@ -364,4 +369,20 @@ export function onFlowError(cb: (msg: string) => void): Promise<UnlistenFn> {
 /** Subscribe to sync-status changes emitted by the Rust sync engine. */
 export function onSyncStatus(cb: (s: SyncStatusEvent) => void): Promise<UnlistenFn> {
   return listen<SyncStatusEvent>("wispr:sync_status", (e) => cb(e.payload));
+}
+
+/** Subscribe to auth-status changes. Emitted after the launch-time session
+ *  restore settles and on every sign-in / sign-out, so a window that mounted
+ *  mid-restore (or a sidebar that wasn't the one the user signed in from)
+ *  corrects itself without needing a remount. */
+export function onAuthStatus(cb: (s: AuthStatus) => void): Promise<UnlistenFn> {
+  return listen<AuthStatus>("wispr:auth_status", (e) => cb(e.payload));
+}
+
+/** Subscribe to "the stored API keys changed underneath you" — currently
+ *  fired when a sync cycle adopts keys pushed from another device. Anything
+ *  gating UI on `checkSecrets()` must re-read it here, or a freshly-signed-in
+ *  device shows every model greyed out until it is restarted. */
+export function onSecretsChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("wispr:secrets_changed", () => cb());
 }

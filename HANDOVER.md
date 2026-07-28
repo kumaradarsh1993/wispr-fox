@@ -47,6 +47,52 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **Unreleased (2026-07-28, this local core machine) — the sign-in audit.** Five
+  fixes to accounts/sync + one to the paste path, all reported from live use on
+  Windows. Typechecked (`npm run check` 0 errors, `cargo check` clean); **not
+  yet run from a built binary** — needs a nightly to verify.
+  - **Sign-in didn't survive a restart. Root cause: the refresh token's keyring
+    write was never verified.** `sync/auth.rs::save_refresh_token` trusted
+    `set_password(..).is_ok()` and then *deleted the fallback file*. Windows
+    Credential Manager can accept a write that never persists — the exact
+    failure mode `secrets.rs` already guards against with a write+readback (see
+    its `set()`). So the session looked healthy all session, and was gone on
+    next launch. Now readback-verified; the fallback file is only removed once
+    the readback matches.
+  - **"Not signed in" on launch even when the session WAS restored.**
+    `try_restore_session()` is spawned async and does a network token refresh;
+    the webview always won the race to `auth_status()` and got `signed_in:
+    false`, with no event to correct it. `AuthStatus` gains `restoring`, Rust
+    emits **`wispr:auth_status`** after the restore settles and on every
+    sign-in/sign-out, and `account-store` subscribes (from `+layout.svelte`, so
+    the listener is live before the restore lands). The panel shows "Restoring
+    your session…" instead of the sign-in form.
+  - **Models stayed greyed out ("- add key") after signing in on a new device.**
+    `sync_settings` wrote pulled keys via `secrets::set` and emitted nothing,
+    while every secret-gated control reads `check_secrets` **once on mount**.
+    New event **`wispr:secrets_changed`**; the sidebar, Settings → Providers,
+    and onboarding all re-read on it.
+  - **Concurrent token refresh could revoke the session.** Supabase rotates
+    refresh tokens, and `ensure_access_token` had no lock — the 60s poll, a
+    post-recording sync, `tombstone_remote` and "Sync now" could each spend the
+    same token, which reads as token theft to GoTrue and kills the family.
+    Serialized behind a tokio mutex with a re-check after acquiring.
+  - **`spawn_background_poll` raced the launch restore.**
+    `tokio::time::interval` fires its first tick immediately; the poll won (no
+    network) and emitted `signed_out`. First tick is now burned.
+  - **Random "Copied to clipboard" instead of pasting (~10%, office laptop).**
+    `GetForegroundWindow` transiently returns NULL during any activation
+    handoff, giving `current_pid == 0`; `flow.rs` read that as "user navigated
+    away" and took the silent-clipboard path with the caret still in the box.
+    A pid of 0 is the *absence* of evidence, not evidence of navigation — it
+    now retries (`current_foreground_state_settled`, 3×25ms) and, if still
+    unreadable, restores the captured window and pastes normally. Logged to the
+    flight recorder so it's visible if it recurs.
+  - ⚠️ **Not addressed:** only API keys sync, not preferences. `SETTINGS_KEYS`
+    in `sync/engine.rs` is five key rows; nothing else in `AppSettings` crosses
+    devices. Web/Android share the same five names — extending this is a
+    three-client change.
+
 - **`v3.1.0-nightly.2`** (2026-07-22, this local core machine) — **the Gemini
   fix**, plus re-run cleanup/draft and a title-model picker. Notes:
   `docs/RELEASE_NOTES_v3.1.0-nightly.2.md`. ⚠️ **Owed: one live test against a

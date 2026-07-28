@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type SecretCheck, type SecretKeyName } from "$lib/api";
+  import { api, onSecretsChanged, type SecretCheck, type SecretKeyName } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import {
     LLM_MODELS,
@@ -133,6 +133,14 @@
 
   onMount(() => {
     refreshSecrets();
+    // Keys pulled from another device land straight in the keyring behind our
+    // back, so re-read on the sync engine's signal — otherwise this page keeps
+    // showing "Not set" for keys the app is already able to use.
+    let unlisten: (() => void) | undefined;
+    onSecretsChanged(() => {
+      refreshSecrets();
+    }).then((u) => (unlisten = u));
+    return () => unlisten?.();
   });
 </script>
 

@@ -455,6 +455,36 @@ pub fn current_foreground_state() -> (usize, usize, u32) {
     (0, 0, 0)
 }
 
+/// Number of attempts [`current_foreground_state_settled`] makes, and the gap
+/// between them. Three reads over ~50ms comfortably outlasts an activation
+/// transition without being perceptible in the paste path.
+const FOREGROUND_READ_ATTEMPTS: u32 = 3;
+const FOREGROUND_READ_GAP: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// `current_foreground_state`, but retried while the OS reports "nobody".
+///
+/// `GetForegroundWindow` legitimately returns NULL for a few milliseconds
+/// whenever Windows is between foreground windows — during an activation
+/// handoff, while a menu or tooltip tears down, when a window is being
+/// destroyed, or right after the secure desktop dismisses. A pid of 0 from
+/// that window is NOT evidence that the user navigated away; it is the
+/// absence of evidence. The caller must be able to tell the two apart,
+/// because "different app" and "no reading" imply opposite behaviour: the
+/// first means don't paste, the second means paste exactly as normal.
+///
+/// A pid of 0 in the returned tuple means every attempt came back empty.
+pub fn current_foreground_state_settled() -> (usize, usize, u32) {
+    let mut last = current_foreground_state();
+    for _ in 1..FOREGROUND_READ_ATTEMPTS {
+        if last.2 != 0 {
+            return last;
+        }
+        std::thread::sleep(FOREGROUND_READ_GAP);
+        last = current_foreground_state();
+    }
+    last
+}
+
 #[cfg(windows)]
 impl CapturedFocus {
     pub fn foreground_hwnd(&self) -> usize {

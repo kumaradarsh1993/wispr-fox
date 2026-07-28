@@ -13,7 +13,8 @@
   } from "$lib/avatar-visibility.svelte";
   import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
-  import { api, type ModelUsage, type SecretCheck } from "$lib/api";
+  import { api, onSecretsChanged, type ModelUsage, type SecretCheck } from "$lib/api";
+  import { account } from "$lib/account-store.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
   import {
@@ -304,19 +305,35 @@
       }
     })();
 
+    // Start the account store here rather than leaving it to whichever page
+    // happens to mount first. Its listeners have to be live before the Rust
+    // side finishes the launch-time session restore, or the resulting
+    // `wispr:auth_status` event lands with nobody subscribed and the app keeps
+    // showing the pre-restore (signed-out) answer.
+    account.init();
+
     // Tray menu can request navigation via wispr:navigate event.
     let unlisten: (() => void) | undefined;
     let unlistenFlow: (() => void) | undefined;
+    let unlistenSecrets: (() => void) | undefined;
     listen<string>("wispr:navigate", (e) => {
       goto(e.payload);
     }).then((u) => (unlisten = u));
     listen<string>("wispr:state", (e) => {
       flowBusy = e.payload !== "idle";
     }).then((u) => (unlistenFlow = u));
+    // Keys can arrive from another device at any time (first sync after
+    // signing in, or an edit made on web/Android). Without this the picker
+    // below keeps every provider it saw as key-less greyed out and labelled
+    // "- add key" for the rest of the session.
+    onSecretsChanged(() => {
+      refreshSidebarSecrets();
+    }).then((u) => (unlistenSecrets = u));
 
     return () => {
       unlisten?.();
       unlistenFlow?.();
+      unlistenSecrets?.();
     };
   });
 

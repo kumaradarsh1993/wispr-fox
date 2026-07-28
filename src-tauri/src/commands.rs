@@ -370,13 +370,18 @@ pub fn delete_recording(history: State<'_, History>, id: String) -> Result<(), S
 // Accounts + cross-device sync (v3.0.0)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct AuthStatus {
     /// Whether this build has a real Supabase project baked in. When false,
     /// the account UI shows "Sync not configured in this build" and behaves
     /// signed-out no matter what.
     pub configured: bool,
     pub signed_in: bool,
+    /// A stored session is being restored right now (launch-time refresh in
+    /// flight). `signed_in` is still false, but the UI must NOT render "Not
+    /// signed in" — that's the transient state that made the app look like it
+    /// had logged itself out on every restart.
+    pub restoring: bool,
     pub email: Option<String>,
     pub user_id: Option<String>,
 }
@@ -392,15 +397,28 @@ pub fn auth_status() -> AuthStatus {
     AuthStatus {
         configured,
         signed_in: user.is_some(),
+        restoring: configured && user.is_none() && crate::sync::auth::is_restoring(),
         email: user.as_ref().map(|u| u.email.clone()),
         user_id: user.as_ref().map(|u| u.user_id.clone()),
     }
+}
+
+/// Broadcast the current auth status to every webview. The frontend polls
+/// `auth_status` once on mount, which is not enough on its own: the launch
+/// restore resolves asynchronously (and sign-in/sign-out originate in one
+/// window but affect the sidebar in another). Anything that changes the
+/// signed-in state calls this.
+pub fn emit_auth_status(app: &AppHandle) {
+    let _ = app.emit("wispr:auth_status", auth_status());
 }
 
 /// Shared post-sign-in bookkeeping: on first sign-in, mark all existing
 /// `done` rows dirty so the user's whole local history pushes up, then kick
 /// a sync cycle in the background.
 fn after_sign_in(app: &AppHandle) {
+    // Tell every window immediately — the sidebar's account state and the
+    // History page's "Everywhere" delete option must not wait for a remount.
+    emit_auth_status(app);
     if let Some(history) = app.try_state::<History>() {
         match history.mark_all_done_dirty() {
             Ok(n) => tracing::info!(rows = n, "sync: marked existing history dirty for initial push"),
@@ -456,8 +474,9 @@ pub fn cancel_google_sign_in() {
 }
 
 #[tauri::command]
-pub async fn sign_out() -> Result<AuthStatus, String> {
+pub async fn sign_out(app: AppHandle) -> Result<AuthStatus, String> {
     crate::sync::auth::sign_out().await;
+    emit_auth_status(&app);
     Ok(auth_status())
 }
 

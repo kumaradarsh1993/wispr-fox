@@ -30,7 +30,7 @@
   import { fly } from "svelte/transition";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
-  import { api } from "$lib/api";
+  import { api, onSecretsChanged } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { applySttProvider, applySttModel, applyLlmProvider } from "$lib/provider-options";
   import { prettyHotkey, isMac } from "$lib/hotkey-display";
@@ -340,6 +340,7 @@
   // disposer). onDestroy below picks these up.
   let unlistenState: (() => void) | null = null;
   let unlistenMicDiag: (() => void) | null = null;
+  let unlistenSecrets: (() => void) | null = null;
   let priorTheme: string | null = null;
 
   onMount(async () => {
@@ -353,6 +354,16 @@
     if (secrets.llm) {
       brainSaved = true;
     }
+
+    // The whole point of the sync step further down is that a new device can
+    // inherit its keys by signing in. Those keys land asynchronously, well
+    // after the one-shot read above, so without this the user signs in, gets
+    // every key, and is still told to go paste an API key by hand.
+    unlistenSecrets = await onSecretsChanged(async () => {
+      const s = await api.checkSecrets();
+      if (s.any_stt) keySaved = true;
+      if (s.llm) brainSaved = true;
+    });
 
     unlistenState = await listen<string>("wispr:state", (e) => {
       const s = e.payload as RecState;
@@ -380,6 +391,7 @@
   onDestroy(() => {
     unlistenState?.();
     unlistenMicDiag?.();
+    unlistenSecrets?.();
     if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
     stopRecCounter();
   });

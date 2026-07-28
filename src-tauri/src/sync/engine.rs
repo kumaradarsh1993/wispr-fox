@@ -389,6 +389,7 @@ impl SyncEngine {
             return Ok(());
         }
         let rows: Vec<SettingsRow> = resp.json().await.unwrap_or_default();
+        let mut adopted_any = false;
         for row in rows {
             let Some((key_name, secret_key)) = SETTINGS_KEYS.iter().find(|(k, _)| *k == row.key)
             else {
@@ -397,7 +398,9 @@ impl SyncEngine {
             let cursor_key = format!("settings_cursor:{}", row.key);
             let last = self.history.meta_get(&cursor_key)?.unwrap_or_default();
             if row.updated_at.as_str() > last.as_str() {
-                let _ = secrets::set(*secret_key, &row.value);
+                if secrets::set(*secret_key, &row.value).is_ok() {
+                    adopted_any = true;
+                }
                 self.history.meta_set(&cursor_key, &row.updated_at)?;
                 // Adopt the pulled value's hash as "already pushed" too, so
                 // the next cycle doesn't see a "changed" local value (relative
@@ -407,6 +410,15 @@ impl SyncEngine {
                 self.history
                     .meta_set(&push_hash_meta_key(key_name), &content_hash(&row.value))?;
             }
+        }
+        // Keys that arrived from another device are now on this machine, but
+        // every secret-gated control in the UI (the sidebar's STT/LLM pickers,
+        // Settings → Providers) reads `check_secrets` ONCE on mount. Without
+        // this event a fresh device signs in, silently receives all its keys,
+        // and still shows every model greyed out with "- add key" until the
+        // app is restarted.
+        if adopted_any {
+            let _ = self.app.emit("wispr:secrets_changed", ());
         }
         Ok(())
     }
@@ -649,6 +661,14 @@ pub fn notify_recording_done(app: &AppHandle) {
 pub fn spawn_background_poll(engine: SyncEngine) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(POLL_INTERVAL);
+        // `tokio::time::interval` fires its FIRST tick immediately, which put
+        // this poll in a dead heat with the launch task's
+        // `try_restore_session()`. It reliably won (no network round-trip to
+        // make), saw `current_user() == None`, and emitted `signed_out` —
+        // flashing "not signed in" in the account UI a beat before the restore
+        // landed. Burn that immediate tick; the launch task already runs the
+        // first real cycle.
+        interval.tick().await;
         loop {
             interval.tick().await;
             engine.sync_once().await;
