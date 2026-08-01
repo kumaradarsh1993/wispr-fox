@@ -13,8 +13,9 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v3.0.0`** (Latest, 2026-07-18) — the major accounts + sync
-line, promoted on the user's "bump to stable" signal. v3.0.0 = **accounts +
+**Current stable: `v3.1.0`** (Latest, 2026-08-01) — the external-mic,
+audio-rescue, reliability, and on-demand AI-tools line. It promotes the four
+v3.1.0 nightlies after the user's explicit stable signal. The prior v3.0.0 = **accounts +
 optional cross-device sync** (Supabase; transcripts + API keys sync, audio never
 leaves the device; signed-out mode byte-identical to before), **audio-file
 upload** (drag-drop / picker → transcribe existing audio; `source` column,

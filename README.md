@@ -35,9 +35,9 @@
 
 | Platform | 🟢 Stable (recommended) | 🟡 Beta builds (newer, less tested) |
 |---|---|---|
-| 🪟 **Windows** | [**wispr-fox setup.exe**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.0.0/wispr-fox_3.0.0_x64-setup.exe) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
-| 🍎 **macOS** (Apple Silicon) | [**wispr-fox.dmg**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.0.0/wispr-fox_3.0.0_aarch64.dmg) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
-| 🐧 **Linux** | [**wispr-fox AppImage**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.0.0/wispr-fox_3.0.0_amd64.AppImage) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🪟 **Windows** | [**wispr-fox setup.exe**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_x64-setup.exe) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🍎 **macOS** (Apple Silicon) | [**wispr-fox.dmg**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_aarch64.dmg) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+| 🐧 **Linux** | [**wispr-fox AppImage**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_amd64.AppImage) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
 
 Run the installer. The app walks you through a 2-minute onboarding on first launch.
 

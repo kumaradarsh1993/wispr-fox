@@ -4,10 +4,8 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-07-18** (v3.0.0 promoted to stable — accounts +
-> cross-device sync, audio-file upload, ownership-scoped delete, and Purge;
-> then `v3.1.0-nightly.1` = mic noise reduction, pushed from the cloud/second
-> machine — see "Current state" and the multi-machine note directly below).
+> **Last updated: 2026-08-01** (`v3.1.0` promoted to stable from the four
+> CI-built nightlies; the next visual-overhaul line is v3.2.0).
 
 > **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
 > this local core machine, AND a cloud Claude Code session on a second laptop
@@ -46,6 +44,12 @@ no account, no telemetry.
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
+
+- **Stable: `v3.1.0`** (2026-08-01, "Latest") — promotes the complete
+  v3.1.0 nightly line: mic noise reduction, Gemini reliability and re-run
+  tools, account/sync hardening, paste reliability, external-mic selection and
+  metering, quiet-audio rescue, wide-format upload ingest, diarization, and
+  meeting notes. Release notes: `docs/RELEASE_NOTES_v3.1.0.md`.
 
 - **`v3.1.0-nightly.4`** (2026-07-28, this local core machine) — **external
   microphone support + meeting capture.** Driven by the DJI Mic 2 research in
@@ -220,7 +224,7 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 - **Stable: `v3.0.0`** (2026-07-18, "Latest") — the major accounts + sync line,
   promoted to stable on the user's "bump to stable" signal (tagged `v3.0.0` on
-  commit `be3e5a1`; CI published all-platform installers as Latest). Rolls up
+  commit `113b401`; CI published all-platform installers as Latest). Rolls up
   everything the v3.0.0 / v2.2.0 nightlies carried:
   - **Accounts + cross-device sync.** Optional sign-in (Google via loopback-PKCE
     `127.0.0.1:43117`, or email/password) against a shared **Supabase** backend.
@@ -322,7 +326,7 @@ AppImage/deb/rpm) on CI from the tagged commit.
    `.github/workflows/release.yml` per `docs/MACOS_SIGNING.md`. Fixes the
    Accessibility re-grant reset on every update AND the Mac auto-paste report.
    Long-standing, still pending.
-2. **v3.0.0 stable — SHIPPED 2026-07-18.** (Done: tagged `v3.0.0` on `be3e5a1`,
+2. **v3.0.0 stable — SHIPPED 2026-07-18.** (Done: tagged `v3.0.0` on `113b401`,
    CI published all-platform installers as Latest.) First owed follow-up is a
    deliberate **live** test of the delete/purge round-trips (they went stable
    runtime-unverified) before relying on them.
