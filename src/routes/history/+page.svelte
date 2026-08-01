@@ -4,7 +4,6 @@
   import { history } from "$lib/history-store.svelte";
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
-  import StatsWidget from "$lib/StatsWidget.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
   import DeleteDialog from "$lib/DeleteDialog.svelte";
   import { settings } from "$lib/settings-store.svelte";
@@ -72,7 +71,10 @@
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((r) => {
-        const t = (r.cleaned_text || r.transcript || "").toLowerCase();
+        const t = [r.title, r.transcript, r.cleaned_text, r.drafted_text]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         return t.includes(q);
       });
     }
@@ -176,16 +178,19 @@
 
 <section class="history">
   <header class="history-head">
-    <!-- Lifetime analytics at-a-glance — time saved, words, sessions, streak +
-         a 14-day sparkline. Click through to the full /stats dashboard.
-         Renders only once there's at least one recording. Lives INSIDE the
-         header block so it shares the same padding grid as the title/search
-         rows instead of floating flush against the window edges. -->
-    <StatsWidget />
-
-    <div class="title-row">
-      <h1>History</h1>
-      <span class="count">{filtered.length} of {history.list.length}</span>
+    <div class="history-intro">
+      <div>
+        <p class="wf-kicker">Your field notes</p>
+        <div class="title-row">
+          <h1 class="wf-page-title">History</h1>
+          <span class="count">{filtered.length} of {history.list.length}</span>
+        </div>
+        <p class="wf-page-subtitle">Everything you dictated, ready to copy, refine, replay, or turn into a draft.</p>
+      </div>
+      <div class="intro-actions">
+        <a class="insights-link" href="/stats">View insights</a>
+        <img src="/fox/fox-peeking.png" alt="" aria-hidden="true" />
+      </div>
     </div>
 
     <div class="search-row">
@@ -335,10 +340,10 @@
      elevated white block, no hard border. The page reads as one warm
      canvas with cards floating on it. */
   .history-head {
-    padding: 16px 28px 8px;
+    padding: 22px 28px 10px;
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: 12px;
     flex-shrink: 0;
     position: relative;
     z-index: 1;
@@ -347,20 +352,64 @@
   .title-row {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
+    justify-content: flex-start;
+    gap: 10px;
     margin-bottom: 0;
   }
 
-  h1 {
-    font-size: 22px;
-    font-weight: 600;
+  .history-intro {
+    min-height: 86px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 0 2px;
+    position: relative;
+  }
+
+  .history-intro .wf-page-subtitle {
+    margin-top: 5px;
+  }
+
+  .intro-actions {
+    align-self: stretch;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding-right: 6px;
+  }
+
+  .intro-actions img {
+    width: 78px;
+    height: 78px;
+    object-fit: contain;
+    object-position: bottom;
+    filter: drop-shadow(0 5px 10px rgba(84, 52, 20, 0.12));
+  }
+
+  .insights-link {
+    margin-bottom: 15px;
+    padding: 7px 11px;
+    color: var(--field);
+    background: var(--field-fade);
+    border: 1px solid color-mix(in srgb, var(--field) 20%, transparent);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .insights-link:hover {
     color: var(--text-primary);
-    margin: 0;
+    background: color-mix(in srgb, var(--field-fade) 72%, var(--bg-card));
   }
 
   .count {
+    padding: 2px 8px;
     font-size: 12px;
     color: var(--text-secondary);
+    background: var(--bg-subtle);
+    border-radius: 999px;
     font-variant-numeric: tabular-nums;
   }
 
@@ -380,10 +429,11 @@
   .search {
     flex: 1;
     border: 1px solid var(--border);
-    border-radius: 11px;
-    padding: 9px 30px 9px 32px;
+    border-radius: var(--radius-md);
+    padding: 10px 30px 10px 34px;
     font-size: 13px;
-    background: var(--bg-card);
+    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+    box-shadow: var(--shadow-xs);
     color: var(--text-primary);
     outline: none;
     transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -509,7 +559,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    transition: all 120ms ease;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
 
   .icon-btn:hover {
@@ -741,5 +791,33 @@
     font-size: 11px;
     color: var(--text-primary);
     margin: 0 2px;
+  }
+
+  @media (max-width: 780px) {
+    .history-head {
+      padding: 18px 18px 10px;
+    }
+
+    .intro-actions img {
+      display: none;
+    }
+
+    .insights-link {
+      margin-bottom: 10px;
+    }
+
+    .controls {
+      align-items: flex-start;
+    }
+
+    .controls-right {
+      width: 100%;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .rows {
+      padding-inline: 18px;
+    }
   }
 </style>

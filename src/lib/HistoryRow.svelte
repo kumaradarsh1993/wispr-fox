@@ -332,29 +332,13 @@
   }
 </script>
 
-<!-- Whole row is click-to-expand. Action buttons (play/copy/retry/info)
-     and the body's own action area stopPropagation so they don't toggle
-     expansion when clicked. The caret stays as a visual affordance but is
-     not the only thing that toggles — clicking anywhere on the body or the
-     meta strip also works (matches the user's mental model: "this row is a
-     thing I tap to read"). -->
-<!-- Rendered as a <div role="button"> rather than <article>: <article> is a
-     non-interactive landmark and can't legally carry role="button". A generic
-     <div> can, and keeps the same click/keyboard toggle semantics. -->
-<div
+<!-- A recording is an article, not a giant button containing other buttons.
+     Expansion has one explicit control, so keyboard and screen-reader focus
+     never inherit the old nested-interactive ambiguity. -->
+<article
   class="row"
   class:expanded
   class:error-row={isError}
-  role="button"
-  tabindex="0"
-  aria-expanded={expanded}
-  onclick={() => (expanded = !expanded)}
-  onkeydown={(e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      expanded = !expanded;
-    }
-  }}
 >
   <header class="row-head">
     <button class="row-toggle" onclick={(e) => { e.stopPropagation(); expanded = !expanded; }} aria-label="Toggle expand">
@@ -711,18 +695,6 @@
   <!-- (Old "Polished / Base" toggle removed — replaced by the 3-tab bar
        at the top of the body.) -->
 
-  <!-- Expansion affordance: cards look identical collapsed, so hovering a
-       collapsed row surfaces a soft glimmering chevron chip in the bottom-
-       right corner — "there's more here, click to open". Pure decoration
-       (the whole row is already the click target), vanishes on expand. -->
-  {#if !expanded}
-    <span class="expand-hint" aria-hidden="true">
-      <svg viewBox="0 0 16 16" width="12" height="12">
-        <path d="M 3 6 L 8 11 L 13 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </span>
-  {/if}
-
   {#if audioUrl}
     <audio
       bind:this={audioEl}
@@ -733,7 +705,7 @@
       class="hidden-audio"
     ></audio>
   {/if}
-</div>
+</article>
 
 <!-- Sits outside the row so the overlay isn't clipped by the card. Clicks on
      the dialog stop propagation, so opening it never toggles row expansion. -->
@@ -750,14 +722,15 @@
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: 14px;
-    transition: border-color 120ms ease, box-shadow 120ms ease;
+    transition: border-color var(--motion-fast) ease, box-shadow var(--motion-base) ease, transform var(--motion-base) var(--ease-standard);
     position: relative;
-    cursor: pointer;
+    container-type: inline-size;
   }
 
   .row:hover {
     border-color: var(--border);
-    box-shadow: 0 2px 10px rgba(120, 80, 30, 0.08);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
   }
 
   .row:focus-visible {
@@ -850,33 +823,6 @@
     margin-left: auto;
   }
 
-  /* Glimmering expand affordance (bottom-right, hover-only, collapsed rows). */
-  .expand-hint {
-    position: absolute;
-    right: 10px;
-    bottom: 7px;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--accent);
-    background: var(--accent-fade);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 160ms ease;
-  }
-  .row:hover .expand-hint,
-  .row:focus-visible .expand-hint {
-    opacity: 1;
-    animation: hint-glimmer 1.6s ease-in-out infinite;
-  }
-  @keyframes hint-glimmer {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(236, 124, 52, 0); transform: translateY(0); }
-    50%      { box-shadow: 0 0 10px 1px rgba(236, 124, 52, 0.35); transform: translateY(1.5px); }
-  }
-
   .dur, .retry-count {
     color: var(--text-secondary);
   }
@@ -963,16 +909,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    /* Hidden at rest, revealed on row hover / keyboard focus. Kept in the
-       layout (opacity+visibility, not display) so nothing reflows when the
-       buttons appear. */
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 120ms ease;
-  }
-
-  .row:hover .actions,
-  .row:focus-within .actions {
     opacity: 1;
     visibility: visible;
   }
@@ -1003,7 +939,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all 120ms ease;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
   }
 
   .action-btn:hover:not(:disabled) {
@@ -1436,7 +1372,7 @@
     cursor: pointer;
     color: var(--text-secondary);
     font-size: 11px;
-    transition: all 120ms ease;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
   .variant-toggle:hover {
     background: var(--accent-fade);
@@ -1448,6 +1384,64 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
+  }
+
+  @container (max-width: 700px) {
+    .row {
+      padding: 12px 13px;
+    }
+
+    .row-head {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      align-items: start;
+      gap: 6px 8px;
+    }
+
+    .meta {
+      min-height: 30px;
+      gap: 6px;
+      flex-wrap: wrap;
+      white-space: normal;
+    }
+
+    .rec-title {
+      flex-basis: 100%;
+      order: -1;
+      font-size: 13px;
+    }
+
+    .badges,
+    .tail {
+      grid-column: 2;
+    }
+
+    .tail {
+      width: 100%;
+      margin-left: 0;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .tabs-inline {
+      min-width: 0;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .tab {
+      flex: 0 0 auto;
+    }
+
+    .action-slot,
+    .action-btn {
+      width: 30px;
+      height: 30px;
+    }
+
+    .body {
+      padding-left: 38px;
+    }
   }
 
   .err {

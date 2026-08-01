@@ -88,7 +88,7 @@
 </script>
 
 <section>
-  <h2>Appearance</h2>
+  <h2>Companion &amp; theme</h2>
   <p class="lede">Avatar, window behaviour, and app-wide theme.</p>
 
   <h3>Avatar</h3>
@@ -240,7 +240,7 @@
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 120ms ease;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
   .preset-chip:hover {
     border-color: var(--accent);

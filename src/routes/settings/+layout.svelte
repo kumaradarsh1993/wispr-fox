@@ -13,21 +13,17 @@
   // currentColor / 1.6-stroke style as the main sidebar nav.
   type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security" | "account";
   type NavItem = { href: string; label: string; icon: IconName };
-  // Canonical section order, shared across desktop / web / android:
-  // Transcription → Cleanup & modes → API keys → Appearance → Delivery/
-  // behaviour → Storage/Data → Account (with Purge at its bottom) → About.
-  // Desktop mapping: Providers folds Transcription + API keys; Modes = Cleanup
-  // & modes; Dictation = delivery/behaviour; Security (key-storage) sits with
-  // the data section; Account is second-to-last; General (data retention +
-  // updates/version) is the closest thing to "About" and stays last.
+  // User-goal labels. Routes stay stable for migrations and deep links; the
+  // language no longer exposes implementation nouns as the information
+  // architecture.
   const NAV: NavItem[] = [
-    { href: "/settings/providers", label: "Providers", icon: "providers" },
-    { href: "/settings/modes", label: "Modes", icon: "modes" },
-    { href: "/settings/appearance", label: "Appearance", icon: "appearance" },
-    { href: "/settings/dictation", label: "Dictation", icon: "dictation" },
-    { href: "/settings/security", label: "Security", icon: "security" },
+    { href: "/settings/dictation", label: "Voice", icon: "dictation" },
+    { href: "/settings/providers", label: "AI engines", icon: "providers" },
+    { href: "/settings/modes", label: "Writing", icon: "modes" },
+    { href: "/settings/appearance", label: "Companion", icon: "appearance" },
+    { href: "/settings/general", label: "App & data", icon: "general" },
     { href: "/settings/account", label: "Account", icon: "account" },
-    { href: "/settings/general", label: "General", icon: "general" },
+    { href: "/settings/security", label: "Advanced", icon: "security" },
   ];
 
   function isActive(href: string): boolean {
@@ -86,8 +82,12 @@
 {/snippet}
 
 <div class="settings">
-  <aside class="section-nav">
-    <h1>Settings</h1>
+  <header class="section-nav">
+    <div class="settings-heading">
+      <p class="wf-kicker">Make it yours</p>
+      <h1>Settings</h1>
+      <p>Voice, writing, companion, and app preferences — organised around what you want to change.</p>
+    </div>
     <nav>
       {#each NAV as item (item.href)}
         <a
@@ -101,7 +101,7 @@
         </a>
       {/each}
     </nav>
-  </aside>
+  </header>
 
   <main class="section-body">
     {#if toast.msg}

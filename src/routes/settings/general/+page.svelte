@@ -158,7 +158,7 @@
 </script>
 
 <section>
-  <h2>General</h2>
+  <h2>App &amp; data</h2>
   <p class="lede">Startup, sounds, data retention, and updates.</p>
 
   <h3>Startup</h3>
@@ -183,18 +183,6 @@
       />
       <span><strong>Open silently</strong> — start in the tray, no main window</span>
     </label>
-  </div>
-
-  <h3>History</h3>
-
-  <div class="behavior-block">
-    <!-- The auto-title toggle moved to Providers alongside its new model
-         picker — keeping a second copy of the switch here would let the two
-         drift out of sync. -->
-    <p class="lede">
-      Automatic recording titles (and which model writes them) now live in
-      <a href="/settings/providers">Providers &amp; API keys</a>.
-    </p>
   </div>
 
   <h3>Audio cues</h3>

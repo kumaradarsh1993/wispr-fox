@@ -7,7 +7,7 @@
 </script>
 
 <section>
-  <h2>Account</h2>
+  <h2>Account &amp; sync</h2>
   <p class="lede">
     Sign in to sync your transcripts and API keys across desktop, web and
     mobile. Optional — signed out, wispr-fox works exactly as before and stays

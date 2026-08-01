@@ -228,6 +228,9 @@
         </div>
       </div>
 
+      {#if compact}
+        <p class="compact-note">You're signed in. Transcripts and API keys can now follow you across desktop, web, and mobile.</p>
+      {:else}
       <label class="field">
         <span class="field-label">Device name</span>
         <div class="field-row">
@@ -275,6 +278,7 @@
         {#if purgeDone}<p class="dz-done">{purgeDone}</p>{/if}
         {#if purgeError && !purgeConfirmOpen}<p class="err">{purgeError}</p>{/if}
       </div>
+      {/if}
     </div>
   {:else}
     <div class="signed-out">
@@ -355,6 +359,20 @@
 <style>
   .account {
     max-width: 460px;
+  }
+  .account.compact {
+    width: min(100%, 440px);
+    padding: 18px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+  }
+  .compact-note {
+    margin: 12px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
   }
   .not-configured {
     background: var(--bg-subtle);

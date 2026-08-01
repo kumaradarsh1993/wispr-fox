@@ -1,5 +1,7 @@
 <script lang="ts">
-  // 3-screen Foxy onboarding, rebuilt 2026-07-12 around three user asks:
+  // Four-part Foxy onboarding: welcome, engine setup, a live dictation try,
+  // and optional sync. The visual system was unified in August 2026 around
+  // the application's watercolor fox-in-the-field identity.
   //
   //  1. Welcome  — the pitch ("free, unlimited, anywhere — bring your own
   //                key") + a live illustration of the actual loop: a
@@ -23,7 +25,7 @@
   // the 720×480 minimum window only.
   //
   // First-time users hit /onboarding automatically (auto-redirect lives in
-  // the global layout). The sidebar's "Replay onboarding" link sends repeat
+  // the root route). The sidebar's "Replay onboarding" link sends repeat
   // testers back here at will.
 
   import { onMount, onDestroy, tick } from "svelte";
@@ -34,10 +36,10 @@
   import { settings } from "$lib/settings-store.svelte";
   import { applySttProvider, applySttModel, applyLlmProvider } from "$lib/provider-options";
   import { prettyHotkey, isMac } from "$lib/hotkey-display";
-  import SpritePet from "$lib/SpritePet.svelte";
   import AccountPanel from "$lib/AccountPanel.svelte";
   import { account } from "$lib/account-store.svelte";
-  import { PETS } from "$lib/pets";
+
+  const ONBOARDING_MARKER = "wispr.onboarding.field-v1";
 
   // Where the OS actually stores the key — platform-aware copy in the paste step.
   const keyStoreName = isMac() ? "macOS Keychain" : "Windows Credential Manager";
@@ -52,16 +54,13 @@
   // deliberately no 3D/canvas; it must stay light and skippable.
   type HeroPhase = "wiggle" | "listen" | "think" | "type" | "done";
   let heroPhase = $state<HeroPhase>("wiggle");
-  let heroPetIdx = $state(0);
   let heroTyped = $state("");
   const HERO_LINE = "the meeting moved to 4 — see you there";
-
-  const heroPet = $derived(PETS[heroPetIdx % PETS.length]);
-  const heroAnim = $derived(
-    heroPhase === "wiggle" ? "idle"
-    : heroPhase === "listen" ? "waiting"
-    : heroPhase === "done" ? "celebration"
-    : "typing",
+  const heroFoxSrc = $derived(
+    heroPhase === "listen" ? "/fox/fox-recording.png"
+    : heroPhase === "done" ? "/fox/fox-success.png"
+    : heroPhase === "think" || heroPhase === "type" ? "/fox/fox-curious.png"
+    : "/fox/fox-sitting.png",
   );
 
   // Timeline driver — runs only while the welcome screen is visible.
@@ -98,7 +97,6 @@
       });
       at(7200, () => (heroPhase = "done"));
       at(8900, () => {
-        heroPetIdx = (heroPetIdx + 1) % PETS.length;
         runLoop();
       });
     };
@@ -316,6 +314,7 @@
   });
 
   function finish() {
+    localStorage.setItem(ONBOARDING_MARKER, "complete");
     goto("/history");
   }
 
@@ -324,6 +323,7 @@
   // saved. Onboarding can be replayed any time via the sidebar's "↻ Replay
   // onboarding" link.
   function skipOnboarding() {
+    localStorage.setItem(ONBOARDING_MARKER, "dismissed");
     goto("/history");
   }
 
@@ -341,8 +341,6 @@
   let unlistenState: (() => void) | null = null;
   let unlistenMicDiag: (() => void) | null = null;
   let unlistenSecrets: (() => void) | null = null;
-  let priorTheme: string | null = null;
-
   onMount(async () => {
     await settings.init();
     // If user already has keys saved, just mark it — the welcome screen
@@ -351,7 +349,7 @@
     if (secrets.any_stt) {
       keySaved = true;
     }
-    if (secrets.llm) {
+    if (secrets.llm || secrets.gemini || secrets.openai_llm) {
       brainSaved = true;
     }
 
@@ -362,7 +360,7 @@
     unlistenSecrets = await onSecretsChanged(async () => {
       const s = await api.checkSecrets();
       if (s.any_stt) keySaved = true;
-      if (s.llm) brainSaved = true;
+      if (s.llm || s.gemini || s.openai_llm) brainSaved = true;
     });
 
     unlistenState = await listen<string>("wispr:state", (e) => {
@@ -382,17 +380,12 @@
       micDiag = e.payload;
     });
 
-    // Force light theme during onboarding — first-run shouldn't be the
-    // moment the user hits any dark-mode rough edges.
-    priorTheme = document.body.getAttribute("data-theme");
-    document.body.setAttribute("data-theme", "light");
   });
 
   onDestroy(() => {
     unlistenState?.();
     unlistenMicDiag?.();
     unlistenSecrets?.();
-    if (priorTheme !== null) document.body.setAttribute("data-theme", priorTheme);
     stopRecCounter();
   });
 
@@ -416,12 +409,10 @@
 </script>
 
 <main class="ob">
-  <!-- Ambient drifting colour fields behind everything — the "alive" layer.
-       Pure CSS, pointer-events none, disabled under prefers-reduced-motion. -->
-  <div class="bg-blobs" aria-hidden="true">
-    <span class="blob b1"></span>
-    <span class="blob b2"></span>
-    <span class="blob b3"></span>
+  <!-- The product landscape, kept quiet enough that setup stays legible. -->
+  <div class="field-scene" aria-hidden="true">
+    <span class="sun-haze"></span>
+    <img src="/fox/meadow-strip.svg" alt="" />
   </div>
 
   <div class="wrap">
@@ -430,12 +421,12 @@
         <img src="/fox/fox-logo.png" alt="" class="brand-fox" />
         <span class="brand-name">wispr-fox</span>
       </div>
-      <div class="dots">
-        <span class="dot {dotClass('welcome')}" title="Welcome"></span>
-        <span class="dot {dotClass('setup')}" title="Get your key"></span>
-        <span class="dot {dotClass('demo')}" title="Try it"></span>
-        <span class="dot {dotClass('sync')}" title="Sync"></span>
-      </div>
+      <nav class="journey-progress" aria-label="Setup progress">
+        <span class="journey-step {dotClass('welcome')}"><i></i><b>Welcome</b></span>
+        <span class="journey-step {dotClass('setup')}"><i></i><b>Voice</b></span>
+        <span class="journey-step {dotClass('demo')}"><i></i><b>Try it</b></span>
+        <span class="journey-step {dotClass('sync')}"><i></i><b>Sync</b></span>
+      </nav>
       <!-- Always-on Skip — onboarding can be replayed from the sidebar. -->
       <button class="ob-skip" onclick={skipOnboarding} title="Skip and explore the app — you can replay onboarding from the sidebar later">
         Skip →
@@ -445,11 +436,12 @@
     <!-- ═════ SCREEN 1: Welcome ═════════════════════════════════════════ -->
     {#if screen === "welcome"}
       <section class="screen welcome" in:fly={{ y: 22, duration: 380 }}>
-        <h1 class="grad">Speech to text. Anywhere. Free.</h1>
+        <p class="wf-kicker">Your fox in the field</p>
+        <h1>Meet your voice companion.</h1>
         <p class="tagline">
-          Click into any textbox on your computer, hold
+          In any textbox on your computer, hold
           <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say what you
-          mean, let go — wispr-fox types it for you.
+          mean, and let go. WhisperFox writes it down while you stay in flow.
         </p>
 
         <!-- The loop, acted out: key press → buddy listens → transcribes →
@@ -469,8 +461,8 @@
           </div>
 
           <div class="hero-pet-zone">
-            <div class="hero-pet" style="--fscale: 1.35">
-              <SpritePet petId={heroPet.id} anim={heroAnim} />
+            <div class="hero-pet">
+              <img class="hero-watercolor" src={heroFoxSrc} alt="" />
             </div>
             <span
               class="hero-status"
@@ -495,19 +487,16 @@
         </div>
 
         <p class="hero-caption rise" style="--d: 220ms">
-          That's <strong>{heroPet.label}</strong> — one of eight pixel buddies
-          who keep you company while you dictate. There's also a watercolor
-          fox, a minimal waveform, and yes, a real Clippy. Pick yours later.
+          The watercolor fox is the default. Pixel pets, a minimal waveform,
+          Black Clippy, Classic Clippy, and more stay available as companions —
+          the landscape remains unmistakably WhisperFox.
         </p>
 
         <div class="byok rise" style="--d: 320ms">
-          <strong>How is it free?</strong> wispr-fox is a
+          <strong>Bring your own key, keep your freedom.</strong> WhisperFox is a
           <em>bring-your-own-key</em> app: you plug in a free API key from a
-          speech provider (Deepgram, Groq Whisper…) and the app is just the
-          interface. Personal free tiers are so generous that day-to-day
-          dictation costs nothing — setup takes about five minutes, and the
-          next screen walks you through it. Advanced users can swap engines
-          and models any time in Settings.
+          speech provider. Personal free tiers comfortably cover ordinary
+          dictation, your recordings stay local, and setup takes a few minutes.
         </div>
 
         <div class="cta">
@@ -527,9 +516,8 @@
       <section class="screen setup" in:fly={{ y: 22, duration: 380 }}>
         <h1>Pick your engine</h1>
         <p class="tagline">
-          Choose who does the listening — both are genuinely free to start,
-          and you can switch (or add OpenAI, ElevenLabs, Gemini) later in
-          <strong>Settings → Providers</strong>.
+          Choose who listens. Both start free; advanced providers and models
+          remain available later under <strong>Settings → AI engines</strong>.
         </p>
 
         <div class="engine-row">
@@ -544,14 +532,11 @@
               <span class="engine-badge rec">Recommended</span>
             </div>
             <p class="engine-pitch">
-              The best ears. Nova-3 is fast and noticeably more accurate than
-              older Whisper models — especially with Indian accents.
+              Nova-3 is fast and especially strong with varied accents.
             </p>
             <p class="engine-free">
-              <strong>$200 free credit</strong> on signup, no card. Heavy
-              daily use ≈ <strong>$1 a week</strong> — it lasts years of
-              day-to-day dictation. You'll sign up, create a key, paste it
-              here — we'll walk you through it.
+              <strong>$200 signup credit</strong>, no card. Recommended for the
+              best everyday accuracy.
             </p>
           </button>
           <button
@@ -565,12 +550,11 @@
               <span class="engine-badge free">Free forever</span>
             </div>
             <p class="engine-pitch">
-              Unlimited wispr-fox: about 2,000 free Whisper transcriptions a
-              day, resets daily, no card ever.
+              A generous free Whisper allowance that resets every day.
             </p>
             <p class="engine-free">
-              One key also powers the <strong>cleanup + Draft brain</strong>
-              — the all-in-one option. Sign in, create a key, paste it here.
+              One key can also power <strong>cleanup and Draft</strong> — the
+              simplest all-in-one setup.
             </p>
           </button>
         </div>
@@ -906,57 +890,44 @@
     z-index: 1;
   }
 
-  /* ── Ambient drifting colour fields ──────────────────────────────────
-     Three big blurred blobs slowly wandering behind the content. Warm
-     accent tones at low opacity so they read as light, not decoration. */
-  .bg-blobs {
+  .field-scene {
     position: absolute;
     inset: 0;
     overflow: hidden;
     pointer-events: none;
     z-index: 0;
   }
-  .blob {
+
+  .field-scene::before {
+    content: "";
     position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 78% 8%, rgba(229, 173, 85, 0.18), transparent 25%),
+      linear-gradient(180deg, transparent 58%, var(--field-fade));
+  }
+
+  .field-scene img {
+    position: absolute;
+    right: -3%;
+    bottom: -32px;
+    width: 106%;
+    min-width: 900px;
+    opacity: 0.34;
+    filter: saturate(0.82);
+  }
+
+  .sun-haze {
+    position: absolute;
+    top: 8%;
+    right: 12%;
+    width: 170px;
+    height: 170px;
     border-radius: 50%;
-    filter: blur(70px);
-    opacity: 0.16;
-  }
-  .blob.b1 {
-    width: 380px;
-    height: 380px;
-    background: #ec7c34;
-    top: -120px;
-    left: -100px;
-    animation: drift-a 38s ease-in-out infinite alternate;
-  }
-  .blob.b2 {
-    width: 300px;
-    height: 300px;
-    background: #f0b429;
-    bottom: -80px;
-    right: -60px;
-    animation: drift-b 46s ease-in-out infinite alternate;
-  }
-  .blob.b3 {
-    width: 220px;
-    height: 220px;
-    background: #e8956b;
-    top: 40%;
-    left: 55%;
-    opacity: 0.10;
-    animation: drift-a 52s ease-in-out infinite alternate-reverse;
-  }
-  @keyframes drift-a {
-    0%   { transform: translate(0, 0) scale(1); }
-    100% { transform: translate(120px, 60px) scale(1.15); }
-  }
-  @keyframes drift-b {
-    0%   { transform: translate(0, 0) scale(1); }
-    100% { transform: translate(-100px, -70px) scale(1.1); }
+    background: rgba(229, 173, 85, 0.12);
+    filter: blur(26px);
   }
   @media (prefers-reduced-motion: reduce) {
-    .blob { animation: none; }
     .rise { animation: none; opacity: 1; }
     .hero-key.wiggle { animation: none; }
   }
@@ -988,7 +959,7 @@
     padding: 4px 12px;
     font-size: 12px;
     cursor: pointer;
-    transition: all 120ms ease;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
   }
   .ob-skip:hover {
     color: var(--text-primary);
@@ -1015,19 +986,39 @@
     letter-spacing: 0.02em;
   }
 
-  .dots {
+  .journey-progress {
     display: flex;
-    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
   }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 9999px;
+
+  .journey-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+  }
+
+  .journey-step i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
     background: var(--border);
-    transition: background 200ms ease;
   }
-  .dot.done { background: var(--accent-soft); }
-  .dot.current { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-fade); }
+
+  .journey-step b {
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .journey-step.done { color: var(--text-secondary); }
+  .journey-step.done i { background: var(--field); }
+  .journey-step.current { color: var(--accent); }
+  .journey-step.current i {
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-fade);
+  }
 
   .sync-panel {
     display: flex;
@@ -1066,14 +1057,6 @@
     letter-spacing: -0.02em;
     color: var(--text-primary);
   }
-  /* Warm gradient headline — the one "award-site" flourish on each screen. */
-  h1.grad {
-    background: linear-gradient(100deg, #d9542b, var(--accent) 45%, #f0a429);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
   .tagline {
     font-size: 15px;
     color: var(--text-secondary);
@@ -1083,7 +1066,9 @@
   }
 
   /* ── Welcome hero ─────────────────────────────────────────────────── */
-  .welcome h1, .welcome .tagline {
+  .welcome .wf-kicker,
+  .welcome h1,
+  .welcome .tagline {
     align-self: center;
     text-align: center;
   }
@@ -1151,6 +1136,14 @@
     display: grid;
     place-items: center;
   }
+
+  .hero-watercolor {
+    width: 104px;
+    height: 104px;
+    object-fit: contain;
+    filter: drop-shadow(0 7px 12px rgba(96, 58, 20, 0.14));
+    transition: opacity 160ms ease, transform 240ms var(--ease-spring);
+  }
   .hero-status {
     display: inline-flex;
     align-items: center;
@@ -1163,7 +1156,7 @@
     border: 1px solid var(--border-subtle);
     color: var(--text-secondary);
     white-space: nowrap;
-    transition: all 200ms ease;
+    transition: color 200ms ease, background 200ms ease, border-color 200ms ease;
   }
   .hero-status.listening {
     background: var(--danger-fade);
@@ -1242,8 +1235,6 @@
     text-align: center;
     max-width: 640px;
   }
-  .hero-caption strong { color: var(--accent); }
-
   .byok {
     background: var(--accent-fade);
     border: 1px solid var(--accent-soft);

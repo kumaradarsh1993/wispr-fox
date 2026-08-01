@@ -43,7 +43,7 @@
 </script>
 
 <section>
-  <h2>Modes</h2>
+  <h2>Writing styles</h2>
   <p class="lede">Each hotkey runs the LLM with a different prompt — customise them here.</p>
 
   {#each [

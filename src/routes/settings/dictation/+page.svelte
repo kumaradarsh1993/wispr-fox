@@ -184,7 +184,7 @@
 </script>
 
 <section>
-  <h2>Microphone</h2>
+  <h2>Voice &amp; shortcuts</h2>
   <p class="lede">
     Which mic wispr-fox records from, and a way to confirm it actually works
     before it costs you a dictation.

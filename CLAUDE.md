@@ -83,8 +83,9 @@ the "What v2.0.0 shipped" list below.)
   manifest-v2 raster state packs rendered by `RasterAvatar.svelte`; the
   nightly.12 QA pass fixed scaling, edge slivers, and the Oru/Gujia white-fur
   matte issue, and v2.0.0 reduced raster footprints by ~20%.
-- **Analytics dashboard** — `/stats` page + a widget on top of History
-  (time saved vs typing @40wpm, words/sessions per day, speaking speed, day
+- **Analytics dashboard** — `/stats` page (the old duplicate History widget
+  was retired in the v3.2 visual pass) with time saved vs typing @40wpm,
+  words/sessions per day, speaking speed, day
   streak, 7/30/90-day chart). Backed by a lifetime `daily_stats` SQLite table
   that is NOT pruned by retention.
 - **Floater = constrained REST/TALK two-box model.** The window grows only when
@@ -125,10 +126,10 @@ src-tauri/src/
   settings.rs   AppSettings struct. Defaults here; user values in tauri-plugin-store.
 
 src/routes/
-  +layout.svelte   Sidebar (brand, hotkey hints, Models picker, avatar picker+S/M/L, usage)
-  /history/        Rows w/ Raw/Cleaned/Drafted tabs + StatsWidget at the top
+  +layout.svelte   Navigation rail + compact everyday controls + usage
+  /history/        Searchable field notes with Raw/Cleaned/Drafted row tabs
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
-  /settings/       Providers, Modes, Dictation, Avatar, General, Security
+  /settings/       Voice, AI engines, Writing, Companion, App & data, Account, Advanced
   /clippy/         Always-on-top floater. Skins: fox/codex-fox/stylized/real-clippy/cat/oru-gujia/spark-buddy/wave/siri
                    ("duo"/"duo-hd" removed in v2.1.0-nightly.4 — user judged the
                    hand-drawn duo bad next to the raster Oru & Gujia; saved values
@@ -153,7 +154,6 @@ src/routes/
 src/lib/
   stats.ts                analytics derivation (time-saved, streak, gap-fill)
   stats-store.svelte.ts   loads stats_summary, refreshes on flow idle
-  StatsWidget.svelte      compact home-page strip → links to /stats
   floater-scale.svelte.ts S/M/L scale store + floater-debug toggle store
   avatar-visibility.svelte.ts  tri-state "always"/"auto"/"hidden" (v2.1.0):
                           always+hidden applied by the main window
@@ -349,9 +349,9 @@ explicit user permission:
   `[profile.release]`. Full LTO + codegen-units=1 OOM'd rustc on
   this 8 GB machine — see commit `1cb6724`. Don't tighten back to
   full LTO without confirming the host has 16+ GB RAM.
-- **macOS DMG**: CI now builds `wispr-fox_1.0.0_aarch64.dmg` (Apple
-  Silicon) on every release tag, alongside Windows NSIS `.exe` + MSI
-  and Linux AppImage/deb/rpm. So every nightly ships all platforms in
+- **macOS DMG**: CI builds an Apple Silicon `.dmg` on every release tag,
+  alongside the Windows NSIS `.exe` and Linux AppImage/deb/rpm. So every
+  nightly ships all platforms in
   lockstep — no platform drifts behind. Unsigned: first macOS launch
   needs right-click → Open, or `xattr -dr com.apple.quarantine
   /Applications/wispr-fox.app`. No Intel (x86_64) Mac build yet.

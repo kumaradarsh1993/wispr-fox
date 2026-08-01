@@ -4,8 +4,8 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-01** (`v3.1.0` promoted to stable from the four
-> CI-built nightlies; the next visual-overhaul line is v3.2.0).
+> **Last updated: 2026-08-01** (`v3.1.0` is stable; the Codex-authored
+> visual-overhaul line starts at `v3.2.0-nightly.1`).
 
 > **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
 > this local core machine, AND a cloud Claude Code session on a second laptop
@@ -50,6 +50,35 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   tools, account/sync hardening, paste reliability, external-mic selection and
   metering, quiet-audio rescue, wide-format upload ingest, diarization, and
   meeting notes. Release notes: `docs/RELEASE_NOTES_v3.1.0.md`.
+
+- **`v3.2.0-nightly.1`** (2026-08-01, Codex) — **desktop visual system,
+  navigation, onboarding, settings, History, and Insights overhaul.** Release
+  notes: `docs/RELEASE_NOTES_v3.2.0-nightly.1.md`.
+  - The old 320 px settings-heavy sidebar is now a 272 px navigation rail with
+    one compact everyday-controls card. A marker-gated migration resets the old
+    width once, then preserves every user resize.
+  - Settings no longer nests a second rail inside the first. Its user-goal IA
+    is Voice, AI engines, Writing, Companion, App & data, Account, and Advanced;
+    container queries make that navigation respond to the content pane rather
+    than the outer window.
+  - Onboarding is one watercolor fox-in-the-field journey across Welcome,
+    Voice, Try it, and Sync. Skip is persisted independently from key state,
+    Gemini/OpenAI brain keys are recognised, named progress replaces anonymous
+    dots, and compact account mode hides device/destructive controls.
+  - History drops the duplicate analytics widget, searches every text variant,
+    and uses explicit semantic row expansion with compact-width reflow. Insights
+    shares the same field palette, surfaces, typography, and illustrated empty
+    state.
+  - Shared radius, shadow, focus, motion, field-green, and warm-paper tokens now
+    govern the touched surfaces; global reduced-motion support is in place.
+  - Verification: `npm run check` is 0 errors/0 warnings, `npm run build`
+    succeeds, and `cargo check` succeeds with the pre-existing Rust dead-code
+    warnings. The History route was visually/semantically inspected in the
+    lightweight runtime. A native `tauri dev` link was stopped when GNU ld
+    reached 3.6 GB RAM on this documented 8 GB host; the CI nightly installer is
+    the native test artifact. Dependency refresh removed all high/moderate npm
+    advisories; three low `cookie` advisories remain upstream with only a
+    breaking/invalid audit-force path.
 
 - **`v3.1.0-nightly.4`** (2026-07-28, this local core machine) — **external
   microphone support + meeting capture.** Driven by the DJI Mic 2 research in

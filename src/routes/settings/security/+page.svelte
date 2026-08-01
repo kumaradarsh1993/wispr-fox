@@ -99,7 +99,7 @@
 <section>
   <div class="security-title-row">
     <div>
-      <h2>Security</h2>
+      <h2>Advanced</h2>
       <p class="lede">API keys stay local. This page shows storage status and recent key-storage events without showing the keys themselves.</p>
     </div>
     <button class="btn-secondary" onclick={refresh} disabled={loading}>

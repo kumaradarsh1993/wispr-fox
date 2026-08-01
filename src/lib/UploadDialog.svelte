@@ -24,9 +24,9 @@
   // Engine + options. Seed from the user's current global picks; the dialog can
   // override them just for this batch without touching the saved settings.
   let sttProvider = $state(settings.s.stt_provider || "groq");
-  let sttModel = $state(settings.s.stt_model || sttModelsFor(sttProvider)[0].id);
+  let sttModel = $state(settings.s.stt_model || sttModelsFor(settings.s.stt_provider || "groq")[0].id);
   let llmProvider = $state(settings.s.llm_provider || "groq");
-  let llmModel = $state(settings.s.llm_model || llmModelsFor(llmProvider)[0].id);
+  let llmModel = $state(settings.s.llm_model || llmModelsFor(settings.s.llm_provider || "groq")[0].id);
   let cleanup = $state(false);
   let draft = $state(false);
   let diarize = $state(false);

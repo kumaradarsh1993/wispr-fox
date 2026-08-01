@@ -55,9 +55,7 @@ impl SttOptions {
     }
 }
 
-pub use speakers::{
-    provider_supports_diarization, render_turns, speaker_count, turns_from_words, SpeakerTurn,
-};
+pub use speakers::{provider_supports_diarization, render_turns, turns_from_words, SpeakerTurn};
 
 /// Audio container extensions we accept for uploaded files. The cloud STT
 /// providers (Groq/OpenAI Whisper, Deepgram, ElevenLabs) all decode these
@@ -122,4 +120,3 @@ pub trait SttProvider: Send + Sync {
         opts: &SttOptions,
     ) -> Result<Transcript, SttError>;
 }
-

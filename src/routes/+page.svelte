@@ -8,7 +8,8 @@
     // first-launch needs onboarding for the API key.
     try {
       const secrets = await api.checkSecrets();
-      if (!secrets.any_stt) {
+      const onboardingHandled = localStorage.getItem("wispr.onboarding.field-v1") !== null;
+      if (!secrets.any_stt && !onboardingHandled) {
         goto("/onboarding");
         return;
       }

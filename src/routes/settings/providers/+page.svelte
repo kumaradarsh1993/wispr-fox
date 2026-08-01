@@ -145,7 +145,7 @@
 </script>
 
 <section>
-  <h2>Providers & API keys</h2>
+  <h2>AI engines &amp; keys</h2>
   <p class="lede">Choose who transcribes your audio and who handles cleanup.</p>
 
   <div class="settings-card model-choice-card">

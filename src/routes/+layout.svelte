@@ -11,36 +11,24 @@
     applyVisibilityWindow,
     type AvatarVisibility,
   } from "$lib/avatar-visibility.svelte";
-  import { floaterScale, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import {
     api,
-    onSecretsChanged,
     type InputDeviceInfo,
     type ModelUsage,
-    type SecretCheck,
   } from "$lib/api";
   import { account } from "$lib/account-store.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
   import {
     DEEPGRAM_FREE_CREDIT_USD,
-    LLM_PROVIDERS,
     STT_PROVIDERS,
-    applyLlmModel,
-    applyLlmProvider,
-    applySttModel,
-    applySttProvider,
-    llmModelsFor,
-    llmReady,
-    sttModelsFor,
-    sttReady,
   } from "$lib/provider-options";
 
   let { children } = $props();
 
   let collapsed = $state(false);
-  let sidebarWidth = $state(320);
+  let sidebarWidth = $state(272);
   let appVersion = $state<string>("");
   let flowBusy = $state(false);
   let resizingSidebar = $state(false);
@@ -110,17 +98,6 @@
     { id: "pet-null-signal", label: "Null Signal" },
   ];
 
-  // The sidebar shows a curated handful of avatars, NOT the full roster —
-  // the roster kept growing (pets!) and was making the sidebar scroll. The
-  // full picker lives in Settings → Appearance behind the "…" More tile.
-  // If the current skin isn't featured it takes the last featured slot, so
-  // the active avatar is always visible + highlighted here.
-  const FEATURED_SKINS: Skin[] = ["fox", "codex-fox", "oru-gujia", "pet-codex", "wave", "siri"];
-  let sidebarSkins = $derived.by<Skin[]>(() => {
-    const cur = skinStore.current;
-    if (FEATURED_SKINS.includes(cur)) return FEATURED_SKINS;
-    return [...FEATURED_SKINS.slice(0, FEATURED_SKINS.length - 1), cur];
-  });
   function skinLabel(id: Skin): string {
     return SKIN_OPTIONS.find((o) => o.id === id)?.label ?? id;
   }
@@ -137,8 +114,6 @@
     await avatarVisibility.set(v);
     await applyVisibilityWindow(v);
   }
-
-  let secretCheck = $state<SecretCheck | null>(null);
 
   // ── Quick mic picker ─────────────────────────────────────────────────────
   // Deliberately lists ONLY devices that are present right now: a mic that is
@@ -174,44 +149,6 @@
   async function changeMic(name: string) {
     await settings.set("input_device", name || null);
   }
-
-  async function refreshSidebarSecrets() {
-    try {
-      secretCheck = await api.checkSecrets();
-    } catch (e) {
-      console.warn("sidebar secret check failed", e);
-      secretCheck = null;
-    }
-  }
-
-  async function pickSkin(s: Skin) {
-    // Picking a skin must NOT touch visibility — the tri-state is the single
-    // source of truth. The skin grid stays usable even when hidden.
-    await skinStore.set(s);
-  }
-
-  async function changeSttProvider(provider: string) {
-    await applySttProvider(provider);
-    await usageStore.refresh();
-  }
-
-  async function changeSttModel(modelId: string) {
-    await applySttModel(modelId);
-    await usageStore.refresh();
-  }
-
-  async function changeLlmProvider(provider: string) {
-    await applyLlmProvider(provider);
-    await usageStore.refresh();
-  }
-
-  async function changeLlmModel(modelId: string) {
-    await applyLlmModel(modelId);
-    await usageStore.refresh();
-  }
-
-  // Avatar size presets (S/M/L). Sticky + cross-window via floaterScale.
-  let scaleActive = $derived(floaterScale.activePreset());
 
   // Lightweight usage meters. Deepgram shows cumulative estimated spend
   // against the current free credit; model buckets show today's audio/tokens.
@@ -307,14 +244,25 @@
 
   // Persist sidebar collapsed state across launches.
   onMount(() => {
+    const shellV2 = localStorage.getItem("wispr.shell.field-v1") === "1";
     const saved = localStorage.getItem("wispr.sidebar.collapsed");
-    if (saved === "1") collapsed = true;
     const savedWidth = Number(localStorage.getItem("wispr.sidebar.width"));
-    if (Number.isFinite(savedWidth)) sidebarWidth = clampSidebarWidth(savedWidth);
+    if (shellV2) {
+      if (saved === "1") collapsed = true;
+      if (Number.isFinite(savedWidth)) sidebarWidth = clampSidebarWidth(savedWidth);
+    } else {
+      // One-time shell migration: the old 320px settings-heavy rail is now a
+      // calmer navigation + quick-controls surface. Start it at its designed
+      // width once, then respect every user resize after that.
+      sidebarWidth = 272;
+      collapsed = false;
+      localStorage.setItem("wispr.sidebar.width", "272");
+      localStorage.setItem("wispr.sidebar.collapsed", "0");
+      localStorage.setItem("wispr.shell.field-v1", "1");
+    }
     usageStore.subscribe();
     skinStore.subscribe();
     avatarVisibility.subscribe();
-    floaterScale.subscribe();
 
     // Init settings, then decide whether to show the main window. The
     // window starts hidden (tauri.conf.json visible=false) so we don't
@@ -322,7 +270,6 @@
     // load, show it ONLY if "open_silently" is off.
     (async () => {
       await settings.init();
-      await refreshSidebarSecrets();
       await refreshInputDevices();
       if (!settings.s.open_silently) {
         try {
@@ -357,25 +304,15 @@
     // Tray menu can request navigation via wispr:navigate event.
     let unlisten: (() => void) | undefined;
     let unlistenFlow: (() => void) | undefined;
-    let unlistenSecrets: (() => void) | undefined;
     listen<string>("wispr:navigate", (e) => {
       goto(e.payload);
     }).then((u) => (unlisten = u));
     listen<string>("wispr:state", (e) => {
       flowBusy = e.payload !== "idle";
     }).then((u) => (unlistenFlow = u));
-    // Keys can arrive from another device at any time (first sync after
-    // signing in, or an edit made on web/Android). Without this the picker
-    // below keeps every provider it saw as key-less greyed out and labelled
-    // "- add key" for the rest of the session.
-    onSecretsChanged(() => {
-      refreshSidebarSecrets();
-    }).then((u) => (unlistenSecrets = u));
-
     return () => {
       unlisten?.();
       unlistenFlow?.();
-      unlistenSecrets?.();
     };
   });
 
@@ -394,7 +331,7 @@
   }
 
   function clampSidebarWidth(width: number): number {
-    return Math.min(460, Math.max(256, Math.round(width)));
+    return Math.min(340, Math.max(236, Math.round(width)));
   }
 
   function setSidebarWidth(width: number) {
@@ -546,204 +483,78 @@
         {/if}
 
         {#if !collapsed}
-          <div class="section model-panel">
-            <div class="section-title-bar">Models</div>
-
-            <div class="model-row">
-              <div class="model-row-head">
-                <span>STT</span>
-                <a href="/settings/providers" title="Manage provider keys">Keys</a>
+          <section class="quick-card" aria-label="Quick controls">
+            <div class="quick-head">
+              <div>
+                <span class="quick-kicker">Ready to write</span>
+                <strong>Quick controls</strong>
               </div>
-              <div class="model-selects">
-                <select
-                  aria-label="Speech-to-text service"
-                  value={settings.s.stt_provider}
-                  disabled={flowBusy}
-                  onchange={(e) => changeSttProvider((e.currentTarget as HTMLSelectElement).value)}
-                >
-                  {#each STT_PROVIDERS as provider}
-                    <option value={provider.id} disabled={!sttReady(secretCheck, provider.id)}>
-                      {provider.label}{sttReady(secretCheck, provider.id) ? "" : " - add key"}
-                    </option>
-                  {/each}
-                </select>
-                <select
-                  aria-label="Speech-to-text model"
-                  value={settings.s.stt_model}
-                  disabled={flowBusy}
-                  onchange={(e) => changeSttModel((e.currentTarget as HTMLSelectElement).value)}
-                >
-                  {#each sttModelsFor(settings.s.stt_provider) as model (model.id)}
-                    <option value={model.id}>{model.label}</option>
-                  {/each}
-                </select>
-              </div>
+              <a href="/settings/dictation">All settings</a>
             </div>
 
-            <div class="model-row">
-              <div class="model-row-head">
-                <span>LLM</span>
-                <label class="mini-toggle" title="Clean Transcribe by default">
-                  <input
-                    type="checkbox"
-                    checked={settings.s.auto_clean_in_light}
-                    disabled={flowBusy}
-                    onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked)}
-                  />
-                  <span>Clean</span>
-                </label>
+            <div class="quick-row">
+              <div class="quick-row-copy">
+                <span class="quick-label">Listening with</span>
+                <strong>{STT_PROVIDERS.find((p) => p.id === settings.s.stt_provider)?.label ?? settings.s.stt_provider}</strong>
               </div>
-              <div class="model-selects">
-                <select
-                  aria-label="LLM service"
-                  value={settings.s.llm_provider}
-                  disabled={flowBusy}
-                  onchange={(e) => changeLlmProvider((e.currentTarget as HTMLSelectElement).value)}
-                >
-                  {#each LLM_PROVIDERS as provider}
-                    <option value={provider.id} disabled={!llmReady(secretCheck, provider.id)}>
-                      {provider.label}{llmReady(secretCheck, provider.id) ? "" : " - add key"}
-                    </option>
-                  {/each}
-                </select>
-                <select
-                  aria-label="LLM model"
-                  value={settings.s.llm_model}
-                  disabled={flowBusy}
-                  onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}
-                >
-                  {#each llmModelsFor(settings.s.llm_provider) as model (model.id)}
-                    <option value={model.id}>{model.label}</option>
-                  {/each}
-                </select>
-              </div>
+              <a class="quick-change" href="/settings/providers">Change</a>
             </div>
 
-            <!-- Mic picker. Same store and same persisted value as Settings →
-                 Dictation: one source of truth, two views. -->
-            <div class="model-row">
-              <div class="model-row-head">
-                <span>MIC</span>
-                <a href="/settings/dictation" title="Test your microphone">Test</a>
+            <label class="clean-switch" title="Polish filler words and punctuation after Transcribe">
+              <span>
+                <strong>Polish Transcribe</strong>
+                <small>{settings.s.auto_clean_in_light ? "On — uses your writing engine" : "Off — keeps the raw transcript"}</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.s.auto_clean_in_light}
+                disabled={flowBusy}
+                onchange={(e) => settings.set("auto_clean_in_light", (e.currentTarget as HTMLInputElement).checked)}
+              />
+            </label>
+
+            <label class="quick-mic">
+              <span class="quick-label">Microphone</span>
+              <select
+                aria-label="Microphone"
+                value={currentMic}
+                disabled={flowBusy}
+                onfocus={refreshInputDevices}
+                onchange={(e) => changeMic((e.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="">System default</option>
+                {#each inputDevices as d (d.name)}
+                  <option value={d.name}>{shortMic(d.name)}</option>
+                {/each}
+                {#if micMissing}
+                  <option value={currentMic}>{shortMic(currentMic)} — not connected</option>
+                {/if}
+              </select>
+              {#if micMissing}<small class="mic-note">Using system default until it reconnects.</small>{/if}
+            </label>
+
+            <div class="companion-quick">
+              <a class="companion-link" href="/settings/appearance" title="Choose your companion">
+                <span class="companion-icon"><SkinIcon skin={skinStore.current} size={26} /></span>
+                <span>
+                  <small>Companion</small>
+                  <strong>{skinLabel(skinStore.current)}</strong>
+                </span>
+              </a>
+              <div class="vis-row" role="group" aria-label="Companion visibility">
+                {#each VISIBILITY_OPTIONS as v (v.id)}
+                  <button
+                    class="vis-btn"
+                    class:active={avatarVisibility.current === v.id}
+                    onclick={() => pickVisibility(v.id)}
+                    title={v.label}
+                    aria-label={v.label}
+                  >{v.short}</button>
+                {/each}
               </div>
-              <div class="model-selects">
-                <select
-                  aria-label="Microphone"
-                  value={currentMic}
-                  disabled={flowBusy}
-                  onfocus={refreshInputDevices}
-                  onchange={(e) => changeMic((e.currentTarget as HTMLSelectElement).value)}
-                >
-                  <option value="">System default</option>
-                  {#each inputDevices as d (d.name)}
-                    <option value={d.name}>{shortMic(d.name)}</option>
-                  {/each}
-                  {#if micMissing}
-                    <option value={currentMic}>{shortMic(currentMic)} — not connected</option>
-                  {/if}
-                </select>
-              </div>
-              {#if micMissing}
-                <div class="mic-note">Not connected — recordings will use the system default.</div>
-              {/if}
             </div>
-          </div>
+          </section>
         {/if}
-
-        <!-- Avatar section: icon-only skin picker. Same compact grid in
-             both expanded and collapsed states (just different column count). -->
-        <div class="section">
-          {#if !collapsed}
-            <div class="section-title-bar">Avatar</div>
-            <!-- Visibility tri-state — the single source of truth for whether
-                 the floater is on screen. Independent of the chosen skin. -->
-            <div class="vis-row" role="group" aria-label="Avatar visibility">
-              {#each VISIBILITY_OPTIONS as v (v.id)}
-                <button
-                  class="vis-btn"
-                  class:active={avatarVisibility.current === v.id}
-                  onclick={() => pickVisibility(v.id)}
-                  title={v.label}
-                  aria-label={v.label}
-                >{v.short}</button>
-              {/each}
-            </div>
-            <div class="skin-grid">
-              {#each sidebarSkins as id (id)}
-                <button
-                  class="skin-icon-btn"
-                  class:active={skinStore.current === id}
-                  onclick={() => pickSkin(id)}
-                  title={skinLabel(id)}
-                  aria-label={skinLabel(id)}
-                >
-                  <SkinIcon skin={id} size={22} />
-                </button>
-              {/each}
-              <button
-                class="skin-icon-btn skin-more-btn"
-                onclick={() => goto("/settings/appearance")}
-                title="All avatars…"
-                aria-label="All avatars"
-              >…</button>
-            </div>
-            {#if avatarVisibility.current !== "hidden"}
-              <div class="scale-row" role="group" aria-label="Avatar size">
-                <span class="scale-label">Size</span>
-                {#each SCALE_PRESETS as p (p.id)}
-                  <button
-                    class="scale-btn"
-                    class:active={scaleActive === p.id}
-                    onclick={() => floaterScale.set(p.value)}
-                    title={`Avatar size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
-                    aria-label={`Avatar size ${p.label}`}
-                  >{p.label}</button>
-                {/each}
-              </div>
-            {/if}
-          {:else}
-            <div class="vis-row-collapsed" role="group" aria-label="Avatar visibility">
-              {#each VISIBILITY_OPTIONS as v (v.id)}
-                <button
-                  class="vis-btn"
-                  class:active={avatarVisibility.current === v.id}
-                  onclick={() => pickVisibility(v.id)}
-                  title={v.label}
-                >{v.short}</button>
-              {/each}
-            </div>
-            <div class="skin-grid-collapsed">
-              {#each sidebarSkins as id (id)}
-                <button
-                  class="skin-icon-btn"
-                  class:active={skinStore.current === id}
-                  onclick={() => pickSkin(id)}
-                  title={skinLabel(id)}
-                >
-                  <SkinIcon skin={id} size={22} />
-                </button>
-              {/each}
-              <button
-                class="skin-icon-btn skin-more-btn"
-                onclick={() => goto("/settings/appearance")}
-                title="All avatars…"
-                aria-label="All avatars"
-              >…</button>
-            </div>
-            {#if avatarVisibility.current !== "hidden"}
-              <div class="scale-row-collapsed" role="group" aria-label="Avatar size">
-                {#each SCALE_PRESETS as p (p.id)}
-                  <button
-                    class="scale-btn"
-                    class:active={scaleActive === p.id}
-                    onclick={() => floaterScale.set(p.value)}
-                    title={`Avatar size: ${p.id === "s" ? "Small" : p.id === "m" ? "Medium" : "Large"}`}
-                  >{p.label}</button>
-                {/each}
-              </div>
-            {/if}
-          {/if}
-        </div>
 
         <!-- Replay onboarding — a quiet footer link so testers (and curious
              users) can re-walk the 3-screen flow without touching their keys. -->
@@ -853,10 +664,13 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    width: 320px;
-    background: var(--bg-sidebar);
+    width: 272px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--bg-sidebar) 96%, transparent), var(--bg-sidebar)),
+      url('/fox/texture-paper.png');
+    background-size: auto, 280px 280px;
     border-right: 1px solid var(--border);
-    transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1),
+    transition: width var(--motion-base) var(--ease-standard),
                 background 200ms ease,
                 border-color 200ms ease;
     overflow: hidden;
@@ -864,7 +678,7 @@
   }
 
   .sidebar.collapsed {
-    width: 56px;
+    width: 64px;
   }
 
   .sidebar.resizing {
@@ -906,8 +720,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 14px 12px;
+    gap: 9px;
+    padding: 16px 12px 12px;
     min-height: 0;
     /* When window is short, sidebar-top's content can't fit in the
        space sidebar-bottom leaves. Without this overflow rule it would
@@ -959,9 +773,9 @@
   }
 
   .sidebar-fox {
-    margin: 8px auto -4px;
-    width: 130px;
-    height: 130px;
+    margin: 6px auto -8px;
+    width: 96px;
+    height: 96px;
     pointer-events: none;
     display: flex;
     align-items: flex-end;
@@ -986,10 +800,10 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 8px 9px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     font-weight: 600;
     font-size: 14px;
     color: var(--text-primary);
@@ -1008,8 +822,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
   }
   .brand-mark img {
     width: 100%;
@@ -1030,15 +844,15 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin-top: 8px;
+    margin-top: 5px;
   }
 
   .nav-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 7px 10px;
-    border-radius: 7px;
+    padding: 9px 10px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     text-decoration: none;
     font-size: 13px;
@@ -1050,9 +864,10 @@
   }
 
   .nav-item.active {
-    background: var(--accent-fade);
+    background: color-mix(in srgb, var(--accent-fade) 82%, var(--bg-card));
     color: var(--accent);
-    font-weight: 500;
+    font-weight: 650;
+    box-shadow: inset 3px 0 0 var(--accent), var(--shadow-xs);
   }
 
   .nav-icon {
@@ -1154,68 +969,194 @@
     color: var(--text-primary);
   }
 
-  /* Avatar section — icon-only grid (same in both light + dark themes). */
-  .section {
-    margin-top: 16px;
-    border-top: 1px solid var(--border-subtle);
-    padding-top: 12px;
+  .quick-card {
+    margin-top: 8px;
+    padding: 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg-card) 78%, transparent);
+    box-shadow: var(--shadow-xs);
   }
 
-  .section-title-bar {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 0 8px 7px;
-  }
-
-  .model-panel {
-    padding-top: 12px;
-  }
-
-  .model-row {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 0 2px 10px;
-  }
-
-  .model-row + .model-row {
-    border-top: 1px dashed var(--border-subtle);
-    padding-top: 10px;
-  }
-
-  .model-row-head {
+  .quick-head,
+  .quick-row,
+  .clean-switch,
+  .companion-quick {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding: 0 2px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
+    gap: 10px;
   }
 
-  .model-row-head a {
+  .quick-head {
+    align-items: flex-start;
+    padding-bottom: 11px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .quick-head strong {
+    display: block;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .quick-head a,
+  .quick-change {
     color: var(--accent);
+    font-size: 10.5px;
+    font-weight: 650;
     text-decoration: none;
-    font-weight: 600;
-    text-transform: none;
-    letter-spacing: 0;
   }
 
-  .model-row-head a:hover {
-    color: var(--accent-hover);
-    text-decoration: underline;
+  .quick-kicker,
+  .quick-label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+    text-transform: uppercase;
   }
 
-  .model-selects {
+  .quick-kicker {
+    margin-bottom: 3px;
+    color: var(--field);
+  }
+
+  .quick-row,
+  .clean-switch,
+  .quick-mic,
+  .companion-quick {
+    padding-top: 11px;
+  }
+
+  .quick-row-copy strong,
+  .companion-link strong {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .clean-switch {
+    cursor: pointer;
+  }
+
+  .clean-switch span {
+    min-width: 0;
+  }
+
+  .clean-switch strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  .clean-switch small,
+  .quick-mic small,
+  .companion-link small {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 9.5px;
+    line-height: 1.35;
+  }
+
+  .clean-switch input {
+    appearance: none;
+    width: 34px;
+    height: 20px;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-subtle);
+    position: relative;
+    flex: 0 0 auto;
+    transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+  }
+
+  .clean-switch input::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-xs);
+    transition: transform var(--motion-base) var(--ease-standard);
+  }
+
+  .clean-switch input:checked {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .clean-switch input:checked::after {
+    transform: translateX(14px);
+  }
+
+  .quick-mic {
+    display: block;
+  }
+
+  .quick-mic select {
+    width: 100%;
+    height: 32px;
+    margin-top: 5px;
+    padding: 0 28px 0 9px;
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+  }
+
+  .companion-quick {
+    align-items: flex-end;
+  }
+
+  .companion-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .companion-icon {
+    width: 34px;
+    height: 34px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    place-items: center;
+    flex: 0 0 auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-card);
+  }
+
+  .quick-card .vis-row {
+    margin: 0;
+    flex: 0 0 102px;
+    padding: 2px;
+    gap: 2px;
+    border-radius: 9px;
+    background: var(--bg-subtle);
+  }
+
+  .quick-card .vis-btn {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .quick-card .vis-btn.active {
+    background: var(--bg-card);
+    box-shadow: var(--shadow-xs);
   }
 
   .mic-note {
@@ -1225,131 +1166,9 @@
     margin-top: 4px;
   }
 
-  .model-selects select {
-    min-width: 0;
-    width: 100%;
-    height: 30px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--bg-card);
-    color: var(--text-primary);
-    padding: 0 8px;
-    font-size: 12px;
-  }
-
-  .model-selects select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-fade);
-  }
-
-  .model-selects select:disabled,
-  .mini-toggle input:disabled + span {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .mini-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    text-transform: none;
-    letter-spacing: 0;
-    font-size: 10px;
-    font-weight: 600;
-  }
-
-  .mini-toggle input {
-    width: 12px;
-    height: 12px;
-    margin: 0;
-    accent-color: var(--accent);
-  }
-
-  .skin-grid {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 4px;
-    padding: 0 2px 6px;
-  }
-
-  .skin-grid-collapsed {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 4px;
-    align-items: center;
-  }
-
-  /* Avatar size presets (S / M / L) */
-  .scale-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 2px 0;
-  }
-  .scale-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-right: 2px;
-  }
-  /* Collapsed sidebar is only 56px wide. Three side-by-side S/M/L buttons
-     overflowed that, so stack them vertically (matching the skin-icon column
-     directly above) where they sit comfortably in the thin bar. */
-  .scale-row-collapsed {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border-subtle);
-  }
-  .scale-btn {
-    flex: 1 1 0;
-    min-width: 22px;
-    padding: 3px 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 120ms ease;
-  }
-  .scale-row-collapsed .scale-btn {
-    flex: 0 0 auto;
-    width: 36px;
-    padding: 4px 0;
-    font-size: 11px;
-  }
-  .scale-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .scale-btn.active {
-    border-color: var(--accent);
-    background: var(--accent-fade);
-    color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent) inset;
-  }
-
   /* Avatar visibility segmented control (On / Auto / Off). */
   .vis-row {
     display: flex;
-    gap: 4px;
-    margin-bottom: 8px;
-  }
-  .vis-row-collapsed {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
     gap: 4px;
     margin-bottom: 8px;
   }
@@ -1364,11 +1183,7 @@
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 120ms ease;
-  }
-  .vis-row-collapsed .vis-btn {
-    flex: 0 0 auto;
-    width: 36px;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
   .vis-btn:hover {
     border-color: var(--accent);
@@ -1379,50 +1194,6 @@
     background: var(--accent-fade);
     color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent) inset;
-  }
-
-  .skin-icon-btn {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    cursor: pointer;
-    border-radius: 8px;
-    width: 100%;
-    aspect-ratio: 1;
-    color: var(--text-primary);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 4px;
-    transition: all 120ms ease;
-  }
-
-  .skin-grid-collapsed .skin-icon-btn {
-    width: 36px;
-    aspect-ratio: 1;
-  }
-
-  .skin-icon-btn:hover {
-    border-color: var(--accent);
-    transform: translateY(-1px);
-  }
-
-  .skin-icon-btn.active {
-    border-color: var(--accent);
-    background: var(--accent-fade);
-    color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent) inset;
-  }
-
-  /* "More" tile → Settings → Appearance (the full avatar roster incl. pets). */
-  .skin-more-btn {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: var(--text-secondary);
-    line-height: 1;
-  }
-  .skin-more-btn:hover {
-    color: var(--accent);
   }
 
   /* Progress bars for usage */
@@ -1589,10 +1360,6 @@
   @media (max-height: 720px) {
     .hotkey-reminder { display: none; }
     .sidebar-top { padding-top: 10px; padding-bottom: 10px; }
-    .model-row { padding-bottom: 8px; }
-    .model-row + .model-row { padding-top: 8px; }
-    .model-selects { gap: 5px; }
-    .model-selects select { height: 27px; }
     .sidebar-fox { display: none; }
   }
   @media (max-height: 580px) {

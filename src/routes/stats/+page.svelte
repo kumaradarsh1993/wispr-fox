@@ -48,7 +48,8 @@
 <div class="stats-page">
   <header class="stats-header">
     <div>
-      <h1>Your dictation, by the numbers</h1>
+      <p class="wf-kicker">A view from the hill</p>
+      <h1 class="wf-page-title">Your voice, in motion</h1>
       {#if d?.firstDay}
         <p class="subtle">Since {sinceLabel(d.firstDay)} · these totals are kept forever, even after recordings are cleared.</p>
       {:else}
@@ -59,7 +60,7 @@
 
   {#if !d || d.totalSessions === 0}
     <div class="empty">
-      <div class="empty-emoji">📊</div>
+      <img class="empty-fox" src="/fox/fox-empty-state.png" alt="" />
       <h2>No dictations yet</h2>
       <p>Press your dictation hotkey and start talking. Your time-saved counter starts the moment you do.</p>
     </div>
@@ -138,7 +139,7 @@
     <!-- Footnotes / secondary -->
     <section class="footnote">
       {#if d.bestDay}
-        <span>🏆 Best day: <strong>{new Date(d.bestDay.date + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" })}</strong> with {fmtNum(d.bestDay.words)} words.</span>
+        <span class="best-day"><i aria-hidden="true"></i> Best day: <strong>{new Date(d.bestDay.date + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" })}</strong> with {fmtNum(d.bestDay.words)} words.</span>
       {/if}
       <span>“Time saved” assumes typing at {TYPING_WPM} wpm — a conservative baseline, so the real number is likely higher.</span>
     </section>
@@ -151,16 +152,16 @@
     overflow-y: auto;
     padding: 28px 32px 60px;
     box-sizing: border-box;
-    max-width: 960px;
+    max-width: 1040px;
     margin: 0 auto;
     color: var(--text-primary);
   }
 
+  .stats-header {
+    padding: 4px 2px 2px;
+  }
   .stats-header h1 {
-    font-size: 22px;
-    font-weight: 650;
-    margin: 0 0 4px;
-    letter-spacing: -0.01em;
+    margin-bottom: 5px;
   }
   .subtle {
     font-size: 12.5px;
@@ -176,7 +177,12 @@
     padding: 80px 20px;
     color: var(--text-secondary);
   }
-  .empty-emoji { font-size: 40px; }
+  .empty-fox {
+    width: 170px;
+    height: 170px;
+    object-fit: contain;
+    filter: drop-shadow(0 7px 14px rgba(92, 56, 22, 0.13));
+  }
   .empty h2 { margin: 12px 0 6px; color: var(--text-primary); font-size: 17px; }
   .empty p { margin: 0 auto; max-width: 380px; font-size: 13px; line-height: 1.5; }
 
@@ -188,9 +194,11 @@
     justify-content: space-between;
     gap: 16px;
     padding: 22px 24px;
-    border-radius: 18px;
-    background: var(--accent-fade);
-    border: 1px solid var(--accent-fade);
+    border-radius: var(--radius-xl);
+    background:
+      linear-gradient(110deg, color-mix(in srgb, var(--accent-fade) 74%, var(--bg-card)), color-mix(in srgb, var(--field-fade) 55%, var(--bg-card)));
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-sm);
     overflow: hidden;
   }
   .hero-label {
@@ -232,8 +240,9 @@
   .card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     padding: 14px 16px;
+    box-shadow: var(--shadow-xs);
   }
   .card-key {
     font-size: 11px;
@@ -261,7 +270,7 @@
     margin-top: 22px;
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 16px;
+    border-radius: var(--radius-lg);
     padding: 16px 18px 14px;
   }
   .chart-toolbar {
@@ -287,7 +296,7 @@
     padding: 4px 12px;
     border-radius: 7px;
     cursor: pointer;
-    transition: all 120ms ease;
+    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
   .seg-btn:hover { color: var(--text-primary); }
   .seg-btn.active {
@@ -352,8 +361,26 @@
   }
   .footnote strong { color: var(--text-primary); }
 
+  .best-day {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .best-day i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--sun);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--sun) 16%, transparent);
+  }
+
   @media (max-width: 720px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
     .hero-fox { display: none; }
+  }
+
+  @media (max-width: 920px) {
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>

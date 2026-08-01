@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use tauri::{Emitter, Manager, WebviewWindow};
+use tauri::{Emitter, WebviewWindow};
 
 /// Whether a poller thread is currently active. Prevents spawning more than
 /// one at a time (e.g. if JS sends two `set_clickthrough(true)` calls in

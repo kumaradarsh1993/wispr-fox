@@ -85,6 +85,7 @@ where
 }
 
 /// Distinct speaker count across a set of turns.
+#[cfg(test)]
 pub fn speaker_count(turns: &[SpeakerTurn]) -> usize {
     turns
         .iter()
