@@ -16,3 +16,14 @@ keep working with any custom sheet in the same 8×9 / 192×208 grid.
 Sheet format: 1536×1872 WEBP, 8 columns × 9 rows of 192×208 frames.
 Rows: idle, run-right, run-left, waving, jumping, sad, waiting, typing,
 celebration. Frame counts per row: 6 / 8 / 8 / 4 / 5 / 8 / 6 / 6 / 6.
+
+## Custom Codex v2 pet
+
+`mochi-marmalade.webp` is the owner's Codex-authored hatch-pet, created from
+their cat reference photograph. Its validated production atlas is included
+unchanged: 1536×2288 WEBP, 8 columns × 11 rows, SHA-256
+`5609A9398A9C7CF6CEBA7A337DCE44AB82A08170E7C93B355DE43B76BF4487C8`.
+Rows 0–8 provide the standard animation contract. Rows 9–10 preserve sixteen
+clockwise look directions for future pointer-aware rendering. It is generated
+for this personal project and is not covered by the OpenAI terminal-pet note
+above.

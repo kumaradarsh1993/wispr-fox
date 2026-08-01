@@ -13,6 +13,7 @@
   });
 
   let d = $derived(statsStore.derived(windowDays));
+  let voice = $derived(statsStore.voice);
 
   function metricVal(p: DayPoint): number {
     return metric === "words" ? p.words : metric === "time" ? p.dictation_ms : p.sessions;
@@ -71,7 +72,7 @@
         <div class="hero-label">Time saved vs typing</div>
         <div class="hero-value">{fmtDurationLong(d.timeSavedMs)}</div>
         <div class="hero-sub">
-          You spoke {fmtNum(d.totalWords)} words in {fmtDuration(d.totalDictationMs)} —
+          You delivered {fmtNum(d.totalWords)} words in {fmtDuration(d.totalDictationMs)} —
           typing them at {TYPING_WPM} wpm would have taken {fmtDuration(d.typingMs)}.
         </div>
       </div>
@@ -83,7 +84,7 @@
     <!-- Key stat cards -->
     <section class="cards">
       <div class="card">
-        <div class="card-key">Words dictated</div>
+        <div class="card-key">Words delivered</div>
         <div class="card-val">{fmtNum(d.totalWords)}</div>
         <div class="card-sub">{fmtNum(d.avgWordsPerSession)} avg / session</div>
       </div>
@@ -93,9 +94,9 @@
         <div class="card-sub">over {d.activeDays} active day{d.activeDays === 1 ? "" : "s"}</div>
       </div>
       <div class="card">
-        <div class="card-key">Speaking speed</div>
-        <div class="card-val">{Math.round(d.speakingWpm)}<span class="unit"> wpm</span></div>
-        <div class="card-sub">{Math.round(d.speakingWpm / TYPING_WPM * 10) / 10}× faster than typing</div>
+        <div class="card-key">Active days</div>
+        <div class="card-val">{fmtNum(d.activeDays)}</div>
+        <div class="card-sub">since {sinceLabel(d.firstDay)}</div>
       </div>
       <div class="card">
         <div class="card-key">Current streak</div>
@@ -103,6 +104,64 @@
         <div class="card-sub">{d.today.sessions > 0 ? "today's in the books ✓" : "dictate today to keep it"}</div>
       </div>
     </section>
+
+    {#if voice}
+      <section class="voice-block">
+        <div class="voice-heading">
+          <div>
+            <p class="wf-kicker">Your verbal fingerprint</p>
+            <h2>Voice signature</h2>
+            <p>
+              Based on {voice.sessions} retained microphone session{voice.sessions === 1 ? "" : "s"}
+              and {fmtNum(voice.words)} raw words. Uploads, meeting speakers, and AI-polished text are excluded.
+            </p>
+          </div>
+          <div class="signature-tags" aria-label="Voice signature summary">
+            <span>{voice.paceLabel}</span>
+            <span>{voice.sessionStyle}</span>
+            <span>{voice.sentenceStyle}</span>
+            <span>{voice.vocabularyLabel}</span>
+          </div>
+        </div>
+
+        <div class="voice-grid">
+          <article class="voice-card">
+            <div class="voice-card-key">Typical dictation pace</div>
+            <div class="voice-card-value">{voice.medianWpm}<span> wpm</span></div>
+            <p>Middle half: {voice.paceLow}–{voice.paceHigh} wpm · {voice.paceConsistency.toLowerCase()}</p>
+          </article>
+          <article class="voice-card">
+            <div class="voice-card-key">Thought shape</div>
+            <div class="voice-card-value">{fmtNum(voice.medianSessionWords)}<span> words</span></div>
+            <p>Typical session · {voice.medianSentenceWords} words per sentence · {voice.questionShare}% questions</p>
+          </article>
+          <article class="voice-card">
+            <div class="voice-card-key">Vocabulary range</div>
+            <div class="voice-card-value">{fmtNum(voice.distinctWords)}<span> distinct</span></div>
+            <p>{voice.vocabularyLabel} across the retained raw-transcript sample</p>
+          </article>
+          <article class="voice-card">
+            <div class="voice-card-key">Speech texture</div>
+            <div class="voice-card-value">{voice.discoursePer100}<span> / 100 words</span></div>
+            <p>Captured discourse markers · {voice.repeatedPer100} immediate repeats per 100 words</p>
+          </article>
+        </div>
+
+        {#if voice.topMarkers.length}
+          <div class="marker-row">
+            <span class="marker-label">Recurring markers</span>
+            {#each voice.topMarkers as marker (marker.label)}
+              <span class="marker-chip"><strong>{marker.label}</strong> {marker.count}</span>
+            {/each}
+          </div>
+        {/if}
+
+        <p class="voice-note">
+          Calculated on this device from raw transcript text and captured duration. Transcription can omit soft fillers,
+          so these are observable patterns rather than accent, pronunciation, or fluency scores.
+        </p>
+      </section>
+    {/if}
 
     <!-- Chart -->
     <section class="chart-block">
@@ -265,6 +324,135 @@
     margin-top: 3px;
   }
 
+  /* Retained raw-transcript language portrait. Lifetime productivity totals
+     live above; this block deliberately explains its narrower voice sample. */
+  .voice-block {
+    margin-top: 22px;
+    padding: 20px;
+    border: 1px solid color-mix(in srgb, var(--field) 24%, var(--border-subtle));
+    border-radius: var(--radius-xl);
+    background:
+      radial-gradient(circle at 92% 12%, color-mix(in srgb, var(--sun) 13%, transparent), transparent 30%),
+      linear-gradient(135deg, color-mix(in srgb, var(--field-fade) 42%, var(--bg-card)), var(--bg-card) 58%);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .voice-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 22px;
+  }
+
+  .voice-heading h2 {
+    margin: 2px 0 5px;
+    font-size: 22px;
+    letter-spacing: -0.025em;
+  }
+
+  .voice-heading p:not(.wf-kicker) {
+    margin: 0;
+    max-width: 610px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .signature-tags {
+    max-width: 300px;
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .signature-tags span,
+  .marker-chip {
+    border: 1px solid color-mix(in srgb, var(--field) 25%, var(--border-subtle));
+    background: color-mix(in srgb, var(--bg-card) 80%, var(--field-fade));
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    padding: 5px 8px;
+    white-space: nowrap;
+  }
+
+  .voice-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  .voice-card {
+    min-width: 0;
+    padding: 13px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg-card) 91%, transparent);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .voice-card-key {
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+  }
+
+  .voice-card-value {
+    margin-top: 5px;
+    color: var(--text-primary);
+    font-size: 23px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .voice-card-value span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 550;
+    letter-spacing: 0;
+  }
+
+  .voice-card p {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+
+  .marker-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+  }
+
+  .marker-label {
+    margin-right: 2px;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .marker-chip strong {
+    color: var(--text-primary);
+    font-weight: 650;
+  }
+
+  .voice-note {
+    margin: 13px 0 0;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    line-height: 1.45;
+  }
+
   /* Chart */
   .chart-block {
     margin-top: 22px;
@@ -382,5 +570,12 @@
 
   @media (max-width: 920px) {
     .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .voice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .voice-heading { flex-direction: column; gap: 12px; }
+    .signature-tags { max-width: none; justify-content: flex-start; }
+  }
+
+  @media (max-width: 560px) {
+    .voice-grid { grid-template-columns: 1fr; }
   }
 </style>

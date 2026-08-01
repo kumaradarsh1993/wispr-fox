@@ -26,7 +26,7 @@
 // to "fox" on load.
 // Removed in v2.1.0-nightly.4: "duo" (Khaumani & Indy) and the already-retired
 // "duo-hd" — the user judged the hand-drawn duo a bad design next to the
-// raster Oru & Gujia pack, which is the same two-cat concept done right.
+// raster Uru & Gujia pack, which is the same two-cat concept done right.
 // Both saved values migrate to "oru-gujia".
 
 import { emit, listen } from "@tauri-apps/api/event";
@@ -51,7 +51,8 @@ export type Skin =
   | "pet-seedy"
   | "pet-stacky"
   | "pet-bsod"
-  | "pet-null-signal";
+  | "pet-null-signal"
+  | "pet-mochi-marmalade";
 
 const STORAGE_KEY = "wispr.clippy.skin";
 const EVENT = "wispr:skin-change";
@@ -74,6 +75,7 @@ const VALID_SKINS: readonly Skin[] = [
   "pet-stacky",
   "pet-bsod",
   "pet-null-signal",
+  "pet-mochi-marmalade",
 ] as const;
 
 function readInitial(): Skin {
@@ -89,7 +91,7 @@ function readInitial(): Skin {
   if (raw === "duck") return "fox";
   // Migrate retired "cat-lab" → "cat" (same character family, cleaner picker).
   if (raw === "cat-lab") return "cat";
-  // Retire both two-cat SVG experiments → the raster Oru & Gujia pack.
+  // Retire both two-cat SVG experiments → the raster Uru & Gujia pack.
   if (raw === "duo" || raw === "duo-hd") return "oru-gujia";
   if (raw && (VALID_SKINS as readonly string[]).includes(raw)) return raw as Skin;
   // Default: the watercolor fox — wispr-fox's own mascot, matches the

@@ -79,15 +79,17 @@ the "What v2.0.0 shipped" list below.)
 - **Settings/sidebar cleanup** — Settings are split into clearer sections; the
   sidebar now has STT/LLM model pickers, a Clean toggle, resizable width, and
   per-model usage readouts.
-- **Codex raster avatars** — Codex Fox, Oru & Gujia, and Spark Buddy use
+- **Codex raster avatars** — Codex Fox, Uru & Gujia, and Pikachu use
   manifest-v2 raster state packs rendered by `RasterAvatar.svelte`; the
   nightly.12 QA pass fixed scaling, edge slivers, and the Oru/Gujia white-fur
   matte issue, and v2.0.0 reduced raster footprints by ~20%.
 - **Analytics dashboard** — `/stats` page (the old duplicate History widget
   was retired in the v3.2 visual pass) with time saved vs typing @40wpm,
-  words/sessions per day, speaking speed, day
-  streak, 7/30/90-day chart). Backed by a lifetime `daily_stats` SQLite table
-  that is NOT pruned by retention.
+  delivered words/sessions per day, active-day streak, and 7/30/90-day chart.
+  Lifetime productivity totals come from `daily_stats` (NOT pruned by
+  retention). The recent Voice signature is separately derived on-device from
+  retained raw microphone transcripts and deliberately excludes uploads,
+  meeting speakers, and AI-cleaned/drafted output.
 - **Floater = constrained REST/TALK two-box model.** The window grows only when
   a bubble is visible, shrinks after the bubble fades, and remains
   bottom-centre anchored. v2.0.0 decouples bubble scale from avatar scale so
@@ -129,8 +131,11 @@ src/routes/
   +layout.svelte   Navigation rail + compact everyday controls + usage
   /history/        Searchable field notes with Raw/Cleaned/Drafted row tabs
   /stats/          Analytics dashboard (lib/stats.ts derivations, stats-store)
-  /settings/       Voice, AI engines, Writing, Companion, App & data, Account, Advanced
-  /clippy/         Always-on-top floater. Skins: fox/codex-fox/stylized/real-clippy/cat/oru-gujia/spark-buddy/wave/siri
+  /settings/       Voice, AI engines, Writing, Avatar, App & data, Account, Advanced
+  /clippy/         Always-on-top floater. Skins include Fox, Codex Fox, Clippo, Clippy,
+                   Blacky, Uru & Gujia, Mochi & Marmalade, Pikachu, Wavy, Siri,
+                   and the Codex terminal-pet collection. Authoritative picker
+                   metadata lives in `lib/avatar-catalog.ts`.
                    ("duo"/"duo-hd" removed in v2.1.0-nightly.4 — user judged the
                    hand-drawn duo bad next to the raster Oru & Gujia; saved values
                    migrate to "oru-gujia". Per-skin-class enter/exit animations via

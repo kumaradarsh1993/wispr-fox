@@ -437,7 +437,7 @@
     {#if screen === "welcome"}
       <section class="screen welcome" in:fly={{ y: 22, duration: 380 }}>
         <p class="wf-kicker">Your fox in the field</p>
-        <h1>Meet your voice companion.</h1>
+        <h1>Meet your voice avatar.</h1>
         <p class="tagline">
           In any textbox on your computer, hold
           <kbd>{prettyHotkey(settings.s.light_hotkey)}</kbd>, say what you
@@ -488,7 +488,7 @@
 
         <p class="hero-caption rise" style="--d: 220ms">
           The watercolor fox is the default. Pixel pets, a minimal waveform,
-          Black Clippy, Classic Clippy, and more stay available as companions —
+          Clippo, Clippy, Uru &amp; Gujia, Mochi &amp; Marmalade, Pikachu, and more stay available as avatars —
           the landscape remains unmistakably WhisperFox.
         </p>
 

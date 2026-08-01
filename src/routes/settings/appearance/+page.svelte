@@ -10,31 +10,7 @@
   } from "$lib/avatar-visibility.svelte";
   import { floaterScale, floaterDebug, floaterFixedBox, SCALE_MIN, SCALE_MAX, SCALE_PRESETS } from "$lib/floater-scale.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
-
-  type SkinOption = { id: Skin; label: string; desc: string };
-  const SKIN_OPTIONS: SkinOption[] = [
-    { id: "codex-fox",   label: "Codex Fox", desc: "High-fidelity 2.5D raster fox companion with Codex-blue glow and state-specific poses" },
-    { id: "fox",         label: "Fox",       desc: "Watercolor fox mascot — the Foxy identity, default since v1.0" },
-    { id: "stylized",    label: "Paperclip", desc: "Minimal stylised paperclip — dark outline, elephant ear, big eyes" },
-    { id: "real-clippy", label: "Clippy",    desc: "The actual Microsoft Clippy with original animations" },
-    { id: "cat",         label: "Desk Cat",  desc: "Sleepy charcoal cat with green slit-pupil eyes — curls up idle, perks up to help, typing paws" },
-    { id: "oru-gujia",   label: "Oru & Gujia", desc: "The two-cat team, based on Oru the orange tabby and Gujia the white supervisor — Gujia supervises while Oru does the actual typing" },
-    { id: "spark-buddy", label: "Spark Buddy", desc: "Original electric companion with polished raster poses, teal glow, and celebratory sparks" },
-    { id: "wave",        label: "Wave bar",  desc: "Minimal pill with a live waveform — no character, no bubbles" },
-    { id: "siri",        label: "Siri Orb",  desc: "A tiny multicolour orb that blooms with your voice — no character, no bubbles" },
-    // Terminal pets — animated pixel companions (Codex CLI pets; fan-use,
-    // see static/pets/README.md). They wave while listening, ponder while
-    // transcribing, type at a tiny laptop while polishing, and celebrate
-    // every paste.
-    { id: "pet-codex",       label: "Codex Pet",   desc: "The original Codex companion — a cloud-headed terminal robot" },
-    { id: "pet-dewey",       label: "Dewey",       desc: "A tidy duck for calm workspace days" },
-    { id: "pet-fireball",    label: "Fireball",    desc: "Hot path energy for fast dictation" },
-    { id: "pet-rocky",       label: "Rocky",       desc: "A steady rock when the monologue gets long" },
-    { id: "pet-seedy",       label: "Seedy",       desc: "Small green shoots for new ideas" },
-    { id: "pet-stacky",      label: "Stacky",      desc: "A balanced stack for deep work" },
-    { id: "pet-bsod",        label: "BSOD",        desc: "A tiny blue-screen gremlin" },
-    { id: "pet-null-signal", label: "Null Signal", desc: "Quiet signal from the void" },
-  ];
+  import { AVATAR_OPTIONS } from "$lib/avatar-catalog";
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string; desc: string }[] = [
     { id: "always", label: "Always show",     desc: "The avatar stays on screen at all times." },
@@ -88,18 +64,18 @@
 </script>
 
 <section>
-  <h2>Companion &amp; theme</h2>
+  <h2>Avatar &amp; theme</h2>
   <p class="lede">Avatar, window behaviour, and app-wide theme.</p>
 
   <h3>Avatar</h3>
   <p class="lede">The floating character that reacts to your dictation.</p>
   <div class="skin-tiles">
-    {#each SKIN_OPTIONS as opt (opt.id)}
+    {#each AVATAR_OPTIONS as opt (opt.id)}
       <button
         class="skin-tile"
         class:active={skinStore.current === opt.id}
         onclick={() => pickSkin(opt.id)}
-        title={opt.desc}
+        title={opt.description}
       >
         <div class="skin-tile-preview">
           <SkinIcon skin={opt.id} size={60} />

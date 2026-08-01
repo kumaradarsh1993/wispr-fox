@@ -33,6 +33,7 @@ export const PET_ANIMS: Record<PetAnimName, { row: number; frames: number; fps: 
 };
 
 export const PETS = [
+  { id: "mochi-marmalade", label: "Mochi & Marmalade", desc: "A graceful white cat and curious ginger tabby, always moving together" },
   { id: "codex",       label: "Codex Pet",   desc: "The original Codex companion — a cloud-headed terminal robot" },
   { id: "dewey",       label: "Dewey",       desc: "A tidy duck for calm workspace days" },
   { id: "fireball",    label: "Fireball",    desc: "Hot path energy for fast iteration" },
@@ -54,4 +55,9 @@ export function isPetSkin(skin: string): boolean {
 
 export function petIdFromSkin(skin: string): string {
   return skin.slice(4);
+}
+
+/** Custom hatch-pet packages use the 11-row v2 atlas; bundled CLI pets use v1. */
+export function petSheetRows(petId: string): 9 | 11 {
+  return petId === "mochi-marmalade" ? 11 : 9;
 }

@@ -3,15 +3,19 @@
 // and whenever a flow run returns to idle (i.e. just after a recording lands),
 // so the home widget and the Stats page update live as you dictate.
 
+import { listen } from "@tauri-apps/api/event";
 import { api, onFlowState, type StatsSummary } from "./api";
 import { deriveStats, type StatsDerived } from "./stats";
+import { deriveVoiceInsights, type VoiceInsights } from "./voice-insights";
 
 class StatsStore {
   summary = $state<StatsSummary | null>(null);
+  voice = $state<VoiceInsights | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
   private subscribed = false;
   private unsub?: () => void;
+  private unsubHistory?: () => void;
 
   /** Derived dashboard metrics, or null until the first load completes. */
   derived(windowDays = 30): StatsDerived | null {
@@ -21,7 +25,12 @@ class StatsStore {
   async refresh() {
     this.loading = true;
     try {
-      this.summary = await api.statsSummary();
+      const [summary, recordings] = await Promise.all([
+        api.statsSummary(),
+        api.listHistory(1_000),
+      ]);
+      this.summary = summary;
+      this.voice = deriveVoiceInsights(recordings);
       this.error = null;
     } catch (e) {
       console.warn("stats.refresh failed", e);
@@ -38,6 +47,7 @@ class StatsStore {
     this.unsub = await onFlowState((s) => {
       if (s === "idle") this.refresh();
     });
+    this.unsubHistory = await listen("wispr:history_changed", () => this.refresh());
   }
 }
 

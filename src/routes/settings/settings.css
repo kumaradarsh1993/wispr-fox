@@ -922,12 +922,26 @@
   .section-nav {
     align-items: stretch;
     flex-direction: column;
-    gap: 14px;
-    padding-top: 20px;
+    gap: 8px;
+    padding: 14px 20px 10px;
+  }
+
+  .settings-heading > p:last-child {
+    display: none;
+  }
+
+  .settings-heading {
+    /* The desktop 360px flex basis is horizontal in the full-width row but
+       becomes a 360px HEIGHT after this header switches to a column. */
+    flex: 0 0 auto;
   }
 
   .section-nav nav {
     justify-content: flex-start;
+  }
+
+  .section-body {
+    padding-top: 20px;
   }
 
   .provider-model-row,

@@ -1196,9 +1196,9 @@
     "F8 and I pounce",
   ];
   const IDLE_QUIPS_ORU_GUJIA = [
-    "Gujia supervises. Oru touches everything",
+    "Gujia supervises. Uru touches everything",
     "two cats, one keyboard",
-    "Oru heard F8 and arrived upside down",
+    "Uru heard F8 and arrived upside down",
     "Gujia has reviewed this silence",
     "cream tax payable in words",
     "we caught the thought. mostly",

@@ -26,8 +26,6 @@ export interface StatsDerived {
   typingMs: number;
   /** typingMs − dictationMs, floored at 0. The headline "time saved". */
   timeSavedMs: number;
-  /** Average words/minute the user actually spoke (across all dictation). */
-  speakingWpm: number;
   activeDays: number;
   firstDay: string | null;
   avgWordsPerSession: number;
@@ -103,8 +101,6 @@ export function deriveStats(summary: StatsSummary, windowDays = 30): StatsDerive
 
   const typingMs = (totalWords / TYPING_WPM) * 60000;
   const timeSavedMs = Math.max(0, typingMs - totalDictationMs);
-  const speakingWpm =
-    totalDictationMs > 0 ? totalWords / (totalDictationMs / 60000) : 0;
   const avgWordsPerSession = totalSessions > 0 ? totalWords / totalSessions : 0;
 
   // Gap-filled chart window.
@@ -145,7 +141,6 @@ export function deriveStats(summary: StatsSummary, windowDays = 30): StatsDerive
     totalDictationMs,
     typingMs,
     timeSavedMs,
-    speakingWpm,
     activeDays: summary.days.length,
     firstDay: summary.first_day,
     avgWordsPerSession,

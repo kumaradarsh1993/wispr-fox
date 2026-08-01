@@ -5,7 +5,7 @@
 > is a specialist doc (see the map at the bottom).
 >
 > **Last updated: 2026-08-01** (`v3.1.0` is stable; the Codex-authored
-> visual-overhaul line starts at `v3.2.0-nightly.1`).
+> visual-overhaul release is `v3.2.0-nightly.2`).
 
 > **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
 > this local core machine, AND a cloud Claude Code session on a second laptop
@@ -50,6 +50,25 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   tools, account/sync hardening, paste reliability, external-mic selection and
   metering, quiet-audio rescue, wide-format upload ingest, diarization, and
   meeting notes. Release notes: `docs/RELEASE_NOTES_v3.1.0.md`.
+
+- **`v3.2.0-nightly.2`** (2026-08-01, Codex) — **personal voice insights,
+  responsive Settings refinement, and avatar-gallery polish.** Release notes:
+  `docs/RELEASE_NOTES_v3.2.0-nightly.2.md`.
+  - Insights derives an on-device recent voice signature from retained raw
+    microphone transcripts: pace and consistency, session shape, sentence
+    shape, vocabulary breadth, question share, discourse markers, and adjacent
+    repetition signals. It excludes uploads, meeting speakers, and transformed
+    text, and does not pretend to assess accent or pronunciation from text.
+  - The compact Settings header no longer inherits the desktop heading's 360 px
+    flex basis as vertical height, removing the windowed-width blank band.
+  - One avatar catalog now drives the shell, Settings, and context menu. Names
+    are Clippo, Clippy, Blacky, Uru & Gujia, Mochi & Marmalade, Pikachu, Wavy,
+    and Siri; user-facing “Companion” copy is now “Avatar”.
+  - Picker representations were refined without changing the Codex raster
+    packs or Clippy. The validated Codex v2 Mochi & Marmalade atlas is integrated
+    byte-for-byte.
+  - Verification: `npm run check` is 0 errors/0 warnings, `npm run build`
+    succeeds, and `cargo check` succeeds with only pre-existing warnings.
 
 - **`v3.2.0-nightly.1`** (2026-08-01, Codex) — **desktop visual system,
   navigation, onboarding, settings, History, and Insights overhaul.** Release

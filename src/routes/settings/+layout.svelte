@@ -20,7 +20,7 @@
     { href: "/settings/dictation", label: "Voice", icon: "dictation" },
     { href: "/settings/providers", label: "AI engines", icon: "providers" },
     { href: "/settings/modes", label: "Writing", icon: "modes" },
-    { href: "/settings/appearance", label: "Companion", icon: "appearance" },
+    { href: "/settings/appearance", label: "Avatar", icon: "appearance" },
     { href: "/settings/general", label: "App & data", icon: "general" },
     { href: "/settings/account", label: "Account", icon: "account" },
     { href: "/settings/security", label: "Advanced", icon: "security" },
@@ -86,7 +86,7 @@
     <div class="settings-heading">
       <p class="wf-kicker">Make it yours</p>
       <h1>Settings</h1>
-      <p>Voice, writing, companion, and app preferences — organised around what you want to change.</p>
+      <p>Voice, writing, avatar, and app preferences — organised around what you want to change.</p>
     </div>
     <nav>
       {#each NAV as item (item.href)}

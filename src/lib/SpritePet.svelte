@@ -4,7 +4,7 @@
   // fps timer. Display size = frame size × PET_ZOOM × --fscale (S/M/L
   // slider), scaled via background-size so layout and paint agree — no
   // transforms, so the floater's box math stays honest.
-  import { PET_SHEET, PET_ANIMS, type PetAnimName } from "./pets";
+  import { PET_SHEET, PET_ANIMS, petSheetRows, type PetAnimName } from "./pets";
 
   let { petId, anim = "idle" } = $props<{ petId: string; anim?: PetAnimName }>();
 
@@ -28,6 +28,7 @@
   });
 
   let row = $derived((PET_ANIMS[anim as PetAnimName] ?? PET_ANIMS.idle).row);
+  let sheetHeight = $derived(PET_SHEET.fh * petSheetRows(petId));
 </script>
 
 <div
@@ -36,6 +37,7 @@
     --pz: calc({PET_ZOOM} * var(--fscale, 1));
     background-image: url('/pets/{petId}.webp');
     background-position: calc({-frame * PET_SHEET.fw}px * var(--pz)) calc({-row * PET_SHEET.fh}px * var(--pz));
+    background-size: calc(1536px * var(--pz)) calc({sheetHeight}px * var(--pz));
   "
   aria-hidden="true"
 ></div>
@@ -45,8 +47,7 @@
     width: calc(192px * var(--pz));
     height: calc(208px * var(--pz));
     background-repeat: no-repeat;
-    /* Whole sheet scaled by the same zoom: 8×192 wide, 9×208 tall. */
-    background-size: calc(1536px * var(--pz)) calc(1872px * var(--pz));
+    /* Whole-sheet size is set inline because v2 hatch-pets have 11 rows. */
     flex: 0 0 auto;
   }
 </style>

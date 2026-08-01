@@ -24,6 +24,7 @@
     type AvatarVisibility,
   } from "$lib/avatar-visibility.svelte";
   import { placeFloaterDefault } from "$lib/floater-place";
+  import { AVATAR_OPTIONS } from "$lib/avatar-catalog";
 
   type RecState =
     | "idle"
@@ -50,26 +51,6 @@
 
   type Pane = "main" | "avatar";
   let pane = $state<Pane>("main");
-
-  const AVATAR_OPTIONS: { id: Skin; label: string; emoji: string }[] = [
-    { id: "fox",         label: "Fox",              emoji: "Fx" },
-    { id: "codex-fox",   label: "Codex Fox",        emoji: "CF" },
-    { id: "stylized",    label: "Paperclip",        emoji: "Pc" },
-    { id: "real-clippy", label: "Clippy",           emoji: "Cl" },
-    { id: "cat",         label: "Desk Cat",         emoji: "Ct" },
-    { id: "oru-gujia",   label: "Oru & Gujia",      emoji: "OG" },
-    { id: "spark-buddy", label: "Spark Buddy",      emoji: "Sp" },
-    { id: "wave",        label: "Wave bar",         emoji: "≈" },
-    { id: "siri",        label: "Siri Orb",         emoji: "◉" },
-    { id: "pet-codex",       label: "Codex Pet",    emoji: "Px" },
-    { id: "pet-dewey",       label: "Dewey",        emoji: "Dw" },
-    { id: "pet-fireball",    label: "Fireball",     emoji: "Fb" },
-    { id: "pet-rocky",       label: "Rocky",        emoji: "Rk" },
-    { id: "pet-seedy",       label: "Seedy",        emoji: "Sd" },
-    { id: "pet-stacky",      label: "Stacky",       emoji: "St" },
-    { id: "pet-bsod",        label: "BSOD",         emoji: "Bs" },
-    { id: "pet-null-signal", label: "Null Signal",  emoji: "Ns" },
-  ];
 
   const VISIBILITY_OPTIONS: { id: AvatarVisibility; label: string }[] = [
     { id: "always", label: "Always show" },
@@ -236,7 +217,7 @@
         class:active={skinStore.current === opt.id}
         onclick={() => pickAvatar(opt.id)}
       >
-        <span class="ctx-glyph">{opt.emoji}</span>
+        <span class="ctx-glyph">{opt.mark}</span>
         <span class="ctx-label">{opt.label}</span>
         {#if skinStore.current === opt.id}
           <span class="ctx-check">✓</span>

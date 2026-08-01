@@ -19,6 +19,7 @@
   } from "$lib/api";
   import { account } from "$lib/account-store.svelte";
   import SkinIcon from "$lib/SkinIcon.svelte";
+  import { avatarLabel } from "$lib/avatar-catalog";
   import { prettyHotkey } from "$lib/hotkey-display";
   import {
     DEEPGRAM_FREE_CREDIT_USD,
@@ -76,31 +77,6 @@
       .then(({ setTheme }) => setTheme(nativeTheme))
       .catch((e) => console.warn("native theme sync failed", e));
   });
-
-  type SkinOption = { id: Skin; label: string };
-  const SKIN_OPTIONS: SkinOption[] = [
-    { id: "fox",         label: "Fox" },
-    { id: "codex-fox",   label: "Codex Fox" },
-    { id: "stylized",    label: "Paperclip" },
-    { id: "real-clippy", label: "Clippy" },
-    { id: "cat",         label: "Desk Cat" },
-    { id: "oru-gujia",   label: "Oru & Gujia" },
-    { id: "spark-buddy", label: "Spark Buddy" },
-    { id: "wave",        label: "Wave bar" },
-    { id: "siri",        label: "Siri Orb" },
-    { id: "pet-codex",       label: "Codex Pet" },
-    { id: "pet-dewey",       label: "Dewey" },
-    { id: "pet-fireball",    label: "Fireball" },
-    { id: "pet-rocky",       label: "Rocky" },
-    { id: "pet-seedy",       label: "Seedy" },
-    { id: "pet-stacky",      label: "Stacky" },
-    { id: "pet-bsod",        label: "BSOD" },
-    { id: "pet-null-signal", label: "Null Signal" },
-  ];
-
-  function skinLabel(id: Skin): string {
-    return SKIN_OPTIONS.find((o) => o.id === id)?.label ?? id;
-  }
 
   // Avatar visibility tri-state ("Always show" / "While dictating" / "Hidden").
   // The single source of truth for whether the floater is on screen — decoupled
@@ -534,14 +510,14 @@
             </label>
 
             <div class="companion-quick">
-              <a class="companion-link" href="/settings/appearance" title="Choose your companion">
+              <a class="companion-link" href="/settings/appearance" title="Choose your avatar">
                 <span class="companion-icon"><SkinIcon skin={skinStore.current} size={26} /></span>
                 <span>
-                  <small>Companion</small>
-                  <strong>{skinLabel(skinStore.current)}</strong>
+                  <small>Avatar</small>
+                  <strong>{avatarLabel(skinStore.current)}</strong>
                 </span>
               </a>
-              <div class="vis-row" role="group" aria-label="Companion visibility">
+              <div class="vis-row" role="group" aria-label="Avatar visibility">
                 {#each VISIBILITY_OPTIONS as v (v.id)}
                   <button
                     class="vis-btn"
