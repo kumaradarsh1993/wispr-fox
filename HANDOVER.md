@@ -4,8 +4,8 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-11** (`v3.1.0` is stable; the Codex-authored
-> visual-overhaul release is `v3.2.0-nightly.2`).
+> **Last updated: 2026-08-11** (`v3.2.0` is stable; the Codex-authored
+> meeting-workflow release is `v3.3.0-nightly.1`).
 
 > **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
 > this local core machine, AND a cloud Claude Code session on a second laptop
@@ -45,7 +45,7 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
-- **Unreleased `main` (2026-08-11) - meeting workflow revamp.** Diarized
+- **`v3.3.0-nightly.1` (2026-08-11, Codex) - meeting workflow revamp.** Diarized
   uploads are first-class meeting rows with a separate `meeting_notes_text`
   version, versioned `speaker_turns`, dynamic `speaker_names`, `is_meeting`,
   and `diarization_enabled` metadata. History now has a consolidated Rerun
@@ -65,15 +65,17 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
     device are desktop-local annotations for now. They deliberately do not set
     sync `dirty`, because remote-origin rows are never pushed by this client;
     marking them dirty would block future cloud updates and tombstones.
-  - Verification: `npm run check` is 0 errors/0 warnings, `npm run build`
-    succeeds, and `CARGO_BUILD_JOBS=2 cargo check` succeeds with the same nine
-    pre-existing dead-code warnings. No installer/tag was produced.
+  - Verification before release: `npm run check` is 0 errors/0 warnings,
+    `npm run build` succeeds, and `CARGO_BUILD_JOBS=2 cargo check` succeeds
+    with the same nine pre-existing dead-code warnings. Release notes:
+    `docs/RELEASE_NOTES_v3.3.0-nightly.1.md`.
 
-- **Stable: `v3.1.0`** (2026-08-01, "Latest") — promotes the complete
-  v3.1.0 nightly line: mic noise reduction, Gemini reliability and re-run
-  tools, account/sync hardening, paste reliability, external-mic selection and
-  metering, quiet-audio rescue, wide-format upload ingest, diarization, and
-  meeting notes. Release notes: `docs/RELEASE_NOTES_v3.1.0.md`.
+- **Stable: `v3.2.0`** (2026-08-11, "Latest") — promotes the complete
+  Codex-authored v3.2 nightly line: the fox-in-the-field visual and navigation
+  overhaul, rebuilt onboarding, responsive Settings and History, on-device
+  recent voice insights, and avatar-gallery refinement. GitHub Actions built
+  and published Windows, Apple Silicon macOS, and Linux artifacts from one
+  tagged commit. Release notes: `docs/RELEASE_NOTES_v3.2.0.md`.
 
 - **`v3.2.0-nightly.2`** (2026-08-01, Codex) — **personal voice insights,
   responsive Settings refinement, and avatar-gallery polish.** Release notes:
