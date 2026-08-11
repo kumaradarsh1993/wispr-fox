@@ -39,6 +39,8 @@ export interface AppSettings {
   stt_model: string;
   llm_provider: string;
   llm_model: string;
+  draft_llm_provider: string;
+  draft_llm_model: string;
   language_hint: string | null;
   /** Mic noise reduction before STT: "off" | "on" (rumble high-pass) |
    *  "aggressive" (high-pass + RNNoise). Raw WAV on disk is never modified. */
@@ -68,6 +70,7 @@ export interface AppSettings {
   custom_light_prompt: string;
   custom_advanced_prompt: string;
   custom_drafting_prompt: string;
+  custom_meeting_prompt: string;
   pull_back_on_navigation: boolean;
   keep_in_clipboard: boolean;
   open_silently: boolean;
@@ -110,6 +113,13 @@ export interface Recording {
   transcript: string | null;
   cleaned_text: string | null;
   drafted_text: string | null;
+  meeting_notes_text: string | null;
+  /** Versioned JSON envelope: {version:1, turns:[{speaker,text,start}]}. */
+  speaker_turns: string | null;
+  /** JSON object mapping placeholders to user-supplied names. */
+  speaker_names: string | null;
+  is_meeting: boolean;
+  diarization_enabled: boolean;
   stt_provider: string | null;
   llm_provider: string | null;
   clippy_used: boolean;
@@ -150,6 +160,8 @@ export interface UploadOptions {
   sttModel?: string | null;
   llmProvider?: string | null;
   llmModel?: string | null;
+  draftLlmProvider?: string | null;
+  draftLlmModel?: string | null;
   cleanup: boolean;
   draft: boolean;
   /** Ask the provider to label who is speaking. Only Deepgram and ElevenLabs
@@ -285,6 +297,7 @@ export interface DefaultPrompts {
   light: string;
   advanced: string;
   drafting: string;
+  meeting: string;
 }
 
 export const api = {
@@ -335,13 +348,26 @@ export const api = {
       sttModel: opts.sttModel ?? null,
       llmProvider: opts.llmProvider ?? null,
       llmModel: opts.llmModel ?? null,
+      draftLlmProvider: opts.draftLlmProvider ?? null,
+      draftLlmModel: opts.draftLlmModel ?? null,
       cleanup: opts.cleanup,
       draft: opts.draft,
       diarize: opts.diarize,
       meetingNotes: opts.meetingNotes,
     }),
-  generateAltVersion: (id: string, kind: "cleaned" | "drafted") =>
-    invoke<string>("generate_alt_version", { id, kind }),
+  generateAltVersion: (
+    id: string,
+    kind: "cleaned" | "drafted" | "meeting_notes",
+    opts?: { provider?: string; model?: string },
+  ) => invoke<string>("generate_alt_version", { id, kind, provider: opts?.provider ?? null, model: opts?.model ?? null }),
+  rerunTranscription: (
+    id: string,
+    sttProvider: string,
+    sttModel: string,
+    diarize: boolean,
+  ) => invoke<void>("rerun_transcription", { id, sttProvider, sttModel, diarize }),
+  setSpeakerNames: (id: string, names: Record<string, string>) =>
+    invoke<void>("set_speaker_names", { id, namesJson: JSON.stringify(names) }),
   audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),
   audioDataUrlFor: (id: string) => invoke<string>("audio_data_url_for", { id }),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),

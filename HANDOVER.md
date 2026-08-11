@@ -4,7 +4,7 @@
 > `CLAUDE.md` for the deep architecture + conventions. Everything else
 > is a specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-01** (`v3.1.0` is stable; the Codex-authored
+> **Last updated: 2026-08-11** (`v3.1.0` is stable; the Codex-authored
 > visual-overhaul release is `v3.2.0-nightly.2`).
 
 > **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
@@ -44,6 +44,26 @@ no account, no telemetry.
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
+
+- **Unreleased `main` (2026-08-11) - meeting workflow revamp.** Diarized
+  uploads are first-class meeting rows with a separate `meeting_notes_text`
+  version, versioned `speaker_turns`, dynamic `speaker_names`, `is_meeting`,
+  and `diarization_enabled` metadata. History now has a consolidated Rerun
+  dialog, editable speaker labels, speaker-block rendering, named copy, and a
+  full-screen reading mode. Cleanup and Draft/Meeting use separate model
+  defaults, and the Meeting Notes prompt is configurable under Writing.
+  Selecting diarization automatically moves an incompatible Whisper choice to
+  a supported engine and explains why. OpenAI's specialized
+  `gpt-4o-transcribe-diarize` path is supported; ordinary OpenAI STT defaults
+  to `gpt-transcribe`. Groq defaults have moved from retiring Llama ids to
+  GPT-OSS 20B/120B, and Gemini defaults to stable 3.6 Flash.
+  - Local SQLite migrations are additive and idempotent.
+  - The shared Supabase `notes` table must expose the five fields above before
+    this desktop commit is deployed; the web-client change owns that shared
+    migration and uses the same names.
+  - Verification: `npm run check` is 0 errors/0 warnings, `npm run build`
+    succeeds, and `CARGO_BUILD_JOBS=2 cargo check` succeeds with the same nine
+    pre-existing dead-code warnings. No installer/tag was produced.
 
 - **Stable: `v3.1.0`** (2026-08-01, "Latest") — promotes the complete
   v3.1.0 nightly line: mic noise reduction, Gemini reliability and re-run

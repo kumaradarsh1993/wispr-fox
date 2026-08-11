@@ -34,6 +34,7 @@ pub enum Status {
 pub enum AltKind {
     Cleaned,
     Drafted,
+    MeetingNotes,
 }
 
 impl Status {
@@ -120,6 +121,13 @@ pub struct Recording {
     /// so the user can have BOTH a cleaned version and a drafted version
     /// of the same recording on demand.
     pub drafted_text: Option<String>,
+    pub meeting_notes_text: Option<String>,
+    /// Versioned JSON envelope containing provider-normalized speaker turns.
+    pub speaker_turns: Option<String>,
+    /// JSON object mapping stable placeholders ("Speaker 1") to user names.
+    pub speaker_names: Option<String>,
+    pub is_meeting: bool,
+    pub diarization_enabled: bool,
     pub stt_provider: Option<String>,
     pub llm_provider: Option<String>,
     pub clippy_used: bool,
@@ -198,6 +206,11 @@ impl History {
               transcript    TEXT,
               cleaned_text  TEXT,
               drafted_text  TEXT,
+              meeting_notes_text TEXT,
+              speaker_turns TEXT,
+              speaker_names TEXT,
+              is_meeting INTEGER NOT NULL DEFAULT 0,
+              diarization_enabled INTEGER NOT NULL DEFAULT 0,
               stt_provider  TEXT,
               llm_provider  TEXT,
               clippy_used   INTEGER NOT NULL DEFAULT 0,
@@ -246,6 +259,11 @@ impl History {
         // column name" if the column already exists — that's expected on
         // every launch after the first, so we ignore the result.
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN drafted_text TEXT", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN meeting_notes_text TEXT", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN speaker_turns TEXT", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN speaker_names TEXT", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN is_meeting INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN diarization_enabled INTEGER NOT NULL DEFAULT 0", []);
         // v2.1.0: LLM-generated one-line name for each recording (auto-title).
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN title TEXT", []);
         // v2.1.0-nightly.7: per-recording timing + event-log flight recorder,
@@ -462,7 +480,39 @@ impl History {
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
+            AltKind::MeetingNotes => conn.execute(
+                r#"UPDATE recordings
+                   SET meeting_notes_text = ?1, llm_provider = ?2,
+                       clippy_used = ?3, clippy_note = ?4, is_meeting = 1, dirty = 1
+                   WHERE id = ?5"#,
+                params![text, provider, used as i32, note, id],
+            )?,
         };
+        Ok(())
+    }
+
+    pub fn set_meeting_metadata(
+        &self,
+        id: &str,
+        is_meeting: bool,
+        diarization_enabled: bool,
+        turns_json: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            r#"UPDATE recordings SET is_meeting = ?1, diarization_enabled = ?2,
+               speaker_turns = ?3, dirty = 1 WHERE id = ?4"#,
+            params![is_meeting as i32, diarization_enabled as i32, turns_json, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_speaker_names(&self, id: &str, names_json: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET speaker_names = ?1, dirty = 1 WHERE id = ?2",
+            params![names_json, id],
+        )?;
         Ok(())
     }
 
@@ -675,7 +725,9 @@ impl History {
 
 const SELECT_ALL_COLUMNS_BY_ID: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
-       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
+       transcript, cleaned_text, drafted_text, meeting_notes_text,
+       speaker_turns, speaker_names, is_meeting, diarization_enabled,
+       stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
        stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
        platform, device_name, dirty, remote
@@ -683,7 +735,9 @@ FROM recordings WHERE id = ?1"#;
 
 const SELECT_ALL_COLUMNS: &str = r#"
 SELECT id, created_at, audio_path, duration_ms, mode, status,
-       transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
+       transcript, cleaned_text, drafted_text, meeting_notes_text,
+       speaker_turns, speaker_names, is_meeting, diarization_enabled,
+       stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
        stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
        platform, device_name, dirty, remote
@@ -706,27 +760,32 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         transcript: row.get(6)?,
         cleaned_text: row.get(7)?,
         drafted_text: row.get(8)?,
-        stt_provider: row.get(9)?,
-        llm_provider: row.get(10)?,
-        clippy_used: row.get::<_, i32>(11)? != 0,
-        clippy_note: row.get(12)?,
-        retry_count: row.get(13)?,
-        error: row.get(14)?,
-        title: row.get(15)?,
-        stt_ms: row.get(16)?,
-        cleanup_ms: row.get(17)?,
-        total_ms: row.get(18)?,
-        event_log: row.get(19)?,
-        audio_captured_ms: row.get(20)?,
+        meeting_notes_text: row.get(9)?,
+        speaker_turns: row.get(10)?,
+        speaker_names: row.get(11)?,
+        is_meeting: row.get::<_, i32>(12)? != 0,
+        diarization_enabled: row.get::<_, i32>(13)? != 0,
+        stt_provider: row.get(14)?,
+        llm_provider: row.get(15)?,
+        clippy_used: row.get::<_, i32>(16)? != 0,
+        clippy_note: row.get(17)?,
+        retry_count: row.get(18)?,
+        error: row.get(19)?,
+        title: row.get(20)?,
+        stt_ms: row.get(21)?,
+        cleanup_ms: row.get(22)?,
+        total_ms: row.get(23)?,
+        event_log: row.get(24)?,
+        audio_captured_ms: row.get(25)?,
         source: row
-            .get::<_, Option<String>>(21)?
+            .get::<_, Option<String>>(26)?
             .unwrap_or_else(|| "mic".to_string()),
         platform: row
-            .get::<_, Option<String>>(22)?
+            .get::<_, Option<String>>(27)?
             .unwrap_or_else(|| "desktop".to_string()),
-        device_name: row.get(23)?,
-        dirty: row.get::<_, i32>(24)? != 0,
-        remote: row.get::<_, Option<i32>>(25)?.unwrap_or(0) != 0,
+        device_name: row.get(28)?,
+        dirty: row.get::<_, i32>(29)? != 0,
+        remote: row.get::<_, Option<i32>>(30)?.unwrap_or(0) != 0,
     })
 }
 
@@ -752,6 +811,11 @@ pub struct RemoteNote {
     pub transcript: Option<String>,
     pub cleaned_text: Option<String>,
     pub drafted_text: Option<String>,
+    pub meeting_notes_text: Option<String>,
+    pub speaker_turns: Option<String>,
+    pub speaker_names: Option<String>,
+    pub is_meeting: bool,
+    pub diarization_enabled: bool,
     pub duration_ms: i64,
     pub stt_provider: Option<String>,
     pub llm_provider: Option<String>,
@@ -835,15 +899,22 @@ impl History {
         conn.execute(
             r#"INSERT INTO recordings
                  (id, created_at, audio_path, duration_ms, mode, status,
-                  transcript, cleaned_text, drafted_text, stt_provider, llm_provider,
+                  transcript, cleaned_text, drafted_text, meeting_notes_text,
+                  speaker_turns, speaker_names, is_meeting, diarization_enabled,
+                  stt_provider, llm_provider,
                   title, platform, device_name, dirty, remote, source)
                VALUES (?1, ?2, '', ?3, 'light', 'done',
-                       ?4, ?5, ?6, ?7, ?8,
-                       ?9, ?10, ?11, 0, 1, 'mic')
+                       ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                       ?12, ?13, ?14, ?15, ?16, 0, 1, 'mic')
                ON CONFLICT(id) DO UPDATE SET
                  transcript   = excluded.transcript,
                  cleaned_text = excluded.cleaned_text,
                  drafted_text = excluded.drafted_text,
+                 meeting_notes_text = excluded.meeting_notes_text,
+                 speaker_turns = excluded.speaker_turns,
+                 speaker_names = excluded.speaker_names,
+                 is_meeting = excluded.is_meeting,
+                 diarization_enabled = excluded.diarization_enabled,
                  stt_provider = excluded.stt_provider,
                  llm_provider = excluded.llm_provider,
                  title        = excluded.title,
@@ -859,6 +930,11 @@ impl History {
                 note.transcript,
                 note.cleaned_text,
                 note.drafted_text,
+                note.meeting_notes_text,
+                note.speaker_turns,
+                note.speaker_names,
+                note.is_meeting as i32,
+                note.diarization_enabled as i32,
                 note.stt_provider,
                 note.llm_provider,
                 note.title,

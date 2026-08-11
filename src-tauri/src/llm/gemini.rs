@@ -4,8 +4,8 @@
 //! `contents` array of `parts`, and a separate `systemInstruction` field
 //! rather than mixing system + user in one `messages` array.
 //!
-//! Default model: `gemini-3.5-flash`. Model ids here were re-verified against
-//! <https://ai.google.dev/gemini-api/docs/models> on 2026-07-22.
+//! Default model: `gemini-3.6-flash`. Model ids here were re-verified against
+//! <https://ai.google.dev/gemini-api/docs/models> on 2026-08-11.
 //!
 //! ## Why every Gemini call used to time out (fixed 2026-07-22)
 //!
@@ -46,12 +46,12 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 // thinking, leave room for a long draft plus whatever the model thinks first.
 const MAX_OUTPUT_TOKENS: u32 = 8192;
 
-pub const DEFAULT_MODEL: &str = "gemini-3.5-flash";
+pub const DEFAULT_MODEL: &str = "gemini-3.6-flash";
 
 /// Model ids that Google deprecated since this codebase last shipped.
 /// When the user's saved settings hold one of these, fall through to
 /// `DEFAULT_MODEL` so transcription doesn't fail with a 404 on a tombstoned
-/// endpoint. Re-checked against Google's model list 2026-07-22.
+/// endpoint. Re-checked against Google's model list 2026-08-11.
 pub const DEPRECATED_MODELS: &[&str] = &[
     "gemini-2.0-flash", // "shut down soon" per Google's model list
     "gemini-2.0-flash-001",

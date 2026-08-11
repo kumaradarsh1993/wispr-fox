@@ -24,7 +24,7 @@ export const STT_PROVIDERS: ProviderOption[] = [
 ];
 
 export const LLM_PROVIDERS: ProviderOption[] = [
-  { id: "groq", label: "Groq", summary: "Llama cleanup" },
+  { id: "groq", label: "Groq", summary: "GPT-OSS / Qwen cleanup" },
   { id: "openai", label: "OpenAI", summary: "GPT cleanup" },
   { id: "gemini", label: "Gemini", summary: "Google cleanup" },
 ];
@@ -38,6 +38,8 @@ export const STT_MODELS: Record<string, ProviderModel[]> = {
     // parity ports"). Saved selections coerce via settings-store.svelte.ts.
   ],
   openai: [
+    { id: "gpt-transcribe", label: "GPT Transcribe", quality: "Recommended for ordinary recordings" },
+    { id: "gpt-4o-transcribe-diarize", label: "GPT-4o Diarize", quality: "Speaker labels for meetings" },
     { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", quality: "Best OpenAI STT quality" },
     { id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", quality: "Lower cost, fast" },
     { id: "whisper-1", label: "Whisper API", quality: "Legacy compatible fallback" },
@@ -56,12 +58,14 @@ export const STT_MODELS: Record<string, ProviderModel[]> = {
 
 export const LLM_MODELS: Record<string, ProviderModel[]> = {
   groq: [
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", quality: "Balanced default" },
-    { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", quality: "Fastest cleanup" },
+    { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", quality: "Fast cleanup and titles" },
+    { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", quality: "Stronger drafts and meeting notes" },
+    { id: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B", quality: "Strong multilingual alternative" },
     // "llama-4-maverick" removed 2026-07 — it was never a valid Groq model
     // id (live-verified, see wispr-fox-android/HANDOVER.md "Desktop parity
     // ports"). No replacement added; Llama 3.3 70B stays the default. Saved
-    // selections coerce via settings-store.svelte.ts.
+    // selections coerce via settings-store.svelte.ts. Groq's August 2026
+    // Llama retirements are replaced above by its documented GPT-OSS/Qwen ids.
   ],
   openai: [
     { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
@@ -69,7 +73,10 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
     { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
   ],
   gemini: [
-    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Current default" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", quality: "Latest stable balance model" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Stable balance fallback" },
+    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", quality: "Fastest current stable model" },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", quality: "Stable low-cost fallback" },
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast free-tier option" },
     { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", quality: "Lowest latency / quota friendly" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview", quality: "Preview, if listed for your key" },
@@ -167,17 +174,24 @@ export function shortModel(name: string | undefined): string {
   if (name.startsWith("whisper-large-v3-turbo")) return "Whisper Turbo";
   if (name.startsWith("whisper-large-v3")) return "Whisper v3";
   if (name.startsWith("distil-whisper")) return "Distil Whisper";
+  if (name === "gpt-transcribe") return "GPT Transcribe";
+  if (name.startsWith("gpt-4o-transcribe-diarize")) return "4o Diarize";
   if (name.startsWith("gpt-4o-mini-transcribe")) return "4o mini STT";
   if (name.startsWith("gpt-4o-transcribe")) return "4o STT";
   if (name.startsWith("nova-3")) return "Nova-3";
   if (name.startsWith("nova-2")) return "Nova-2";
   if (name.startsWith("scribe_v2")) return "Scribe v2";
   if (name.startsWith("scribe_v1")) return "Scribe v1";
+  if (name === "openai/gpt-oss-20b") return "GPT-OSS 20B";
+  if (name === "openai/gpt-oss-120b") return "GPT-OSS 120B";
+  if (name === "qwen/qwen3.6-27b") return "Qwen 3.6 27B";
   if (name.startsWith("llama-3.3-70b")) return "Llama 70B";
   if (name.startsWith("llama-3.1-8b")) return "Llama 8B";
   if (name.startsWith("gpt-5.4-mini")) return "GPT-5.4 mini";
   if (name.startsWith("gpt-5.4")) return "GPT-5.4";
   if (name.startsWith("gpt-5.5")) return "GPT-5.5";
+  if (name.startsWith("gemini-3.6-flash")) return "Gemini 3.6 Flash";
+  if (name.startsWith("gemini-3.5-flash-lite")) return "Gemini 3.5 Flash-Lite";
   if (name.startsWith("gemini-3.5-flash")) return "Gemini 3.5 Flash";
   if (name.startsWith("gemini-2.5-flash-lite")) return "Gemini Flash-Lite";
   if (name.startsWith("gemini-2.5-flash")) return "Gemini 2.5 Flash";

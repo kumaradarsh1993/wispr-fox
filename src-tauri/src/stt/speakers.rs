@@ -31,8 +31,9 @@ pub struct SpeakerTurn {
 /// ElevenLabs Scribe both do it natively. The upload dialog uses this to grey
 /// out the checkbox with a reason rather than accepting it and silently
 /// returning an unlabelled wall of text.
-pub fn provider_supports_diarization(provider: &str) -> bool {
+pub fn provider_supports_diarization(provider: &str, model: &str) -> bool {
     matches!(provider, "deepgram" | "elevenlabs")
+        || (provider == "openai" && model == "gpt-4o-transcribe-diarize")
 }
 
 /// Render speaker turns into the transcript text we store and display.
@@ -160,10 +161,11 @@ mod tests {
 
     #[test]
     fn only_deepgram_and_elevenlabs_diarize() {
-        assert!(provider_supports_diarization("deepgram"));
-        assert!(provider_supports_diarization("elevenlabs"));
-        assert!(!provider_supports_diarization("groq"));
-        assert!(!provider_supports_diarization("openai"));
-        assert!(!provider_supports_diarization(""));
+        assert!(provider_supports_diarization("deepgram", "nova-3"));
+        assert!(provider_supports_diarization("elevenlabs", "scribe_v2"));
+        assert!(provider_supports_diarization("openai", "gpt-4o-transcribe-diarize"));
+        assert!(!provider_supports_diarization("groq", "whisper-large-v3"));
+        assert!(!provider_supports_diarization("openai", "gpt-transcribe"));
+        assert!(!provider_supports_diarization("", ""));
     }
 }

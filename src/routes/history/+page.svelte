@@ -522,6 +522,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    position: relative;
   }
 
   /* Upload — the prominent accent-filled action in this cluster; it's the
@@ -617,6 +618,7 @@
     color: var(--text-secondary);
     user-select: none;
     transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    width: 112px;
   }
   .hold-clear:hover {
     border-color: var(--danger);
@@ -647,12 +649,15 @@
     align-items: center;
     gap: 5px;
     white-space: nowrap;
+    justify-content: center;
+    width: 100%;
   }
   .cleared-msg {
     font-size: 11px;
     color: var(--text-secondary);
-    margin-left: 8px;
-    align-self: center;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
   }
 
   /* Date group headers — label + count chip, no rule line (the card gaps

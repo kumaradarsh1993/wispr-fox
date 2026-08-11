@@ -27,6 +27,8 @@
   let sttModel = $state(settings.s.stt_model || sttModelsFor(settings.s.stt_provider || "groq")[0].id);
   let llmProvider = $state(settings.s.llm_provider || "groq");
   let llmModel = $state(settings.s.llm_model || llmModelsFor(settings.s.llm_provider || "groq")[0].id);
+  let draftLlmProvider = $state(settings.s.draft_llm_provider || "groq");
+  let draftLlmModel = $state(settings.s.draft_llm_model || llmModelsFor(settings.s.draft_llm_provider || "groq")[0].id);
   let cleanup = $state(false);
   let draft = $state(false);
   let diarize = $state(false);
@@ -38,8 +40,11 @@
   // has none at all, so the checkbox is disabled with the reason rather than
   // accepted and silently ignored — which would hand back an unlabelled wall
   // of text and no clue why. Rust enforces the same rule server-side.
-  const DIARIZE_PROVIDERS = ["deepgram", "elevenlabs"];
-  const canDiarize = $derived(DIARIZE_PROVIDERS.includes(sttProvider));
+  const canDiarize = $derived(
+    sttProvider === "deepgram" || sttProvider === "elevenlabs" ||
+      (sttProvider === "openai" && sttModel === "gpt-4o-transcribe-diarize"),
+  );
+  let diarizeSwitchNote = $state("");
 
   // Diarization is priced differently by provider and this is a real cost
   // decision for long meeting audio, so say it plainly at the point of choice.
@@ -72,32 +77,42 @@
 
   const sttModels = $derived(sttModelsFor(sttProvider));
   const llmModels = $derived(llmModelsFor(llmProvider));
+  const draftLlmModels = $derived(llmModelsFor(draftLlmProvider));
   const needsLlm = $derived(cleanup || draft || meetingNotes);
   const sttHasKey = $derived(sttReady(secrets, sttProvider));
-  const llmHasKey = $derived(!needsLlm || llmReady(secrets, llmProvider));
-  const canTranscribe = $derived(paths.length > 0 && sttHasKey && llmHasKey && !running);
+  const llmHasKey = $derived(!cleanup || llmReady(secrets, llmProvider));
+  const draftLlmHasKey = $derived(!(draft || meetingNotes) || llmReady(secrets, draftLlmProvider));
+  const canTranscribe = $derived(paths.length > 0 && sttHasKey && llmHasKey && draftLlmHasKey && !running);
 
   // Keep the selected model valid when the provider changes.
   $effect(() => {
     if (!sttModels.some((m) => m.id === sttModel)) sttModel = sttModels[0].id;
   });
-  // Switching to a provider that can't diarize must clear the request, not
-  // leave a ticked box that won't do anything.
-  $effect(() => {
-    if (!canDiarize && diarize) diarize = false;
-  });
-  // Draft and Meeting notes both write the Drafted column, so they're an
-  // either/or rather than two independent outputs.
-  function pickDraft(on: boolean) {
-    draft = on;
-    if (on) meetingNotes = false;
-  }
-  function pickMeetingNotes(on: boolean) {
-    meetingNotes = on;
-    if (on) draft = false;
+  function toggleDiarize(on: boolean) {
+    diarize = on;
+    diarizeSwitchNote = "";
+    if (!on) return;
+    if (sttProvider === "openai") {
+      if (sttModel !== "gpt-4o-transcribe-diarize") {
+        sttModel = "gpt-4o-transcribe-diarize";
+        diarizeSwitchNote = "Changed to OpenAI GPT-4o Diarize because the selected model has no speaker labels.";
+      }
+      return;
+    }
+    if (sttProvider !== "deepgram" && sttProvider !== "elevenlabs") {
+      sttProvider = "deepgram";
+      sttModel = "nova-3";
+      diarizeSwitchNote = "Changed to Deepgram Nova-3 because Whisper does not support speaker labels.";
+    }
   }
   $effect(() => {
     if (!llmModels.some((m) => m.id === llmModel)) llmModel = llmModels[0].id;
+  });
+  $effect(() => {
+    if (!draftLlmModels.some((m) => m.id === draftLlmModel)) draftLlmModel = draftLlmModels[0].id;
+  });
+  $effect(() => {
+    if (diarize && !canDiarize) toggleDiarize(true);
   });
 
   function baseName(p: string): string {
@@ -150,9 +165,11 @@
           sttModel,
           llmProvider: needsLlm ? llmProvider : null,
           llmModel: needsLlm ? llmModel : null,
+          draftLlmProvider: draft || meetingNotes ? draftLlmProvider : null,
+          draftLlmModel: draft || meetingNotes ? draftLlmModel : null,
           cleanup,
           draft,
-          diarize: diarize && canDiarize,
+          diarize,
           meetingNotes,
         });
         statuses[p] = "done";
@@ -258,16 +275,19 @@
       <!-- Speaker labels. Sits directly under the engine picker because it's a
            property of the transcription request, not a post-processing step. -->
       <div class="checks">
-        <label class="check" class:disabled={!canDiarize}>
+        <label class="check">
           <input
             type="checkbox"
-            bind:checked={diarize}
-            disabled={running || !canDiarize}
+            checked={diarize}
+            onchange={(e) => toggleDiarize((e.currentTarget as HTMLInputElement).checked)}
+            disabled={running}
           />
           <span>
             <strong>Label speakers</strong> — split the transcript into "Speaker 1 / Speaker 2"
             turns. For meetings and interviews.
-            {#if !canDiarize}
+            {#if diarizeSwitchNote}
+              <em class="why switch-note">{diarizeSwitchNote}</em>
+            {:else if !canDiarize}
               <em class="why">Not available on {sttProvider === "groq" ? "Groq" : "OpenAI"} — Whisper has no speaker model. Switch to Deepgram or ElevenLabs above.</em>
             {:else if diarizeCostNote}
               <em class="why">{diarizeCostNote}</em>
@@ -282,21 +302,11 @@
           <span><strong>Clean up</strong> — fix punctuation & paragraphs, keep my words</span>
         </label>
         <label class="check">
-          <input
-            type="checkbox"
-            checked={draft}
-            disabled={running}
-            onchange={(e) => pickDraft((e.currentTarget as HTMLInputElement).checked)}
-          />
+          <input type="checkbox" bind:checked={draft} disabled={running} />
           <span><strong>Draft</strong> — rewrite into a polished, structured version</span>
         </label>
         <label class="check">
-          <input
-            type="checkbox"
-            checked={meetingNotes}
-            disabled={running}
-            onchange={(e) => pickMeetingNotes((e.currentTarget as HTMLInputElement).checked)}
-          />
+          <input type="checkbox" bind:checked={meetingNotes} disabled={running} />
           <span>
             <strong>Meeting notes</strong> — summary, decisions, and action items with owners.
             {#if meetingNotes && !diarize && canDiarize}
@@ -306,10 +316,10 @@
         </label>
       </div>
 
-      {#if needsLlm}
+      {#if cleanup}
         <div class="opt-row sub-opt">
           <label class="opt-label" for="llm-prov">
-            {meetingNotes ? "Summarise with" : "Clean up / draft with"}
+            Clean up with
           </label>
           <div class="selects">
             <select id="llm-prov" bind:value={llmProvider} disabled={running}>
@@ -327,6 +337,20 @@
         {#if !llmHasKey}
           <p class="keywarn">No API key saved for {llmProvider} — add one in Settings → Providers first.</p>
         {/if}
+      {/if}
+      {#if draft || meetingNotes}
+        <div class="opt-row sub-opt">
+          <label class="opt-label" for="draft-llm-prov">Draft / meeting notes with</label>
+          <div class="selects">
+            <select id="draft-llm-prov" bind:value={draftLlmProvider} disabled={running}>
+              {#each LLM_PROVIDERS as p}<option value={p.id}>{p.label}</option>{/each}
+            </select>
+            <select bind:value={draftLlmModel} disabled={running}>
+              {#each draftLlmModels as m}<option value={m.id}>{m.label}</option>{/each}
+            </select>
+          </div>
+        </div>
+        {#if !draftLlmHasKey}<p class="keywarn">Add a {draftLlmProvider} key in Settings before running Draft / Meeting notes.</p>{/if}
       {/if}
     </div>
 
@@ -517,8 +541,6 @@
   }
   .check strong { color: var(--text-primary); font-weight: 600; }
   .check input { margin-top: 2px; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
-  .check.disabled { opacity: 0.62; cursor: not-allowed; }
-  .check.disabled input { cursor: not-allowed; }
   .why {
     display: block;
     margin-top: 2px;

@@ -217,6 +217,11 @@ impl SyncEngine {
                     "transcript": r.transcript,
                     "cleaned_text": r.cleaned_text,
                     "drafted_text": r.drafted_text,
+                    "meeting_notes_text": r.meeting_notes_text,
+                    "speaker_turns": r.speaker_turns,
+                    "speaker_names": r.speaker_names,
+                    "is_meeting": r.is_meeting,
+                    "diarization_enabled": r.diarization_enabled,
                     "duration_ms": r.duration_ms,
                     "stt_provider": r.stt_provider,
                     "llm_provider": r.llm_provider,
@@ -300,6 +305,11 @@ impl SyncEngine {
                 transcript: row.transcript,
                 cleaned_text: row.cleaned_text,
                 drafted_text: row.drafted_text,
+                meeting_notes_text: row.meeting_notes_text,
+                speaker_turns: row.speaker_turns,
+                speaker_names: row.speaker_names,
+                is_meeting: row.is_meeting,
+                diarization_enabled: row.diarization_enabled,
                 duration_ms: row.duration_ms,
                 stt_provider: row.stt_provider,
                 llm_provider: row.llm_provider,
@@ -578,6 +588,16 @@ struct RemoteNoteRow {
     cleaned_text: Option<String>,
     #[serde(default)]
     drafted_text: Option<String>,
+    #[serde(default)]
+    meeting_notes_text: Option<String>,
+    #[serde(default)]
+    speaker_turns: Option<String>,
+    #[serde(default)]
+    speaker_names: Option<String>,
+    #[serde(default)]
+    is_meeting: bool,
+    #[serde(default)]
+    diarization_enabled: bool,
     #[serde(default)]
     duration_ms: i64,
     #[serde(default)]

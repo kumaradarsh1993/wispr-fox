@@ -1,7 +1,8 @@
 //! OpenAI transcription client. Multipart POST -> /v1/audio/transcriptions.
 //!
-//! Uses the GPT-4o transcription snapshots. OpenAI file uploads are capped at
-//! 25 MB, so this mirrors the Groq chunking path for longer WAVs.
+//! Uses `gpt-transcribe` for ordinary files and the specialized GPT-4o
+//! diarization model for speaker-labelled meetings. OpenAI file uploads are
+//! capped at 25 MB, so ordinary transcription mirrors the Groq chunking path.
 
 use std::path::Path;
 use std::time::Duration;
@@ -11,10 +12,10 @@ use reqwest::multipart;
 use serde::Deserialize;
 use tokio::fs;
 
-use super::{chunk, SttError, SttOptions, SttProvider, Transcript};
+use super::{chunk, render_turns, turns_from_words, SttError, SttOptions, SttProvider, Transcript};
 
 const ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
-pub const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
+pub const DEFAULT_MODEL: &str = "gpt-transcribe";
 const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
@@ -52,10 +53,15 @@ impl OpenAiStt {
             .mime_str(super::mime_for_audio(wav_path))
             .map_err(|e| SttError::Decode(e.to_string()))?;
 
+        let diarized = opts.diarize && self.model == "gpt-4o-transcribe-diarize";
         let mut form = multipart::Form::new()
             .part("file", file_part)
             .text("model", self.model.clone())
-            .text("response_format", "json");
+            .text("response_format", if diarized { "diarized_json" } else { "json" });
+
+        if diarized {
+            form = form.text("chunking_strategy", "auto");
+        }
 
         if let Some(lang) = opts.language() {
             form = form.text("language", lang.to_owned());
@@ -76,18 +82,39 @@ impl OpenAiStt {
             return Err(SttError::Http { status: status.as_u16(), body });
         }
 
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            text: String,
+        if diarized {
+            #[derive(Deserialize)]
+            struct Segment {
+                speaker: String,
+                text: String,
+                start: f64,
+                end: f64,
+            }
+            #[derive(Deserialize)]
+            struct DiarizedResponse {
+                #[serde(default)]
+                segments: Vec<Segment>,
+            }
+            let parsed: DiarizedResponse = resp
+                .json()
+                .await
+                .map_err(|e| SttError::Decode(e.to_string()))?;
+            let duration = parsed.segments.last().map(|s| s.end);
+            let turns = turns_from_words(
+                parsed.segments.into_iter().map(|s| (s.speaker, s.text, Some(s.start))),
+            );
+            let text = render_turns(&turns);
+            return Ok(Transcript {
+                text,
+                language: opts.language.clone(),
+                duration_seconds: duration,
+                speakers: (!turns.is_empty()).then_some(turns),
+            });
         }
 
-        let parsed: OpenAiResponse = resp
-            .json()
-            .await
-            .map_err(|e| SttError::Decode(e.to_string()))?;
-
-        // Whisper has no speaker model; diarization is refused for this
-        // provider at the UI layer rather than silently ignored here.
+        #[derive(Deserialize)]
+        struct OpenAiResponse { text: String }
+        let parsed: OpenAiResponse = resp.json().await.map_err(|e| SttError::Decode(e.to_string()))?;
         Ok(Transcript::plain(parsed.text, opts.language.clone(), None))
     }
 }
@@ -104,6 +131,13 @@ impl SttProvider for OpenAiStt {
         opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let meta = fs::metadata(wav_path).await?;
+
+        // Chunk-local speaker ids cannot be reconciled reliably across API
+        // calls. Keep diarized OpenAI uploads bounded and steer long meetings
+        // to Deepgram/ElevenLabs, which accept the whole file.
+        if opts.diarize && meta.len() > chunk::TARGET_CHUNK_BYTES {
+            return Err(SttError::FileTooLarge { bytes: meta.len(), max: chunk::TARGET_CHUNK_BYTES });
+        }
 
         if meta.len() <= chunk::TARGET_CHUNK_BYTES {
             return self.transcribe_one(wav_path, opts).await;

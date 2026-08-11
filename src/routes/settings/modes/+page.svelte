@@ -10,7 +10,8 @@
   import { flash } from "$lib/settings-toast.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
 
-  let defaultPrompts = $state<{ light: string; advanced: string; drafting: string } | null>(null);
+  let defaultPrompts = $state<{ light: string; advanced: string; drafting: string; meeting: string } | null>(null);
+  let meetingPromptOpen = $state(false);
   let promptOpen = $state<Record<"light" | "advanced" | "drafting", boolean>>({
     light: false,
     advanced: false,
@@ -35,6 +36,23 @@
     const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
     await settings.set(customField, "" as any);
     flash(`${mode} prompt reset`);
+  }
+
+  function effectiveMeetingPrompt(): string {
+    return settings.s.custom_meeting_prompt.trim()
+      ? settings.s.custom_meeting_prompt
+      : defaultPrompts?.meeting ?? "(loadingâ€¦)";
+  }
+
+  async function saveMeetingPrompt(value: string) {
+    await settings.set("custom_meeting_prompt", value as any);
+    flash("Meeting notes prompt saved");
+  }
+
+  async function resetMeetingPrompt() {
+    if (!confirm("Reset the meeting notes prompt to its default? Any custom edits will be lost.")) return;
+    await settings.set("custom_meeting_prompt", "" as any);
+    flash("Meeting notes prompt reset");
   }
 
   onMount(async () => {
@@ -107,6 +125,29 @@
       {/if}
     </div>
   {/each}
+
+  <div class="mode-block">
+    <div class="mode-head">
+      <kbd class="mode-key">Notes</kbd>
+      <div class="mode-title-block">
+        <div class="mode-title">Meeting notes</div>
+        <div class="mode-desc">Succinct program-management summary: outcome, decisions, risks, and action items with owners when known.</div>
+      </div>
+    </div>
+    <button class="prompt-toggle" onclick={() => (meetingPromptOpen = !meetingPromptOpen)}>
+      <span class="prompt-caret" class:open={meetingPromptOpen}>â€º</span>
+      {meetingPromptOpen ? "Hide" : "Show"} system prompt
+      {#if settings.s.custom_meeting_prompt.trim()}<span class="prompt-edited-pill">customised</span>{/if}
+    </button>
+    {#if meetingPromptOpen}
+      <div class="prompt-editor">
+        <textarea rows="12" value={effectiveMeetingPrompt()} onchange={(e) => saveMeetingPrompt((e.currentTarget as HTMLTextAreaElement).value)}></textarea>
+        <div class="prompt-actions">
+          <button class="btn-secondary small" onclick={resetMeetingPrompt}>Reset to default</button>
+        </div>
+      </div>
+    {/if}
+  </div>
 
   <p class="tip">
     Hotkeys live in <strong>Settings → Dictation</strong>; keys and models in <strong>Settings → Providers</strong>.

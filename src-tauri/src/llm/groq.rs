@@ -1,4 +1,4 @@
-//! Groq chat-completions client. Default models: 8B for Light (fast), 70B for Advanced.
+//! Groq chat-completions client. Defaults: GPT-OSS 20B for cleanup and 120B for drafts.
 
 use std::time::Duration;
 
@@ -13,8 +13,8 @@ const ENDPOINT: &str = "https://api.groq.com/openai/v1/chat/completions";
 // fire-and-forget auto-title call shares this client and is unaffected.
 const TIMEOUT: Duration = Duration::from_secs(25);
 
-pub const DEFAULT_LIGHT_MODEL: &str = "llama-3.3-70b-versatile";
-pub const DEFAULT_ADVANCED_MODEL: &str = "llama-3.3-70b-versatile";
+pub const DEFAULT_LIGHT_MODEL: &str = "openai/gpt-oss-20b";
+pub const DEFAULT_ADVANCED_MODEL: &str = "openai/gpt-oss-120b";
 
 /// Process-wide pooled client — shared across the cleanup/draft call and the
 /// per-recording auto-title call so both reuse warm keep-alive connections to

@@ -6,10 +6,14 @@
   import { settings } from "./settings-store.svelte";
   import { shortModel } from "./provider-options";
   import DeleteDialog from "./DeleteDialog.svelte";
+  import RerunDialog from "./RerunDialog.svelte";
+  import SpeakerLabelsDialog from "./SpeakerLabelsDialog.svelte";
+  import ReadingMode from "./ReadingMode.svelte";
+  import { applySpeakerNames, namedSpeaker, speakerNames, speakerTurns } from "./meeting-text";
 
   let { rec } = $props<{ rec: Recording }>();
 
-  type Tab = "raw" | "cleaned" | "drafted";
+  type Tab = "raw" | "cleaned" | "drafted" | "meeting_notes";
 
   // Active tab. Defaults to the "most refined" version that exists:
   // drafted > cleaned > raw. User can switch by clicking the tabs. The
@@ -18,6 +22,7 @@
   // pick and wins once set. (Deriving avoids the state_referenced_locally
   // warning from capturing `rec` at init.)
   function defaultTab(r: Recording): Tab {
+    if (r.meeting_notes_text) return "meeting_notes";
     if (r.drafted_text) return "drafted";
     if (r.cleaned_text) return "cleaned";
     return "raw";
@@ -30,17 +35,25 @@
   let audioEl = $state<HTMLAudioElement | null>(null);
   let playing = $state(false);
   let busy = $state(false);
+  let rerunOpen = $state(false);
+  let speakersOpen = $state(false);
+  let readerOpen = $state(false);
 
   // When the generate-on-demand command for THIS row is in flight, track
   // which kind so the corresponding tab can show a spinner instead of
   // letting the user fire a second request.
-  let generating = $state<null | "cleaned" | "drafted">(null);
+  let generating = $state<null | "cleaned" | "drafted" | "meeting_notes">(null);
 
   let displayedText = $derived.by(() => {
+    if (activeTab === "meeting_notes") return rec.meeting_notes_text || "(no meeting notes yet)";
     if (activeTab === "drafted") return rec.drafted_text || "(no draft yet)";
     if (activeTab === "cleaned") return rec.cleaned_text || "(no cleaned version yet)";
     return rec.transcript || "(no transcript)";
   });
+  let names = $derived(speakerNames(rec));
+  let turns = $derived(activeTab === "raw" ? speakerTurns(rec) : []);
+  let copyableText = $derived(applySpeakerNames(displayedText, names));
+  let readableBlocks = $derived(copyableText.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean));
   let isError = $derived(rec.status === "error");
   // Retry must be available at ALL statuses — including 'transcribing'
   // and 'cleaning'. The whole reason this exists is to recover from
@@ -221,7 +234,7 @@
   }
 
   async function copyText() {
-    await writeText(displayedText);
+    await writeText(copyableText);
   }
 
   /// Click handler for the Cleaned / Drafted tabs. If the version exists,
@@ -229,9 +242,10 @@
   /// generate command, wait for the result, then switch to it. Errors
   /// surface as a simple alert — the row already shows status info via
   /// the (i) inspector, no need to over-engineer.
-  async function onTabClick(kind: "cleaned" | "drafted") {
+  async function onTabClick(kind: "cleaned" | "drafted" | "meeting_notes") {
     if (kind === "cleaned" && rec.cleaned_text) { tabOverride = "cleaned"; return; }
     if (kind === "drafted" && rec.drafted_text) { tabOverride = "drafted"; return; }
+    if (kind === "meeting_notes" && rec.meeting_notes_text) { tabOverride = "meeting_notes"; return; }
     if (!rec.transcript) {
       alert("No raw transcript yet — retry the recording first.");
       return;
@@ -243,7 +257,7 @@
   /// Shared by the tab click (generate-if-missing) and the kebab's re-run
   /// (regenerate over existing text) — the backend call is identical, it
   /// always regenerates against the CURRENTLY selected LLM provider + model.
-  async function runAlt(kind: "cleaned" | "drafted") {
+  async function runAlt(kind: "cleaned" | "drafted" | "meeting_notes") {
     generating = kind;
     try {
       await api.generateAltVersion(rec.id, kind);
@@ -339,6 +353,7 @@
   class="row"
   class:expanded
   class:error-row={isError}
+  class:meeting-row={rec.is_meeting}
 >
   <header class="row-head">
     <button class="row-toggle" onclick={(e) => { e.stopPropagation(); expanded = !expanded; }} aria-label="Toggle expand">
@@ -404,7 +419,7 @@
          the hover-revealed action buttons. Clicks stop propagation so they
          don't toggle row expansion. -->
     <div class="tail" onclick={(e) => e.stopPropagation()} role="presentation">
-      {#if rec.transcript || rec.cleaned_text || rec.drafted_text}
+      {#if rec.transcript || rec.cleaned_text || rec.drafted_text || rec.meeting_notes_text}
         <span class="tabs-inline">
           <button
             class="tab"
@@ -435,6 +450,18 @@
             onclick={() => onTabClick("drafted")}
             title={rec.drafted_text ? "Drafted" : "Generate a drafted version"}
           >{generating === "drafted" ? "…" : "Drafted"}</button>
+          {#if rec.is_meeting}
+            <button
+              class="tab"
+              class:active={activeTab === "meeting_notes"}
+              class:quiet={activeTab !== "meeting_notes" && !!rec.meeting_notes_text}
+              class:dim={!rec.meeting_notes_text}
+              class:loading={generating === "meeting_notes"}
+              disabled={generating !== null}
+              onclick={() => onTabClick("meeting_notes")}
+              title={rec.meeting_notes_text ? "Meeting notes" : "Generate meeting notes"}
+            >Meeting notes</button>
+          {/if}
         </span>
       {/if}
 
@@ -470,6 +497,10 @@
            actions (Retry, Delete) per the v0.4.0 design playbook. Retry
            used to be a top-level button; on the new layout we keep Play
            + Copy prominent and tuck the rest behind this menu. -->
+      <button class="action-btn" onclick={() => (readerOpen = true)} disabled={busy || !displayedText} title="Focused reading mode" aria-label="Open focused reading mode">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5.5 2.5h-3v3M10.5 2.5h3v3M5.5 13.5h-3v-3M10.5 13.5h3v-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+
       <div class="kebab-wrap">
         <button
           class="action-btn kebab"
@@ -496,19 +527,19 @@
               class:emphasized={isError}
               role="menuitem"
               disabled={retryDisabled}
-              onclick={() => { kebabOpen = false; retry(); }}
+              onclick={() => { kebabOpen = false; rerunOpen = true; }}
             >
               <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
                 <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
               </svg>
-              <span>{isError ? "Retry" : "Re-run transcription"}</span>
+              <span>Rerun...</span>
             </button>
             <!-- LLM-side twins of "Re-run transcription": swap the model in
                  the sidebar, then take another pass at cleanup or draft
                  without burning a fresh STT call. Both need a transcript to
                  work from, so they're hidden until one exists. -->
-            {#if rec.transcript}
+            {#if false && rec.transcript}
               <button
                 class="kebab-item"
                 role="menuitem"
@@ -534,6 +565,12 @@
                   <path d="M 3 11 L 7 11 M 3 13.5 L 5.5 13.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
                 </svg>
                 <span>{rec.drafted_text ? "Re-run draft" : "Draft"} · {llmLabel}</span>
+              </button>
+            {/if}
+            {#if rec.is_meeting}
+              <button class="kebab-item" role="menuitem" onclick={() => { kebabOpen = false; speakersOpen = true; }}>
+                <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="5.5" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13c.3-2.3 1.5-3.5 3.2-3.5S8.7 10.7 9 13M9 10c1.9-.7 3.8.2 4.3 2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                <span>Name speakers</span>
               </button>
             {/if}
             <!-- Delete is ownership-scoped: only rows this device originated can
@@ -576,7 +613,25 @@
         retrying won't recover audio that wasn't captured.
       </div>
     {/if}
-    <p class="text">{displayedText}</p>
+    {#if turns.length}
+      <div class="speaker-blocks">
+        {#each turns as turn}
+          <div class="speaker-block"><strong>{namedSpeaker(turn.speaker, names)}</strong><p>{turn.text}</p></div>
+        {/each}
+      </div>
+    {:else}
+      <div class="text readable-text">
+        {#each readableBlocks as block}
+          {#if block.split("\n").every((line) => /^[-*] /.test(line))}
+            <ul>{#each block.split("\n") as line}<li>{line.replace(/^[-*]\s+/, "")}</li>{/each}</ul>
+          {:else if /^#{1,3}\s/.test(block)}
+            <h3>{block.replace(/^#{1,3}\s+/, "")}</h3>
+          {:else}
+            <p>{block}</p>
+          {/if}
+        {/each}
+      </div>
+    {/if}
     {#if expanded && rec.clippy_note}
       <p class="note">Clippy note: {rec.clippy_note}</p>
     {/if}
@@ -710,6 +765,9 @@
 <!-- Sits outside the row so the overlay isn't clipped by the card. Clicks on
      the dialog stop propagation, so opening it never toggles row expansion. -->
 <DeleteDialog bind:open={deleteOpen} ids={[rec.id]} label="this recording" onDone={onDeleted} />
+<RerunDialog bind:open={rerunOpen} {rec} />
+<SpeakerLabelsDialog bind:open={speakersOpen} {rec} />
+<ReadingMode bind:open={readerOpen} {rec} version={activeTab} text={displayedText} />
 
 <style>
   /* Each recording is its own floating card on the cream surface (design
@@ -741,6 +799,15 @@
   .row.error-row {
     background: var(--danger-fade);
     border-color: var(--danger-fade);
+  }
+
+  .row.meeting-row {
+    background: color-mix(in srgb, var(--bg-card) 86%, #dceeff 14%);
+    border-color: color-mix(in srgb, var(--border) 72%, #8eb9da 28%);
+  }
+
+  .row:has(.kebab-menu) {
+    z-index: 120;
   }
 
   .row-head {
@@ -1000,7 +1067,8 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
-    z-index: 50;
+    z-index: 1000;
+    isolation: isolate;
   }
   .kebab-item {
     display: flex;
@@ -1268,6 +1336,39 @@
     overflow: hidden;
   }
 
+  .body.clamped .speaker-blocks {
+    max-height: 4.7em;
+    overflow: hidden;
+  }
+
+  .speaker-blocks {
+    display: grid;
+    gap: 10px;
+  }
+
+  .speaker-block {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 14px;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--bg-card) 78%, transparent);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+  }
+
+  .speaker-block strong {
+    color: var(--accent);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .speaker-block p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+  }
+
   /* Inline version tabs — Raw / Cleaned / Drafted. v0.4.0 design playbook
      gives them their own visual identity: the active tab is filled with
      the accent orange + white text (the playbook's "Cleaned" pill), other
@@ -1357,6 +1458,34 @@
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .readable-text {
+    max-width: 88ch;
+    letter-spacing: 0.004em;
+  }
+
+  .readable-text p {
+    margin: 0 0 0.9em;
+  }
+
+  .readable-text p:last-child,
+  .readable-text ul:last-child {
+    margin-bottom: 0;
+  }
+
+  .readable-text h3 {
+    margin: 1.15em 0 0.45em;
+    font-size: 14px;
+  }
+
+  .readable-text h3:first-child {
+    margin-top: 0;
+  }
+
+  .readable-text ul {
+    margin: 0 0 0.9em;
+    padding-left: 1.35em;
   }
 
   /* Compact variant toggle — inline pill, tiny chevrons. */

@@ -37,13 +37,15 @@ const FALLBACK: AppSettings = {
   auto_clean_in_drafting: true,
   auto_title: true,
   title_provider: "groq",
-  title_model: "llama-3.1-8b-instant",
+  title_model: "openai/gpt-oss-20b",
   stt_provider: "groq",
   llm_provider: "groq",
-  llm_model: "llama-3.3-70b-versatile",
-  clippy_light_model: "llama-3.3-70b-versatile",
-  clippy_advanced_model: "llama-3.3-70b-versatile",
-  clippy_drafting_model: "llama-3.3-70b-versatile",
+  llm_model: "openai/gpt-oss-20b",
+  draft_llm_provider: "groq",
+  draft_llm_model: "openai/gpt-oss-120b",
+  clippy_light_model: "openai/gpt-oss-20b",
+  clippy_advanced_model: "openai/gpt-oss-20b",
+  clippy_drafting_model: "openai/gpt-oss-120b",
   light_provider: "groq",
   advanced_provider: "groq",
   drafting_provider: "groq",
@@ -62,6 +64,7 @@ const FALLBACK: AppSettings = {
   custom_light_prompt: "",
   custom_advanced_prompt: "",
   custom_drafting_prompt: "",
+  custom_meeting_prompt: "",
   pull_back_on_navigation: false,
   keep_in_clipboard: true,
   open_silently: true,
@@ -263,6 +266,15 @@ class SettingsStore {
           `settings.init: saved title model "${this.s.title_model}" is no longer offered by ${this.s.title_provider}; falling back to ${titleOptions[0].id}`,
         );
         this.s.title_model = titleOptions[0].id;
+        migrated = true;
+      }
+      const draftOptions = llmModelsFor(this.s.draft_llm_provider);
+      if (draftOptions.length > 0 && !draftOptions.some((m) => m.id === this.s.draft_llm_model)) {
+        const fallback = draftOptions.find((m) => m.id.includes("120b")) ?? draftOptions[0];
+        console.info(
+          `settings.init: saved Draft/Meeting model "${this.s.draft_llm_model}" is no longer offered by ${this.s.draft_llm_provider}; falling back to ${fallback.id}`,
+        );
+        this.s.draft_llm_model = fallback.id;
         migrated = true;
       }
     }

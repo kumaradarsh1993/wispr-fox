@@ -615,6 +615,27 @@ pub async fn retry_recording(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn rerun_transcription(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    id: String,
+    stt_provider: Option<String>,
+    stt_model: Option<String>,
+    diarize: bool,
+) -> Result<(), String> {
+    flow.retry_recording_with(
+        &app,
+        &id,
+        stt_provider,
+        stt_model,
+        diarize,
+        false,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Transcribe a user-supplied audio file (drag-and-drop or the file picker).
 /// `path` is an absolute path on disk; the backend copies it into the audio
 /// store, runs STT + optional cleanup/draft, and files it in History with an
@@ -630,6 +651,8 @@ pub async fn transcribe_upload(
     stt_model: Option<String>,
     llm_provider: Option<String>,
     llm_model: Option<String>,
+    draft_llm_provider: Option<String>,
+    draft_llm_model: Option<String>,
     cleanup: bool,
     draft: bool,
     diarize: bool,
@@ -642,6 +665,8 @@ pub async fn transcribe_upload(
         stt_model,
         llm_provider,
         llm_model,
+        draft_llm_provider,
+        draft_llm_model,
         cleanup,
         draft,
         diarize,
@@ -661,10 +686,29 @@ pub async fn generate_alt_version(
     flow: State<'_, Flow>,
     id: String,
     kind: String,
+    provider: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
-    flow.generate_alt_version(&id, &kind)
+    flow.generate_alt_version(&id, &kind, provider, model)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_speaker_names(
+    app: AppHandle,
+    history: State<'_, History>,
+    id: String,
+    names_json: String,
+) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(&names_json)
+        .map_err(|e| format!("invalid speaker names: {e}"))?;
+    if !value.is_object() {
+        return Err("speaker names must be a JSON object".to_string());
+    }
+    history.set_speaker_names(&id, &names_json).map_err(|e| e.to_string())?;
+    let _ = app.emit("wispr:history_changed", ());
+    Ok(())
 }
 
 /// Returns a `tauri://localhost` URL the frontend can use as an `<audio src>`
@@ -725,6 +769,7 @@ pub struct DefaultPrompts {
     pub light: &'static str,
     pub advanced: &'static str,
     pub drafting: &'static str,
+    pub meeting: &'static str,
 }
 
 /// Return the baked-in default system prompts for each mode. Used by the
@@ -735,6 +780,7 @@ pub fn get_default_prompts() -> DefaultPrompts {
         light: crate::llm::prompts::LIGHT_SYSTEM,
         advanced: crate::llm::prompts::ADVANCED_SYSTEM,
         drafting: crate::llm::prompts::DRAFTING_SYSTEM,
+        meeting: crate::llm::prompts::MEETING_NOTES_SYSTEM,
     }
 }
 

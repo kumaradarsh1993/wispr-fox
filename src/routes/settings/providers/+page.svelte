@@ -115,6 +115,20 @@
     flash(`Cleanup model: ${label}`);
   }
 
+  async function changeDraftProvider(provider: string) {
+    const models = llmModelsFor(provider);
+    const draft_llm_model = models.some((m) => m.id === settings.s.draft_llm_model)
+      ? settings.s.draft_llm_model
+      : models.find((m) => m.id.includes("120b") || m.id.includes("3.6-flash") || m.id === "gpt-5.5")?.id ?? models[0].id;
+    await settings.setMany({ draft_llm_provider: provider, draft_llm_model } as any);
+    flash(`Draft / Meeting provider: ${providerLabel(provider)}`);
+  }
+
+  async function changeDraftModel(modelId: string) {
+    await settings.set("draft_llm_model", modelId as any);
+    flash(`Draft / Meeting model: ${llmModelsFor(settings.s.draft_llm_provider).find((m) => m.id === modelId)?.label ?? modelId}`);
+  }
+
   async function changeAutoTitle(on: boolean) {
     await settings.set("auto_title", on as any);
     flash(on ? "Recording titles on" : "Recording titles off");
@@ -204,6 +218,29 @@
         <label for="llm-model">Model</label>
         <select id="llm-model" value={settings.s.llm_model} onchange={(e) => changeLlmModel((e.currentTarget as HTMLSelectElement).value)}>
           {#each llmModelsFor(settings.s.llm_provider) as m (m.id)}
+            <option value={m.id}>{m.label} - {m.quality}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-card model-choice-card">
+    <h3>Draft &amp; meeting notes</h3>
+    <p class="hint">Separate from cleanup so longer, higher-stakes outputs can use a stronger model without making everyday cleanup expensive.</p>
+    <div class="provider-model-row">
+      <div class="field-block field-half">
+        <label for="draft-llm-provider">Service</label>
+        <select id="draft-llm-provider" value={settings.s.draft_llm_provider} onchange={(e) => changeDraftProvider((e.currentTarget as HTMLSelectElement).value)}>
+          {#each Object.keys(LLM_MODELS) as provider}
+            <option value={provider} disabled={!llmReady(secretCheck, provider)}>{providerLabel(provider)} {llmReady(secretCheck, provider) ? "" : "(add key first)"}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="field-block field-half">
+        <label for="draft-llm-model">Model</label>
+        <select id="draft-llm-model" value={settings.s.draft_llm_model} onchange={(e) => changeDraftModel((e.currentTarget as HTMLSelectElement).value)}>
+          {#each llmModelsFor(settings.s.draft_llm_provider) as m (m.id)}
             <option value={m.id}>{m.label} - {m.quality}</option>
           {/each}
         </select>

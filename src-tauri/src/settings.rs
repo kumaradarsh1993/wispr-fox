@@ -74,6 +74,10 @@ pub struct AppSettings {
     pub stt_model: String,
     pub llm_provider: String,
     pub llm_model: String,
+    #[serde(default = "default_draft_llm_provider")]
+    pub draft_llm_provider: String,
+    #[serde(default = "default_draft_llm_model")]
+    pub draft_llm_model: String,
     pub language_hint: Option<String>,
 
     /// Mic noise reduction applied to the recorded WAV before STT (fan hum /
@@ -179,6 +183,8 @@ pub struct AppSettings {
     pub custom_advanced_prompt: String,
     #[serde(default)]
     pub custom_drafting_prompt: String,
+    #[serde(default)]
+    pub custom_meeting_prompt: String,
 
     // ── Accounts + cross-device sync (v3.0.0) ─────────────────────────────
     /// This install's display name — shown to the user (and other signed-in
@@ -234,7 +240,9 @@ impl Default for AppSettings {
             stt_provider: "groq".to_string(),
             stt_model: "whisper-large-v3-turbo".to_string(),
             llm_provider: "groq".to_string(),
-            llm_model: crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string(),
+            llm_model: crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
+            draft_llm_provider: default_draft_llm_provider(),
+            draft_llm_model: default_draft_llm_model(),
             language_hint: None,
             noise_reduction: default_noise_reduction(),
             input_device: None,
@@ -259,6 +267,7 @@ impl Default for AppSettings {
             custom_light_prompt: String::new(),
             custom_advanced_prompt: String::new(),
             custom_drafting_prompt: String::new(),
+            custom_meeting_prompt: String::new(),
             pull_back_on_navigation: false,
             keep_in_clipboard: default_keep_in_clipboard(),
             open_silently: default_open_silently(),
@@ -333,7 +342,15 @@ fn default_true() -> bool {
 /// to, and so installs upgrading from before the picker keep today's
 /// behaviour byte-for-byte.
 pub const DEFAULT_TITLE_PROVIDER: &str = "groq";
-pub const DEFAULT_TITLE_MODEL: &str = "llama-3.1-8b-instant";
+pub const DEFAULT_TITLE_MODEL: &str = "openai/gpt-oss-20b";
+
+fn default_draft_llm_provider() -> String {
+    "groq".to_string()
+}
+
+fn default_draft_llm_model() -> String {
+    crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string()
+}
 
 fn default_title_provider() -> String {
     DEFAULT_TITLE_PROVIDER.to_string()

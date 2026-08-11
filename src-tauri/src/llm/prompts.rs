@@ -85,27 +85,27 @@ pub fn light_user_message(raw_transcript: &str) -> String {
     format!("<transcript>{raw_transcript}</transcript>")
 }
 
-/// Meeting-notes prompt for the upload path's "Meeting summary" option.
+/// Meeting-notes prompt for upload, History regeneration, and the Rerun dialog.
 ///
 /// Deliberately NOT a `ClippyMode` variant: modes are persisted on every
 /// history row (`mode_str`) and shared with the sync schema, so adding one is a
-/// migration. This rides the Drafting path with a system-prompt override
-/// instead, which `clippy::clean` already supports for user-customised prompts.
+/// migration. Generation still rides the Drafting transform with a prompt
+/// override, while persistence uses its own `meeting_notes_text` artifact.
 ///
 /// Written for the diarized case (input arrives as `Speaker 1: …` turns) but
 /// degrades sensibly on an unlabelled transcript — hence the explicit
 /// instruction not to invent attribution.
-pub const MEETING_NOTES_SYSTEM: &str = r#"You turn a meeting recording's transcript into notes someone can act on.
+pub const MEETING_NOTES_SYSTEM: &str = r#"You produce succinct, executive-ready program-management notes from a meeting transcript. Prioritise signal over replaying the conversation.
 
 The transcript may be speaker-labelled ("Speaker 1:", "Speaker 2:", …). If it is, attribute points and action items to those labels. If it is NOT labelled, write the notes without attributing anything to anyone — never guess who said what.
 
 Produce exactly these sections, in this order, omitting any section that would be empty:
 
 ## Summary
-3-6 sentences on what the meeting was actually about and where it landed.
+3-5 short bullets on what mattered and where the meeting landed.
 
 ## Key points
-Bullets. The substance discussed, grouped by topic rather than in strict chronological order. Attribute where the speaker matters ("Speaker 2 pushed back on the timeline").
+At most 5 bullets, grouped by topic rather than chronology. Include only context needed to understand a decision, risk, or next step. Attribute where the speaker matters ("Speaker 2 pushed back on the timeline").
 
 ## Decisions
 Bullets. Only things genuinely settled. If nothing was decided, omit this section entirely rather than padding it.
@@ -116,8 +116,12 @@ Bullets in the form "**Owner** — task — deadline". Use the speaker label as 
 ## Open questions
 Bullets. Things raised and left unresolved.
 
+## Risks and dependencies
+Bullets. Only concrete delivery risks, blockers, or cross-team dependencies raised in the meeting.
+
 Rules:
 - Work only from the transcript. Never invent decisions, owners, deadlines, or attendees.
 - Transcripts of real speech are messy — fillers, false starts, cross-talk, mis-heard words. Read through that to the intent; don't quote the mess.
 - If the audio is clearly not a meeting (a solo voice note, a phone call, dictation), just write the Summary and Action items sections and skip the rest.
+- Keep the complete output concise (normally 250-450 words, and shorter for a short meeting). Do not turn every discussion point into a note.
 - Output only the notes. No preamble, no "Here are your notes", no closing remark."#;

@@ -265,6 +265,16 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
                 .ok_or_else(|| {
                     anyhow!("no Groq LLM key - open Settings -> Providers & API keys")
                 })?;
+            // Keep saved settings from calling models retired by Groq in
+            // August 2026, even before the settings UI has sanitised them.
+            let model = match model.as_str() {
+                "llama-3.1-8b-instant" => crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
+                "llama-3.3-70b-versatile" | "meta-llama/llama-4-scout-17b-16e-instruct" => {
+                    crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string()
+                }
+                _ if model.trim().is_empty() => crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
+                _ => model,
+            };
             Ok(Box::new(GroqLlm::new(key, model)))
         }
     }
@@ -332,7 +342,13 @@ fn build_stt_provider(settings: &AppSettings) -> Result<Box<dyn SttProvider>> {
             let model = selected_model_or(
                 crate::stt::openai::DEFAULT_MODEL,
                 &settings.stt_model,
-                &["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+                &[
+                    "gpt-transcribe",
+                    "gpt-4o-transcribe-diarize",
+                    "gpt-4o-transcribe",
+                    "gpt-4o-mini-transcribe",
+                    "whisper-1",
+                ],
             );
             Ok(Box::new(OpenAiStt::with_model(key, model)))
         }
@@ -1411,6 +1427,8 @@ impl Flow {
         stt_model: Option<String>,
         llm_provider: Option<String>,
         llm_model: Option<String>,
+        draft_llm_provider: Option<String>,
+        draft_llm_model: Option<String>,
         do_cleanup: bool,
         do_draft: bool,
         do_diarize: bool,
@@ -1472,6 +1490,10 @@ impl Flow {
         let record_id = self
             .history
             .insert_upload(&dest, ClippyMode::Light, &device_name)?;
+        if do_diarize || do_meeting_notes {
+            self.history
+                .set_meeting_metadata(&record_id, true, do_diarize, None)?;
+        }
         // Show the pending row immediately; the pipeline fills it in.
         let _ = app.emit("wispr:history_changed", ());
 
@@ -1484,6 +1506,8 @@ impl Flow {
                 stt_model,
                 llm_provider,
                 llm_model,
+                draft_llm_provider,
+                draft_llm_model,
                 do_cleanup,
                 do_draft,
                 do_diarize,
@@ -1518,6 +1542,8 @@ impl Flow {
         stt_model: Option<String>,
         llm_provider: Option<String>,
         llm_model: Option<String>,
+        draft_llm_provider: Option<String>,
+        draft_llm_model: Option<String>,
         do_cleanup: bool,
         do_draft: bool,
         do_diarize: bool,
@@ -1564,7 +1590,8 @@ impl Flow {
         // enforce it here too — a per-batch provider override could otherwise
         // route a diarize request to Whisper, which would return an unlabelled
         // wall of text with no indication anything was dropped.
-        let diarize = do_diarize && crate::stt::provider_supports_diarization(stt_name);
+        let diarize = do_diarize
+            && crate::stt::provider_supports_diarization(stt_name, &stt_settings.stt_model);
         if do_diarize && !diarize {
             tl.mark(format!(
                 "diarization skipped · {} has no speaker model",
@@ -1659,15 +1686,28 @@ impl Flow {
         );
         self.history
             .set_transcript(record_id, &transcript.text, stt_name)?;
+        let turns_json = transcript.speakers.as_ref().and_then(|turns| {
+            serde_json::to_string(&serde_json::json!({
+                "version": 1,
+                "turns": turns,
+            }))
+            .ok()
+        });
+        if do_diarize || do_meeting_notes {
+            self.history.set_meeting_metadata(
+                record_id,
+                true,
+                diarize,
+                turns_json.as_deref(),
+            )?;
+        }
 
         // Optional cleanup and/or draft. Both may be requested from the dialog;
         // each writes into its own column so the history row shows both tabs.
         //
-        // Meeting notes ride the Drafted column with a system-prompt override
-        // rather than a new `ClippyMode` variant — mode is persisted on every
-        // row and shared with the sync schema, so adding one is a migration for
-        // no user-visible gain. Draft and Meeting notes therefore write to the
-        // same place, and the dialog presents them as one either/or choice.
+        // Meeting notes reuse the Drafting transform with a prompt override,
+        // but persist in their own column. Draft and Meeting Notes may both be
+        // selected and generated from the same raw transcript.
         if do_cleanup || do_draft || do_meeting_notes {
             let provider_id = llm_provider
                 .clone()
@@ -1704,11 +1744,21 @@ impl Flow {
             }
 
             if do_draft || do_meeting_notes {
-                let llm = build_llm_provider(&provider_id, model.clone())?;
+                let draft_provider_id = draft_llm_provider
+                    .clone()
+                    .unwrap_or_else(|| base_settings.draft_llm_provider.clone());
+                let draft_model = draft_llm_model
+                    .clone()
+                    .unwrap_or_else(|| base_settings.draft_llm_model.clone());
+                let llm = build_llm_provider(&draft_provider_id, draft_model.clone())?;
                 // Meeting notes override the Drafting prompt; a user's custom
                 // draft prompt still wins for a plain draft.
                 let custom = if do_meeting_notes {
-                    Some(crate::llm::prompts::MEETING_NOTES_SYSTEM.to_string())
+                    Some(if base_settings.custom_meeting_prompt.trim().is_empty() {
+                        crate::llm::prompts::MEETING_NOTES_SYSTEM.to_string()
+                    } else {
+                        base_settings.custom_meeting_prompt.clone()
+                    })
                 } else {
                     custom_prompt_for(&base_settings, Mode::Drafting)
                 };
@@ -1716,7 +1766,7 @@ impl Flow {
                     "{} → {} ({})",
                     if do_meeting_notes { "meeting notes" } else { "draft" },
                     llm.name(),
-                    model
+                    draft_model
                 ));
                 let t0 = std::time::Instant::now();
                 // A meeting transcript is long and the user is watching a
@@ -1738,7 +1788,44 @@ impl Flow {
                 let d = t0.elapsed().as_millis() as i64;
                 tl.cleanup_ms = Some(tl.cleanup_ms.unwrap_or(0) + d);
                 self.usage
-                    .record_llm(llm.name(), &model, drafted.usage.as_ref());
+                    .record_llm(llm.name(), &draft_model, drafted.usage.as_ref());
+                self.history.set_alt(
+                    record_id,
+                    if do_meeting_notes { AltKind::MeetingNotes } else { AltKind::Drafted },
+                    &drafted.text,
+                    Some(llm.name()),
+                    drafted.used_clippy,
+                    drafted.note,
+                )?;
+            }
+
+            // Draft and Meeting Notes are independent artifacts. The block
+            // above prioritises Meeting Notes when both were selected, so run
+            // the normal drafting prompt as a second pass and keep both tabs.
+            if do_draft && do_meeting_notes {
+                let draft_provider_id = draft_llm_provider
+                    .clone()
+                    .unwrap_or_else(|| base_settings.draft_llm_provider.clone());
+                let draft_model = draft_llm_model
+                    .clone()
+                    .unwrap_or_else(|| base_settings.draft_llm_model.clone());
+                let llm = build_llm_provider(&draft_provider_id, draft_model.clone())?;
+                let custom = custom_prompt_for(&base_settings, Mode::Drafting);
+                tl.mark(format!("draft -> {} ({})", llm.name(), draft_model));
+                let t0 = std::time::Instant::now();
+                let drafted = clippy::clean_with_timeout(
+                    &transcript.text,
+                    ClippyMode::Drafting,
+                    custom.as_deref(),
+                    None,
+                    llm.as_ref(),
+                    llm.timeout_hint(),
+                )
+                .await;
+                let d = t0.elapsed().as_millis() as i64;
+                tl.cleanup_ms = Some(tl.cleanup_ms.unwrap_or(0) + d);
+                self.usage
+                    .record_llm(llm.name(), &draft_model, drafted.usage.as_ref());
                 self.history.set_alt(
                     record_id,
                     AltKind::Drafted,
@@ -1792,10 +1879,17 @@ impl Flow {
     /// feed it through the LLM with the appropriate prompt and persist
     /// the result to the correct column. Returns the generated text so
     /// the frontend can show it immediately without a full history refresh.
-    pub async fn generate_alt_version(&self, record_id: &str, kind: &str) -> Result<String> {
+    pub async fn generate_alt_version(
+        &self,
+        record_id: &str,
+        kind: &str,
+        provider_override: Option<String>,
+        model_override: Option<String>,
+    ) -> Result<String> {
         let target = match kind {
             "cleaned" => AltKind::Cleaned,
             "drafted" => AltKind::Drafted,
+            "meeting_notes" => AltKind::MeetingNotes,
             other => return Err(anyhow!("unknown alt-version kind '{other}'")),
         };
 
@@ -1814,13 +1908,27 @@ impl Flow {
             // Cleaned-raw uses the Light prompt (now the "cleaned raw" formatter).
             AltKind::Cleaned => Mode::Light,
             AltKind::Drafted => Mode::Drafting,
+            AltKind::MeetingNotes => Mode::Drafting,
         };
 
-        let provider_id = settings.llm_provider.clone();
-        let model = settings.llm_model.clone();
+        let (default_provider, default_model) = if matches!(target, AltKind::Cleaned) {
+            (settings.llm_provider.clone(), settings.llm_model.clone())
+        } else {
+            (settings.draft_llm_provider.clone(), settings.draft_llm_model.clone())
+        };
+        let provider_id = provider_override.unwrap_or(default_provider);
+        let model = model_override.unwrap_or(default_model);
         let llm: Box<dyn LlmProvider> = build_llm_provider(&provider_id, model.clone())?;
 
-        let custom = custom_prompt_for(&settings, mode);
+        let custom = if matches!(target, AltKind::MeetingNotes) {
+            Some(if settings.custom_meeting_prompt.trim().is_empty() {
+                crate::llm::prompts::MEETING_NOTES_SYSTEM.to_string()
+            } else {
+                settings.custom_meeting_prompt.clone()
+            })
+        } else {
+            custom_prompt_for(&settings, mode)
+        };
         // On-demand "generate cleaned/drafted version" from History has no
         // app-context — the original target window is long gone. Skip the
         // hint and let the LLM pick register from the brief's content.
@@ -1848,6 +1956,9 @@ impl Flow {
             cleaned.used_clippy,
             cleaned.note,
         )?;
+        if matches!(target, AltKind::MeetingNotes) {
+            self.history.set_meeting_metadata(record_id, true, rec.diarization_enabled, rec.speaker_turns.as_deref())?;
+        }
         Ok(cleaned.text)
     }
 
@@ -1855,6 +1966,20 @@ impl Flow {
     /// retry button in the History UI when the original attempt errored
     /// (rate limit, network blip, etc.). The audio file must still exist.
     pub async fn retry_recording(&self, app: &AppHandle, record_id: &str) -> Result<()> {
+        self.retry_recording_with(app, record_id, None, None, false, true).await
+    }
+
+    /// Re-run STT with one-off engine choices. Used by the consolidated
+    /// History Rerun dialog; choices do not mutate application defaults.
+    pub async fn retry_recording_with(
+        &self,
+        app: &AppHandle,
+        record_id: &str,
+        stt_provider: Option<String>,
+        stt_model: Option<String>,
+        diarize: bool,
+        run_default_cleanup: bool,
+    ) -> Result<()> {
         let rec = self
             .history
             .get(record_id)?
@@ -1875,9 +2000,13 @@ impl Flow {
         // the fresh timing (and overwrites the failed original's timeline).
         let mut tl = Timeline::new();
 
-        let stt_settings = self.settings();
+        let mut stt_settings = self.settings();
+        if let Some(provider) = stt_provider { stt_settings.stt_provider = provider; }
+        if let Some(model) = stt_model { stt_settings.stt_model = model; }
         let stt = build_stt_provider(&stt_settings)?;
         let stt_name = stt.name();
+        let diarize = diarize
+            && crate::stt::provider_supports_diarization(stt_name, &stt_settings.stt_model);
         tl.mark(format!(
             "retry STT request → {} ({})",
             pretty_provider(stt_name),
@@ -1885,13 +2014,9 @@ impl Flow {
         ));
 
         let stt_t0 = std::time::Instant::now();
-        // A retry re-runs the original request. Diarization isn't re-requested
-        // here: it's an upload-dialog choice we don't persist per row, and
-        // silently adding a billable option on a retry would be worse than the
-        // user re-uploading with the box ticked.
         let retry_opts = crate::stt::SttOptions {
             language: stt_settings.language_hint.clone(),
-            diarize: false,
+            diarize,
         };
         let stt_res = stt.transcribe(&rec.audio_path, &retry_opts).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
@@ -1927,13 +2052,24 @@ impl Flow {
         );
         self.history
             .set_transcript(record_id, &transcript.text, stt_name)?;
+        let turns_json = transcript.speakers.as_ref().and_then(|turns| {
+            serde_json::to_string(&serde_json::json!({ "version": 1, "turns": turns })).ok()
+        });
+        if diarize || rec.is_meeting {
+            self.history.set_meeting_metadata(
+                record_id,
+                diarize || rec.is_meeting,
+                diarize,
+                turns_json.as_deref(),
+            )?;
+        }
 
         let mode = match rec.mode {
             ClippyMode::Light => Mode::Light,
             ClippyMode::Advanced => Mode::Advanced,
             ClippyMode::Drafting => Mode::Drafting,
         };
-        let needs_clippy = match mode {
+        let needs_clippy = run_default_cleanup && match mode {
             Mode::Light => stt_settings.auto_clean_in_light,
             Mode::Advanced => stt_settings.auto_clean_in_advanced,
             Mode::Drafting => stt_settings.auto_clean_in_drafting,
