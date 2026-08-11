@@ -17,8 +17,19 @@ use super::{chunk, render_turns, turns_from_words, SttError, SttOptions, SttProv
 const ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
 pub const DEFAULT_MODEL: &str = "gpt-transcribe";
 const MAX_BYTES: u64 = 25 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(45);
+const ORDINARY_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+// Diarization analyzes the complete meeting in one request so speaker ids stay
+// stable. Give half-hour meeting audio realistic processing headroom while
+// keeping a finite wall-clock ceiling for a wedged provider connection.
+const DIARIZED_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
+
+fn language_field(model: &str) -> &'static str {
+    // The current gpt-transcribe multipart contract is plural even for one
+    // hint. Older transcription models, including the diarization model, use
+    // the legacy singular field.
+    if model == "gpt-transcribe" { "languages[]" } else { "language" }
+}
 
 pub struct OpenAiStt {
     client: reqwest::Client,
@@ -29,7 +40,6 @@ pub struct OpenAiStt {
 impl OpenAiStt {
     pub fn with_model(api_key: String, model: String) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .expect("reqwest client construction is infallible with default config");
@@ -64,12 +74,18 @@ impl OpenAiStt {
         }
 
         if let Some(lang) = opts.language() {
-            form = form.text("language", lang.to_owned());
+            form = form.text(language_field(&self.model), lang.to_owned());
         }
 
+        let request_timeout = if diarized {
+            DIARIZED_REQUEST_TIMEOUT
+        } else {
+            ORDINARY_REQUEST_TIMEOUT
+        };
         let resp = self
             .client
             .post(ENDPOINT)
+            .timeout(request_timeout)
             .bearer_auth(&self.api_key)
             .multipart(form)
             .send()
@@ -116,6 +132,23 @@ impl OpenAiStt {
         struct OpenAiResponse { text: String }
         let parsed: OpenAiResponse = resp.json().await.map_err(|e| SttError::Decode(e.to_string()))?;
         Ok(Transcript::plain(parsed.text, opts.language.clone(), None))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_field;
+
+    #[test]
+    fn current_transcribe_model_uses_plural_language_field() {
+        assert_eq!(language_field("gpt-transcribe"), "languages[]");
+    }
+
+    #[test]
+    fn legacy_and_diarized_models_use_singular_language_field() {
+        assert_eq!(language_field("gpt-4o-transcribe"), "language");
+        assert_eq!(language_field("gpt-4o-transcribe-diarize"), "language");
+        assert_eq!(language_field("whisper-1"), "language");
     }
 }
 

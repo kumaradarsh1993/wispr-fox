@@ -469,21 +469,24 @@ impl History {
             AltKind::Cleaned => conn.execute(
                 r#"UPDATE recordings
                    SET cleaned_text = ?1, llm_provider = ?2,
-                       clippy_used = ?3, clippy_note = ?4, dirty = 1
+                       clippy_used = ?3, clippy_note = ?4,
+                       dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
             AltKind::Drafted => conn.execute(
                 r#"UPDATE recordings
                    SET drafted_text = ?1, llm_provider = ?2,
-                       clippy_used = ?3, clippy_note = ?4, dirty = 1
+                       clippy_used = ?3, clippy_note = ?4,
+                       dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
             AltKind::MeetingNotes => conn.execute(
                 r#"UPDATE recordings
                    SET meeting_notes_text = ?1, llm_provider = ?2,
-                       clippy_used = ?3, clippy_note = ?4, is_meeting = 1, dirty = 1
+                       clippy_used = ?3, clippy_note = ?4, is_meeting = 1,
+                       dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END
                    WHERE id = ?5"#,
                 params![text, provider, used as i32, note, id],
             )?,
@@ -501,7 +504,9 @@ impl History {
         let conn = self.inner.lock();
         conn.execute(
             r#"UPDATE recordings SET is_meeting = ?1, diarization_enabled = ?2,
-               speaker_turns = ?3, dirty = 1 WHERE id = ?4"#,
+               speaker_turns = ?3,
+               dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END
+               WHERE id = ?4"#,
             params![is_meeting as i32, diarization_enabled as i32, turns_json, id],
         )?;
         Ok(())
@@ -510,7 +515,9 @@ impl History {
     pub fn set_speaker_names(&self, id: &str, names_json: &str) -> Result<()> {
         let conn = self.inner.lock();
         conn.execute(
-            "UPDATE recordings SET speaker_names = ?1, dirty = 1 WHERE id = ?2",
+            "UPDATE recordings SET speaker_names = ?1, \
+             dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END \
+             WHERE id = ?2",
             params![names_json, id],
         )?;
         Ok(())

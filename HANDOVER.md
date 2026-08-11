@@ -61,6 +61,10 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   - The shared Supabase `notes` table must expose the five fields above before
     this desktop commit is deployed; the web-client change owns that shared
     migration and uses the same names.
+  - Speaker-name edits and regenerated AI versions on rows pulled from another
+    device are desktop-local annotations for now. They deliberately do not set
+    sync `dirty`, because remote-origin rows are never pushed by this client;
+    marking them dirty would block future cloud updates and tombstones.
   - Verification: `npm run check` is 0 errors/0 warnings, `npm run build`
     succeeds, and `CARGO_BUILD_JOBS=2 cargo check` succeeds with the same nine
     pre-existing dead-code warnings. No installer/tag was produced.
