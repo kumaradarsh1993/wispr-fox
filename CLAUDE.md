@@ -98,7 +98,7 @@ the "What v2.0.0 shipped" list below.)
   bottom-centre anchored. v2.0.0 decouples bubble scale from avatar scale so
   small avatars still have readable status text and large avatars get a tighter
   bubble. Double-click avatar → opens main window. (Full model below.)
-- **macOS hotkeys = ⌥-based** (⌥Space dictate / ⌥Enter draft / ⌘ for sticky)
+- **macOS hotkeys = ⌥-based** (⌥Space dictate / ⌥Enter draft; adaptive tap/hold)
   since nightly.8-v2, NOT the old ⌃⌥ chords. (Hotkey section below is updated.)
 - **macOS durable Accessibility signing** — infrastructure ready but NOT yet
   enabled (the three signing env lines in `release.yml` are COMMENTED; CI fails
@@ -112,20 +112,26 @@ history and the v1.4.0 Codex nightlies are tracked in `docs/ROADMAP.md`
 
 ## Architecture (90-second tour)
 
+Canonical current topology, data/trust boundaries, release flow, and the
+adaptive hotkey/session contract live in `ARCHITECTURE.md`. The map below
+is a quick code-navigation aid only; when it conflicts, use `ARCHITECTURE.md`
+and the source.
+
 ```
 src-tauri/src/
   audio/        cpal capture → hound WAV writer. Cold-start per F8 press.
   inject/       SendInput (Windows) / CGEvent (macOS) text injection.
                 + focus.rs   capture/restore HWND across the LLM gap
                 + clipboard.rs  fallback paste for long output
-                + chunk.rs   WAV split when > 20 MB (Groq's 25 MB cap)
-  stt/groq.rs   Whisper Large v3 Turbo (Groq). Multi-chunk if needed.
-  llm/          Groq Llama (primary) + Gemini (secondary). Per-mode prompt.
-  history/      SQLite. recordings (transcript/cleaned_text/drafted_text) +
+  stt/          Groq/OpenAI/Deepgram/ElevenLabs + chunking/diarization.
+  llm/          Groq/Gemini/OpenAI adapters + per-mode prompts.
+  history/      SQLite. transcript/cleaned/drafted/meeting-note artifacts +
                 daily_stats (lifetime analytics rollup, NOT pruned by GC).
-  flow.rs       Top-level state machine. Hotkey → record → STT → LLM → inject.
+  adaptive.rs   Pure 700 ms tap/hold + physical-key-latch reducer.
+  flow.rs       Serialized session coordinator. Hotkey → record → STT → LLM → inject.
                 Tallies daily_stats once per completed recording (record_session).
-  hotkey.rs     8 registered combos: F8/F9/F10 + Win+ + Shift+F8 force-clean.
+  hotkey.rs     4 adaptive bindings: Transcribe/Draft/force-clean/optional Advanced.
+  sync/         Optional Supabase auth + transcript/provider-key synchronization.
   power.rs      Cross-platform resume detector (wall-clock gap) + JS ping state.
   touchbar.rs   macOS Touch Bar UI (character picker + mode buttons + timer).
   settings.rs   AppSettings struct. Defaults here; user values in tauri-plugin-store.
@@ -155,9 +161,9 @@ src/routes/
                    white loaf supervises, orange tabby works; codex-fox/oru-gujia/spark-buddy
                    are raster state packs under static/avatars rendered by RasterAvatar)
                    Custom right-click menu (FloaterContextMenu) replaces webview default.
-                   Bubble: HARD 2-line cap (CSS line-clamp) — BUBBLE_BAND height math
-                   depends on it; write all bubble copy to fit two lines. Idle hover
-                   ≥700ms → random quip bubble (IDLE_QUIPS + per-skin pools).
+                   Status bubbles use a 2-line cap. Error bubbles reserve a larger
+                   bounded window band and scroll beyond it so full copy stays reachable.
+                   Idle hover ≥700ms → random quip bubble (IDLE_QUIPS + per-skin pools).
 
 src/lib/
   stats.ts                analytics derivation (time-saved, streak, gap-fill)
@@ -166,7 +172,7 @@ src/lib/
   avatar-visibility.svelte.ts  tri-state "always"/"auto"/"hidden" (v2.1.0):
                           always+hidden applied by the main window
                           (applyVisibilityWindow); auto is owned by the clippy
-                          webview off wispr:state (enter/exit pop animations,
+                          webview off the revisioned FlowSnapshot (enter/exit pop animations,
                           AUTO_HIDE_GRACE_MS). Old skin "off" migrates to
                           hidden+fox. Rust still show()s the floater at startup
                           (can't read localStorage) — hidden/auto self-correct
@@ -175,14 +181,17 @@ src/lib/
   floater-place.ts        shared skin-aware default placement + per-class pos keys
 ```
 
-## Hotkey model (current, v1.0.0)
+## Hotkey model (current implementation)
 
 | Key | Mode | Behaviour |
 |---|---|---|
 | **F8** | Light (Transcribe) | Raw transcript OR LLM-cleaned (per `auto_clean_in_light` toggle) |
 | **F9** | Drafting | Full LLM rewrite/format per the brief (was F10 in v0.1.x — F10 retired) |
 | **Shift+F8** | Light w/ force-clean | One-shot cleanup override, ignores the toggle |
-| **Win+F8** / **Win+F9** / **Shift+Win+F8** | Sticky variants | Press once start, press again stop |
+
+All active bindings are adaptive: release before 700 ms to latch; press any
+dictation binding or Escape to stop and send. Hold for 700 ms or longer to stop
+and send on release. Legacy sticky fields still deserialize but are inactive.
 
 **Why F10 was retired:** Windows reserves it as the system menu-
 activation key. WM_SYSKEYUP leaks past RegisterHotKey and steals
@@ -192,8 +201,8 @@ configs to F9 on first launch.
 **macOS uses ⌥-based defaults** (current scheme since the nightly.8 "v2"
 remap; the old ⌃⌥ three-key chords are gone per user request for a single
 near-function-key binding): **⌥Space = dictate (Light)**, **⌥Enter = draft**,
-**Shift+⌥Space = force-clean**, and **⌘+** the same combo for the sticky
-variants (`Super+Alt+Space` etc.). Rationale: the Mac function row sends
+and **Shift+⌥Space = force-clean**. The same adaptive tap/hold rule applies;
+legacy ⌘ sticky variants are not registered. Rationale: the Mac function row sends
 media/volume by default, and there's no clean single-function-key (F5=Dictation,
 F4=Spotlight, F1–F3=system), so ⌥Space is the closest "one press" that works
 without the "use F1/F2 as standard function keys" setting. Defaults set

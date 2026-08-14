@@ -15,6 +15,7 @@
   import { PET_SKINS, isPetSkin, petIdFromSkin, type PetAnimName } from "$lib/pets";
   import RasterAvatar from "$lib/RasterAvatar.svelte";
   import { RASTER_AVATAR_ART, isRasterAvatarSkin } from "$lib/avatar-packs";
+  import { api, type FlowSnapshot } from "$lib/api";
 
   // Right-click context menu state. Renders our custom app actions instead
   // of the default WebView2 / WKWebView menu (Inspect Element, etc.).
@@ -72,33 +73,36 @@
   }
 
   type ClippyState = "idle" | "listening" | "thinking" | "writing" | "pasting";
-  type Mode = "light" | "advanced";
+  type Mode = "light" | "advanced" | "drafting";
 
   // `flowState` is the *actual* flow state from Rust (changes fast during pipeline).
   // `displayState` is what Clippy is currently animating — it lags `flowState`
   // through a queue so each post-listening animation gets at least MIN_DWELL_MS
   // of airtime regardless of how fast the backend finishes transcribing /
   // cleaning / injecting.
-  // Frontend watchdog — last-ditch defense if the backend ever fails to
-  // emit a terminal state. If Clippy has been in any non-idle state for
-  // longer than WATCHDOG_MS without progressing, force-reset to idle and
-  // show a generic error toast. The Rust wrapper in flow.rs handles every
-  // failure I know of; this catches the unknown unknowns (frontend lost
-  // the wispr:state event, Tauri IPC stutter, etc.).
-  const WATCHDOG_MS = 90_000;
+  // The backend can legitimately spend 120s in STT plus a cleanup request.
+  // This watchdog sits beyond that budget and is diagnostic only: it asks the
+  // backend for a fresh snapshot and never invents an idle transition.
+  const WATCHDOG_MS = 300_000;
   let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastRevision = -1;
+  let activeSessionId: string | null = null;
+  let lastNoticeKey = "";
   function armWatchdog() {
     if (watchdogTimer) clearTimeout(watchdogTimer);
-    watchdogTimer = setTimeout(() => {
-      console.warn("[clippy] watchdog fired — forcing state back to idle");
-      flowState = "idle";
-      displayState = "idle";
-      displayQueue = [];
-      if (displayTimer) {
-        clearTimeout(displayTimer);
-        displayTimer = null;
+    const armedRevision = lastRevision;
+    watchdogTimer = setTimeout(async () => {
+      watchdogTimer = null;
+      console.warn("[clippy] lifecycle watchdog fired; requesting backend snapshot");
+      try {
+        applyFlowSnapshot(await api.getFlowSnapshot());
+      } catch (e) {
+        console.warn("[clippy] snapshot resync failed", e);
       }
-      showToast("Took too long — try again", "error", 5000);
+      if (lastRevision === armedRevision && flowState !== "idle" && flowState !== "listening") {
+        showToast("Still working on the previous dictation…", "info", 5000);
+        armWatchdog();
+      }
     }, WATCHDOG_MS);
   }
   function disarmWatchdog() {
@@ -147,14 +151,21 @@
   let hoverQuip = $state("");
   let toastKind = $state<"info" | "error">("info");
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  const ERROR_TOAST_MIN_MS = 15_000;
   function showToast(msg: string, kind: "info" | "error" = "info", durationMs = 3000) {
     toastMessage = msg;
     toastKind = kind;
     if (toastTimer) clearTimeout(toastTimer);
+    const visibleFor = kind === "error" ? Math.max(durationMs, ERROR_TOAST_MIN_MS) : durationMs;
     toastTimer = setTimeout(() => {
       toastMessage = "";
       toastTimer = null;
-    }, durationMs);
+    }, visibleFor);
+  }
+  function dismissToast() {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    toastMessage = "";
   }
 
   const MIN_DWELL_MS = 1400;
@@ -249,8 +260,8 @@
     cat:           { w: 150, h: 168, head: 128 },
     "cat-lab":     { w: 150, h: 168, head: 128 },
     off:           { w: 116, h: 116, head: 110 },
-    // Minimal skins — NO head (no bubble ever). head=0 collapses the two-box
-    // model to a single REST box (see boxFor + isMinimalSkin).
+    // Minimal skins have no normal status-bubble anchor. Terminal errors use
+    // their rendered height as an explicit temporary anchor (see boxFor).
     // Wave bar: small Apple-style pill (~Clippy width). Siri orb: tiny circle.
     wave:          { w: 120, h: 32,  head: 0 },
     siri:          { w: 58,  h: 58,  head: 0 },
@@ -288,29 +299,38 @@
     return Math.max(12, HEAD_GAP * scale);
   }
 
-  // Minimal skins (wave bar, Siri orb): no bubbles, no quips, no floor
-  // shadow — always the tight REST box, and their windows default to their
-  // own screen positions (see lib/floater-place.ts).
+  // Minimal skins (wave bar, Siri orb): no normal status/info bubbles, quips,
+  // or floor shadow. Terminal errors are the sole readable-bubble exception.
   const MINIMAL_SKINS = new Set(["wave", "siri"]);
   function isMinimalSkin(s: string): boolean {
     return MINIMAL_SKINS.has(s);
   }
 
-  function boxFor(skin: string, talking: boolean, avatarScale: number, bubbleScale: number): Size {
+  function boxFor(
+    skin: string,
+    talking: boolean,
+    avatarScale: number,
+    bubbleScale: number,
+    bubbleBand = BUBBLE_BAND,
+    showMinimalError = false,
+  ): Size {
     const a = ART[skin] ?? ART.fox;
     const rest: Size = {
       w: Math.ceil((a.w + 2 * SIDE_PAD) * avatarScale),
       h: Math.ceil((a.h + BOTTOM_PAD + TOP_MARGIN) * avatarScale),
     };
-    // Minimal skins never show a bubble — always the tight REST box regardless
-    // of the `talking` flag.
-    if (isMinimalSkin(skin)) return rest;
+    // Minimal skins normally stay in the tight REST box. An explicit terminal
+    // error gets a bounded reading box above the minimal art.
+    if (isMinimalSkin(skin) && !showMinimalError) return rest;
     if (!talking) return rest;
+    const bubbleAnchor = isMinimalSkin(skin) && showMinimalError
+      ? a.h + BOTTOM_PAD
+      : a.head;
     return {
       w: Math.max(rest.w, Math.ceil(BUBBLE_W * bubbleScale)),
       h: Math.max(
         rest.h,
-        Math.ceil(a.head * avatarScale + bubbleGapFor(avatarScale) + BUBBLE_BAND * bubbleScale),
+        Math.ceil(bubbleAnchor * avatarScale + bubbleGapFor(avatarScale) + bubbleBand * bubbleScale),
       ),
     };
   }
@@ -320,10 +340,13 @@
   // bubble's 200ms fade-in paints); shrinking waits a beat so the fade-OUT
   // finishes inside the still-tall window and quick state churn (e.g.
   // thinking→writing) never causes a shrink-grow stutter.
-  // Minimal skins show NO bubbles/toasts/quips ever — so they never grow the box.
+  // Minimal skins suppress normal status/info bubbles. Terminal errors are the
+  // exception: they must remain readable regardless of the selected avatar.
+  let terminalErrorUp = $derived(toastMessage !== "" && toastKind === "error");
   let bubbleUp = $derived(
-    !isMinimalSkin(skin) &&
-      (toastMessage !== "" || hoverQuip !== "" || (skin !== "off" && displayState !== "idle")),
+    terminalErrorUp ||
+      (!isMinimalSkin(skin) &&
+        (toastMessage !== "" || hoverQuip !== "" || (skin !== "off" && displayState !== "idle"))),
   );
   let talking = $state(false);
   let _shrinkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -353,11 +376,28 @@
   let fscale = $derived(floaterScale.current);
   let bubbleScale = $derived(bubbleScaleFor(fscale));
   let bubbleGap = $derived(bubbleGapFor(fscale));
+  // Terminal errors get a monitor-friendly, bounded reading area. Reserve the
+  // whole safe band up front instead of guessing line count from character
+  // count: proportional fonts, URLs, and long tokens make that guess unsafe.
+  // CSS scrolls only the text beyond the cap, so every byte remains reachable
+  // without letting an always-on-top floater grow without bound.
+  const ERROR_TEXT_MAX_H = 180;
+  const ERROR_BUBBLE_BAND = ERROR_TEXT_MAX_H + 28;
+  let bubbleBand = $derived.by(() => {
+    if (toastKind !== "error" || toastMessage === "") return BUBBLE_BAND;
+    return ERROR_BUBBLE_BAND;
+  });
 
   // Where the bubble's tail sits (logical px from window bottom), scaled.
   // The bubble anchors here and grows upward. v2.0.0 keeps a minimum physical
   // gap so the larger small-size bubble no longer lands on the avatar's face.
-  let bubbleBottom = $derived(((ART[skin]?.head ?? ART.fox.head) * fscale) + bubbleGap);
+  let bubbleBottom = $derived.by(() => {
+    const art = ART[skin] ?? ART.fox;
+    const anchor = isMinimalSkin(skin) && terminalErrorUp
+      ? art.h + BOTTOM_PAD
+      : art.head;
+    return anchor * fscale + bubbleGap;
+  });
 
   // Debug overlay (off by default). Shows the requested vs ACTUAL window size
   // so we can tell at a glance whether setSize is taking effect — the whole
@@ -446,7 +486,14 @@
   // mid-dictation transitions (listening→thinking→writing) never touch
   // the window.
   $effect(() => {
-    const box = boxFor(skin, fixedBox || talking, fscale, bubbleScale);
+    const box = boxFor(
+      skin,
+      fixedBox || talking || terminalErrorUp,
+      fscale,
+      bubbleScale,
+      bubbleBand,
+      terminalErrorUp,
+    );
     let w = box.w;
     let h = box.h;
     // While the right-click menu is open, ensure the window is at least big
@@ -622,7 +669,7 @@
   let stateTimer: ReturnType<typeof setInterval> | null = null;
 
   function animFor(s: ClippyState, m: Mode): string | null {
-    const map = m === "advanced" ? ANIMS_ADVANCED : ANIMS_LIGHT;
+    const map = m === "light" ? ANIMS_LIGHT : ANIMS_ADVANCED;
     return map[s];
   }
 
@@ -672,25 +719,83 @@
     stateTimer = setInterval(playOne, 5000);
   });
 
-  function mapFlow(s: string): ClippyState {
-    switch (s) {
-      case "recording":
-        // NOTE: this is "the hotkey went down", NOT "audio is flowing". With a
-        // Bluetooth mic those are 2-10s apart and everything said in between is
-        // lost. `micWaiting` (below) holds a distinct waiting presentation over
-        // this state until `wispr:mic_live` confirms the mic actually woke up.
-        return "listening";
-      // Denoising rides the "thinking" pose (every skin has one) — only the
-      // bubble label differs, via the `denoising` flag set in the listener.
-      case "denoising":
-      case "transcribing":
-        return "thinking";
-      case "cleaning":
-        return "writing";
-      case "injecting":
-        return "pasting";
-      default:
-        return "idle";
+  function snapshotDisplay(snapshot: FlowSnapshot): ClippyState {
+    if (snapshot.phase === "starting" || snapshot.phase === "recording") {
+      return "listening";
+    }
+    if (snapshot.phase === "stopping") return "thinking";
+    if (snapshot.phase !== "processing") return "idle";
+    if (snapshot.stage === "cleaning") return "writing";
+    if (snapshot.stage === "injecting") return "pasting";
+    return "thinking";
+  }
+
+  function flushTransientStory(target: ClippyState) {
+    displayQueue = [];
+    if (displayTimer) {
+      clearTimeout(displayTimer);
+      displayTimer = null;
+    }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    toastMessage = "";
+    displayState = target;
+    flowState = target;
+    denoising = false;
+    activeApp = "";
+    sttProvider = "";
+    llmProvider = "";
+  }
+
+  function applyFlowSnapshot(snapshot: FlowSnapshot) {
+    if (!snapshot || !Number.isFinite(snapshot.revision) || snapshot.revision <= lastRevision) {
+      return;
+    }
+
+    const next = snapshotDisplay(snapshot);
+    const isNewSession =
+      snapshot.session_id !== null && snapshot.session_id !== activeSessionId;
+    lastRevision = snapshot.revision;
+
+    if (isNewSession) {
+      activeSessionId = snapshot.session_id;
+      lastNoticeKey = "";
+      flushTransientStory(next);
+    } else {
+      flowState = next;
+    }
+
+    if (snapshot.mode) mode = snapshot.mode;
+    denoising = snapshot.phase === "processing" && snapshot.stage === "denoising";
+    micWaiting =
+      (snapshot.phase === "starting" ||
+        snapshot.phase === "recording" ||
+        snapshot.phase === "stopping") &&
+      snapshot.mic === "waking";
+    micReadyMs = snapshot.mic_ready_ms;
+
+    if (next === "idle" || next === "listening") {
+      sttProvider = "";
+      llmProvider = "";
+      disarmWatchdog();
+    } else {
+      armWatchdog();
+    }
+
+    if (snapshot.phase === "failed") triggerWaveError();
+
+    const noticeKey = snapshot.notice
+      ? `${snapshot.session_id ?? "none"}:${snapshot.revision}:${snapshot.notice.code}`
+      : "";
+    if (snapshot.notice && noticeKey !== lastNoticeKey) {
+      lastNoticeKey = noticeKey;
+      showToast(
+        snapshot.notice.summary,
+        snapshot.notice.severity,
+        snapshot.notice.severity === "error" ? 7000 : 3500,
+      );
     }
   }
 
@@ -718,94 +823,30 @@
     // whole screen (and blocked every click behind it). Config sets this too.
     getCurrentWindow().setMaximizable(false).catch(() => {});
 
-    let unlisten: (() => void) | undefined;
-    let unlistenMode: (() => void) | undefined;
+    let unlistenSnapshot: (() => void) | undefined;
     let unlistenMsg: (() => void) | undefined;
-    let unlistenErr: (() => void) | undefined;
     let unlistenActiveApp: (() => void) | undefined;
     let unlistenSttProv: (() => void) | undefined;
     let unlistenLlmProv: (() => void) | undefined;
     let unlistenWarn: (() => void) | undefined;
     let unlistenLevel: (() => void) | undefined;
-    let unlistenMicLive: (() => void) | undefined;
     let unlistenFarewell: (() => void) | undefined;
-    // The mic went live: audio is genuinely reaching the recorder now. Until
-    // this fires, the bubble says "hold on" instead of "listening", because
-    // claiming to listen while the mic is still waking up is exactly how the
-    // user loses their opening sentence without ever knowing it happened.
-    listen<number>("wispr:mic_live", (e) => {
-      console.log("[clippy] wispr:mic_live", e.payload, "ms");
-      micWaiting = false;
-      micReadyMs = e.payload;
-    }).then((u) => (unlistenMicLive = u));
+
+    // Subscribe first, then rehydrate. If an event wins the race, revision
+    // filtering makes the older command response a harmless no-op.
+    listen<FlowSnapshot>("wispr:flow_snapshot", (e) => {
+      applyFlowSnapshot(e.payload);
+    }).then((u) => {
+      unlistenSnapshot = u;
+      void api.getFlowSnapshot()
+        .then(applyFlowSnapshot)
+        .catch((e) => console.warn("[clippy] initial flow snapshot failed", e));
+    });
+
     listen<string>("wispr:clippy_message", (e) => {
       console.log("[clippy] wispr:clippy_message", e.payload);
       showToast(e.payload, "info", 3000);
     }).then((u) => (unlistenMsg = u));
-    listen<string>("wispr:flow_error", (e) => {
-      console.warn("[clippy] wispr:flow_error", e.payload);
-      // Force-reset all state — Rust's wrapper also emits "idle" but be
-      // defensive in case events arrive out of order.
-      flowState = "idle";
-      displayState = "idle";
-      displayQueue = [];
-      denoising = false;
-      if (displayTimer) {
-        clearTimeout(displayTimer);
-        displayTimer = null;
-      }
-      disarmWatchdog();
-      triggerWaveError(); // red blink on the wave/siri minimal skins
-      showToast(e.payload, "error", 5000);
-    }).then((u) => (unlistenErr = u));
-    listen<string>("wispr:state", (e) => {
-      const next = mapFlow(e.payload);
-      console.log("[clippy] wispr:state", e.payload, "→", next);
-      // Track the noise-reduction beat in real time (not through the display
-      // queue) so the bubble reads "clearing noise" for exactly as long as
-      // the denoiser actually runs — the user asked to SEE this cost.
-      denoising = e.payload === "denoising";
-      // A recording just started: assume the mic is NOT live until the audio
-      // layer says otherwise. On a healthy built-in mic that's a sub-100ms
-      // flicker; on Bluetooth it's the several seconds the user needs to see.
-      if (e.payload === "recording") {
-        micWaiting = true;
-        micReadyMs = null;
-      } else if (e.payload === "idle") {
-        micWaiting = false;
-        micReadyMs = null;
-      }
-      flowState = next;
-      // Clear stale provider labels at the start/end of a run so a finished
-      // pipeline doesn't leave "transcribing · Groq" hanging around.
-      if (next === "idle" || next === "listening") {
-        sttProvider = "";
-        llmProvider = "";
-      }
-      // Watchdog policy: arm ONLY for transient pipeline states that have
-      // a known upper bound (thinking/writing/pasting). Recording is
-      // user-controlled — a 5-minute monologue is legitimate, not a stuck
-      // pipeline. v0.4.1 had a bug where the watchdog armed on
-      // `listening` and fired at 90s mid-recording, force-resetting the
-      // UI to idle and showing "Took too long" even though Rust was
-      // happily still recording.
-      if (next === "idle" || next === "listening") {
-        disarmWatchdog();
-      } else {
-        armWatchdog();
-      }
-      if (next === "pasting") {
-        setTimeout(() => {
-          flowState = "idle";
-          disarmWatchdog();
-        }, 800);
-      }
-    }).then((u) => (unlisten = u));
-    listen<string>("wispr:mode", (e) => {
-      const m = e.payload === "advanced" ? "advanced" : "light";
-      console.log("[clippy] wispr:mode", m);
-      mode = m;
-    }).then((u) => (unlistenMode = u));
     // Friendly app name from Rust focus-capture. Empty payload = unknown.
     listen<string>("wispr:active_app", (e) => {
       console.log("[clippy] wispr:active_app", e.payload);
@@ -819,8 +860,8 @@
       llmProvider = e.payload ?? "";
     }).then((u) => (unlistenLlmProv = u));
     // Non-fatal cleanup warning (LLM step failed, raw text pasted). Shown as
-    // an error-styled toast WITHOUT resetting pipeline state — unlike
-    // flow_error, the run actually succeeded (the user got their text).
+    // an error-styled toast WITHOUT resetting pipeline state. This is not a
+    // terminal snapshot notice: the run actually succeeded and delivered text.
     listen<string>("wispr:clippy_warning", (e) => {
       console.warn("[clippy] wispr:clippy_warning", e.payload);
       showToast(e.payload, "error", 5000);
@@ -876,10 +917,21 @@
     // covers the case where the surface is dead and the 1s tick hasn't fired
     // yet. These are cheap; the backend only nudges when the window is
     // actually meant to be on-screen.
-    const onVisible = () => {
-      if (document.visibilityState === "visible") recoverFloater("became visible");
+    const resyncFlow = () => {
+      void api.getFlowSnapshot()
+        .then(applyFlowSnapshot)
+        .catch((e) => console.warn("[clippy] flow snapshot resync failed", e));
     };
-    const onFocus = () => recoverFloater("regained focus");
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        recoverFloater("became visible");
+        resyncFlow();
+      }
+    };
+    const onFocus = () => {
+      recoverFloater("regained focus");
+      resyncFlow();
+    };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onFocus);
 
@@ -1011,16 +1063,13 @@
     window.addEventListener("mouseup", onMove);
 
     return () => {
-      unlisten?.();
-      unlistenMode?.();
+      unlistenSnapshot?.();
       unlistenMsg?.();
-      unlistenErr?.();
       unlistenActiveApp?.();
       unlistenSttProv?.();
       unlistenLlmProv?.();
       unlistenWarn?.();
       unlistenLevel?.();
-      unlistenMicLive?.();
       unlistenFarewell?.();
       if (waveRaf != null) cancelAnimationFrame(waveRaf);
       cancelPendingAutoHide();
@@ -1254,7 +1303,8 @@
   });
 
   // ── Wave bar (skin "wave") ──────────────────────────────────────────────
-  // A minimal Wispr-Flow-style pill. No text, no bubbles, no quips — ever.
+  // A minimal Wispr-Flow-style pill. No routine text/bubbles/quips; terminal
+  // errors temporarily use the shared accessible error bubble.
   // Levels arrive from Rust via `wispr:level` (f32 0..1, ~90ms while
   // recording). Each bar expands/contracts INDIVIDUALLY around the pill's
   // vertical center — height = live mic level × that bar's own slowly-
@@ -1362,7 +1412,7 @@
     }
   });
 
-  // Error (red blink ×3) flag — fired from the flow_error listener.
+  // Error (red blink ×3) flag — fired from a failed flow snapshot.
   let waveError = $state(false);
   let _waveErrTimer: ReturnType<typeof setTimeout> | null = null;
   function triggerWaveError() {
@@ -1387,7 +1437,7 @@
 
   // ── Terminal pets: floater state → sprite animation ─────────────────────
   // The Codex pet sheets map almost 1:1 onto our pipeline states. Error rides
-  // the shared waveError flag (set by the flow_error listener) so a failed
+  // the shared waveError flag (set by the failed snapshot) so a failed
   // run shows the sad row for a beat; hover while idle gets a playful hop.
   let petAnim = $derived<PetAnimName>(
     waveError ? "sad" :
@@ -1559,10 +1609,33 @@
   <!-- Toast bubble (cross-skin). Renders for transient Rust-emitted
        messages like "Copied to clipboard" — important enough that real-Clippy
        users see it too, not just the SVG skins. -->
-  {#if toastMessage && skin !== "wave"}
-    <div class="bubble show" data-state={toastKind === "error" ? "toast-error" : "toast"}>
-      <span class="bubble-text">{toastMessage}</span>
+  {#if toastMessage && (!isMinimalSkin(skin) || toastKind === "error")}
+    <div
+      class="bubble show"
+      data-state={toastKind === "error" ? "toast-error" : "toast"}
+      role={toastKind === "error" ? "alert" : "status"}
+      aria-live={toastKind === "error" ? "assertive" : "polite"}
+      aria-atomic="true"
+    >
+      <!-- Scrollable error prose intentionally enters the tab order so keyboard
+           users can reach and scroll the complete message. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="bubble-text"
+        tabindex={toastKind === "error" ? 0 : undefined}
+        role="region"
+        aria-label={toastKind === "error" ? "Full error message" : "Notification"}
+      >{toastMessage}</div>
       <span class="bubble-emoji">{toastKind === "error" ? "⚠" : "📋"}</span>
+      {#if toastKind === "error"}
+        <button
+          type="button"
+          class="error-dismiss"
+          aria-label="Dismiss error"
+          onmousedown={(e) => e.stopPropagation()}
+          onclick={(e) => { e.stopPropagation(); dismissToast(); }}
+        >×</button>
+      {/if}
     </div>
   {/if}
 
@@ -2157,7 +2230,7 @@
     <SpritePet petId={petIdFromSkin(skin)} anim={petAnim} />
   {:else if skin === "wave"}
     <!-- ═══════════════════════════════════════════════════════════════════
-         WAVE BAR — a small Apple-style pill. NO text, NO bubbles, NO quips,
+         WAVE BAR — a small Apple-style pill. No routine text/bubbles/quips;
          ever. 12 slim white bars on a gray translucent pill; each bar rests
          as a dot and expands/contracts individually with the voice, capped
          at ~68% of the pill height. Heights are rAF-smoothed (waveHeights[]);
@@ -2181,7 +2254,7 @@
     </div>
   {:else if skin === "siri"}
     <!-- ═══════════════════════════════════════════════════════════════════
-         SIRI ORB — a tiny multicolour fluid orb. NO text, NO bubbles. Six
+         SIRI ORB — a tiny multicolour fluid orb. No routine text/bubbles. Six
          counter-rotating conic gradients under blur+contrast produce the
          Apple-style liquid colour blobs (technique from SmoothUI's SiriOrb);
          the glass layer clips the blurred core to a crisp circle and a
@@ -3150,8 +3223,42 @@
     background: #b3261e;
     color: #fff;
     border-color: #b3261e;
-    max-width: calc(200px * var(--bubble-scale, 1));
+    max-width: calc(216px * var(--bubble-scale, 1));
     white-space: normal;
+    align-items: flex-start;
+    pointer-events: auto;
+  }
+  .bubble[data-state="toast-error"] .bubble-text {
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    max-height: calc(180px * var(--bubble-scale, 1));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    overscroll-behavior: contain;
+    padding-right: calc(2px * var(--bubble-scale, 1));
+  }
+  .error-dismiss {
+    flex: 0 0 auto;
+    width: calc(18px * var(--bubble-scale, 1));
+    height: calc(18px * var(--bubble-scale, 1));
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .error-dismiss:hover,
+  .error-dismiss:focus-visible {
+    background: rgba(255, 255, 255, 0.32);
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 1px;
   }
   .bubble[data-state="toast-error"]::after {
     background: #b3261e;

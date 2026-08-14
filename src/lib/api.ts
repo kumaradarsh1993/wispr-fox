@@ -5,9 +5,53 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type FlowState = "idle" | "recording" | "transcribing" | "cleaning" | "injecting";
+export type FlowState =
+  | "idle"
+  | "recording"
+  | "transcribing"
+  | "denoising"
+  | "cleaning"
+  | "injecting";
 
-export type ClippyMode = "light" | "advanced";
+export type ClippyMode = "light" | "advanced" | "drafting";
+
+export type FlowPhase =
+  | "idle"
+  | "starting"
+  | "recording"
+  | "stopping"
+  | "processing"
+  | "succeeded"
+  | "failed";
+
+export type FlowStage = "transcribing" | "denoising" | "cleaning" | "injecting";
+export type InputDisposition = "undecided" | "latched" | "hold_to_talk";
+export type MicPhase = "inactive" | "waking" | "live" | "unavailable";
+
+export interface FlowNotice {
+  code: string;
+  severity: "info" | "error";
+  summary: string;
+  detail_ref: string | null;
+}
+
+export interface FlowSnapshot {
+  revision: number;
+  session_id: string | null;
+  phase: FlowPhase;
+  stage: FlowStage | null;
+  mode: ClippyMode | null;
+  input: InputDisposition | null;
+  mic: MicPhase;
+  mic_ready_ms: number | null;
+  notice: FlowNotice | null;
+}
+
+export interface MicReadyEvent {
+  generation: number;
+  source: "dictation" | "preview";
+  ready_ms: number;
+}
 
 export type RecordingStatus =
   | "recording"
@@ -21,6 +65,7 @@ export interface AppSettings {
   light_hotkey: string;
   advanced_hotkey: string;
   drafting_hotkey: string;
+  // Serialized compatibility only; adaptive hotkeys ignore these fields.
   sticky_light: boolean;
   sticky_advanced: boolean;
   sticky_drafting: boolean;
@@ -302,6 +347,7 @@ export interface DefaultPrompts {
 
 export const api = {
   ping: () => invoke<string>("ping"),
+  getFlowSnapshot: () => invoke<FlowSnapshot>("get_flow_snapshot"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
   secretAuditLog: (limit = 100) => invoke<SecretAuditEvent[]>("secret_audit_log", { limit }),
@@ -415,6 +461,11 @@ export const api = {
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */
 export function onFlowState(cb: (s: FlowState) => void): Promise<UnlistenFn> {
   return listen<string>("wispr:state", (e) => cb(e.payload as FlowState));
+}
+
+/** Authoritative, revisioned live-dictation lifecycle. */
+export function onFlowSnapshot(cb: (s: FlowSnapshot) => void): Promise<UnlistenFn> {
+  return listen<FlowSnapshot>("wispr:flow_snapshot", (e) => cb(e.payload));
 }
 
 /** Subscribe to flow-error notifications. */

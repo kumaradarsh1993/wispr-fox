@@ -13,28 +13,26 @@ pub struct AppSettings {
     // ── Hotkeys ────────────────────────────────────────────────────────────
     pub light_hotkey: String,
     pub advanced_hotkey: String,
-    /// F10-style "drafting" mode — user gives a brief, LLM drafts a polished output.
+    /// Drafting mode — user gives a brief, LLM drafts a polished output.
     pub drafting_hotkey: String,
 
-    /// Sticky-toggle mode per hotkey. When true, the MAIN hotkey behaves as
-    /// press-to-start / press-to-stop instead of push-to-talk. Useful when
-    /// the user wants sticky to be the default for that mode.
+    /// Compatibility-only fields from the pre-adaptive hotkey model. They are
+    /// still serialized so old settings round-trip, but registration and flow
+    /// interpretation intentionally ignore them.
     pub sticky_light: bool,
     pub sticky_advanced: bool,
     pub sticky_drafting: bool,
 
-    /// Ad-hoc sticky hotkeys. Pressing these ALWAYS triggers a sticky toggle
-    /// for the corresponding mode, regardless of the per-mode sticky flag.
-    /// Defaults: Win + the same key as the main hotkey.
+    /// Compatibility-only legacy sticky bindings. They are not registered.
     pub light_sticky_hotkey: String,
     pub advanced_sticky_hotkey: String,
     pub drafting_sticky_hotkey: String,
 
-    /// Force-clean variants of the Light hotkey. Pressing these triggers
+    /// Force-clean variant of the Light hotkey. Pressing it triggers
     /// F8 with `auto_clean_in_light` overridden to TRUE for this single
     /// invocation — doesn't persist. Used when the user normally wants
     /// raw F8 output but occasionally needs a cleaned version on-demand.
-    /// Defaults: Shift+F8 and Shift+Super+F8.
+    /// The sticky field remains serialized for backward compatibility only.
     #[serde(default = "default_force_clean_hotkey")]
     pub force_clean_hotkey: String,
     #[serde(default = "default_force_clean_sticky_hotkey")]
@@ -67,7 +65,7 @@ pub struct AppSettings {
 
     // ── Models ────────────────────────────────────────────────────────────
     // Simplified May 2026: ONE STT choice + ONE LLM choice. All three modes
-    // (F8 / F9 / F10) use the same LLM client; only the system prompt
+    // use the same LLM client; only the system prompt
     // differs per mode. Old per-mode fields kept for backwards compat but
     // ignored by the flow layer.
     pub stt_provider: String,
@@ -206,18 +204,16 @@ impl Default for AppSettings {
         //
         // macOS: the function row sends media/volume events by default, NOT
         // F8/F9 keycodes — so a global F8/F9 shortcut never fires (it just
-        // plays/pauses music). We default Mac to ⌃⌥ (Control+Option) chords,
-        // which fire regardless of the "use F1/F2 as standard function keys"
-        // setting and rarely collide with app shortcuts:
-        //   ⌃⌥D = dictate (Light), ⌃⌥F = draft (Drafting), ⌃⌥C = force-clean.
-        // Sticky-toggle variants add Shift. (Existing Mac installs are
-        // migrated off F8/F9 by the frontend settings store.)
+        // plays/pauses music). Current defaults use one Option chord and fire
+        // regardless of the "use F1/F2 as standard function keys" setting.
+        // Existing Mac installs are migrated off F8/F9 by the frontend store.
         let mac = cfg!(target_os = "macos");
         Self {
             // macOS: a single ⌥ chord (Option+Space / Option+Enter) instead of
             // ⌃⌥ three-key combos — one modifier + one key, works out of the box
             // (no "use F-keys as standard" setting needed, unlike bare F8/F9).
-            // ⌘ is the sticky modifier (the Mac analogue of Win+F8).
+            // Legacy sticky values below remain only so old settings round-trip;
+            // the hotkey registrar deliberately ignores them.
             light_hotkey: if mac { "Alt+Space" } else { "F8" }.to_string(),
             advanced_hotkey: String::new(),
             drafting_hotkey: if mac { "Alt+Enter" } else { "F9" }.to_string(),

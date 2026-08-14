@@ -72,20 +72,16 @@ export function prettyHotkey(combo: string | null | undefined): string {
 }
 
 /**
- * Just the "hold this to dictate" string for the active mode — what the
- * onboarding tip line and the sidebar reminder both read out. Use over
- * raw `prettyHotkey()` when the text reads better as a verb phrase, e.g.
- *   "Hold {holdToDictate(s.light_hotkey)} anywhere to dictate"
+ * Display label for an adaptive dictation binding. The historical function
+ * name remains for callers, but the key supports both tap-to-latch and hold.
  */
 export function holdToDictate(combo: string | null | undefined): string {
   return prettyHotkey(combo);
 }
 
 /**
- * Tap/click affordance label. For sticky variants users tap once start,
- * tap again stop. We expose the same prettyHotkey() output — kept as a
- * named function so future divergence (e.g. adding "(toggle)" annotation)
- * lands in one place.
+ * Tap/click affordance label. Every active binding taps to latch and a later
+ * dictation-key Down stops; this is not a separate sticky shortcut variant.
  */
 export function tapToToggle(combo: string | null | undefined): string {
   return prettyHotkey(combo);

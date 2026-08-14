@@ -1,9 +1,14 @@
 # wispr-fox — Getting Started (Claude Code handover)
 
 > Fresh Claude Code session: **read this whole file first**, then start work.
-> If you're a human: this is a WisprFlow-style dictation tool — press F8 / F9 / F10, speak, your words appear in the focused text field.
+> If you're a human: this is a WisprFlow-style dictation tool — press F8 or F9, speak, and your words appear in the focused text field.
+>
+> Architecture authority (reviewed 2026-08-14): read `ARCHITECTURE.md` for the
+> current module, lifecycle, trust, and release contracts. The dated material
+> below is setup and historical context; where it conflicts, `ARCHITECTURE.md`
+> and the current code win.
 
-## Current state (2026-05-11)
+## Historical state snapshot (2026-05-11)
 
 App is **feature-complete and daily-driven** on Windows. The user has
 been using it as their primary input method for 10+ days, including
@@ -11,13 +16,14 @@ $1,500 of API token spend stress-testing the prompt + provider stack.
 
 What works today, end-to-end:
 
-- **3 hotkeys** with distinct behaviors:
-  - F8 (Light) → raw transcript, no LLM cleanup by default
-  - F9 (Advanced) → strict copy-edit (grammar/spelling only, preserves voice)
-  - F10 (Drafting) → speak a brief, get a polished draft back
-- **Push-to-talk + sticky-toggle**: Win+F8/F9/F10 are dedicated sticky-invoke
-  hotkeys (press once start, press again stop). Per-mode sticky default
-  toggle in Settings.
+- **Adaptive hotkeys** with distinct behaviors:
+  - F8 (Transcribe) → raw transcript, no LLM cleanup by default
+  - Shift+F8 (Force clean) → Transcribe with cleanup for this invocation
+  - F9 (Drafting) → speak a brief, get a polished draft back
+  - Advanced cleanup remains an optional, unbound mode
+- **Tap + hold in one binding**: release before 700 ms to latch; press any
+  dictation key or Escape to stop and send. Hold for 700 ms or longer to stop
+  and send on release. Legacy sticky settings still deserialize but are inactive.
 - **True cold-start audio** (~25-200ms setup_ms with Realtek enhancements off)
 - **Two providers**: Groq (Whisper + Llama 3.3 70B) and Google Gemini
   (2.5 Pro for LLM). Per-mode provider+model can differ. Test-connection
@@ -44,7 +50,7 @@ What works today, end-to-end:
 
 Repo: `D:\Claude Code Projects\wispr-fox`, branch `main`. Cross-platform
 release CI matrix in `.github/workflows/release.yml` (Windows + macOS
-arm64 + macOS Intel + Linux). **Only Windows is exercised**; Mac/Linux
+arm64 + Linux). **Only Windows is exercised**; Mac/Linux
 builds are wired but untested.
 
 ## What's NOT done
@@ -63,7 +69,7 @@ builds are wired but untested.
 
 ## What this is
 
-A **push-to-talk dictation app** for Windows (Mac soon). Press a hotkey
+A desktop dictation app with adaptive tap-to-latch and hold-to-talk. Press a hotkey
 anywhere → record mic → transcribe via Whisper → optionally clean up
 with an LLM → paste into the focused text field via Win32 SendInput
 (or clipboard fallback).
@@ -74,11 +80,11 @@ Three modes (in order of how aggressively the LLM touches your text):
   When LLM is enabled, prompt is strictly bounded: punctuation/capitalization
   only, transcript wrapped in `<transcript>...</transcript>` for
   prompt-injection defense.
-- **Advanced (F9)** — strict copy-edit: grammar, spelling, sentence
+- **Advanced (optional binding)** — strict copy-edit: grammar, spelling, sentence
   structure. **Never drafts, expands, or reduces.** Preserves the user's
   voice. (Rewritten from earlier draft-style prompt that was eating into
-  F10's purpose.)
-- **Drafting (F10)** — speak a brief like "reply to my boss about the
+  Drafting's purpose.)
+- **Drafting (F9)** — speak a brief like "reply to my boss about the
   meeting", get back a complete polished output. Prompt explicitly
   forbids asking clarifying questions back.
 
@@ -102,10 +108,13 @@ Three modes (in order of how aggressively the LLM touches your text):
   `%APPDATA%/com.wispr-fox.app/.keys.enc.json`; legacy `.keys.json`
   files are migration-only. Keys exist per provider (`groq_*`,
   `openai_*`, `deepgram_stt`, `elevenlabs_stt`, `gemini_llm`).
+- **Accounts/sync:** optional Supabase auth syncs transcripts and selected API
+  keys across clients. Signed-out mode stays local; saved audio files are never
+  synced to Supabase (audio is still sent to the selected STT provider).
 - **History:** `rusqlite` (bundled SQLite). Hourly GC by `retention_days`
   (default 7d) + 500 MB cap. Audio file deleted when row deleted.
-- **Hotkeys:** `tauri-plugin-global-shortcut`. 6 registrations: 3 main
-  push-to-talk + 3 sticky-invoke (`Super+F8/F9/F10`).
+- **Hotkeys:** `tauri-plugin-global-shortcut`. Up to 4 adaptive registrations:
+  Transcribe, Force clean, Drafting, and the optional Advanced binding.
 - **Clippy sprite:** Vendored `clippyts` (`src/lib/clippyjs-vendor/`)
   with patched static agent map. The original library uses dynamic
   imports that Vite can't statically analyze.
@@ -125,11 +134,11 @@ puts the mic in low-power mode after ~30s idle and wakeup takes
 calls this out.
 
 The flow:
-1. F8 down → query `cpal::default_host().default_input_device().default_input_config()` (~15ms)
+1. A dictation Down reserves `Starting`, timestamps the press, and opens the selected input device.
 2. `build_input_stream(...)` with **explicit 10ms buffer** (`sample_rate / 100`)
    — NOT default which can be 100ms+ on Realtek
 3. `stream.play()` → first audio callback fires within ~13ms on warm hardware
-4. F8 up → drop the stream (mic indicator off, device released)
+4. Up before 700 ms latches; Up at/after 700 ms stops. Any dictation Down or Escape also stops the original mode.
 
 **Why cold-start works here:** Empirical testing confirmed `cpal` callback
 fires within 13ms of `play()`. The slow 5-second behavior was the Realtek
@@ -148,13 +157,14 @@ WASAPI = 37ms. cpal-on-WASAPI is the right backend.
 src-tauri/src/
 ├─ lib.rs                Tauri builder, plugin wiring, tray, single-instance
 ├─ commands.rs            #[tauri::command] wrappers — no logic
-├─ flow.rs                State machine: Idle→Recording→Transcribing→Cleaning→Injecting
-│                        Also: custom_prompt_for() helper, sticky resolution
+├─ flow.rs                Serialized session coordinator + revisioned FlowSnapshot
+│                        Also: custom_prompt_for() and processing pipeline
+├─ adaptive.rs            Pure deterministic 700 ms tap/hold reducer
 ├─ audio/
 │  ├─ mod.rs              cpal recorder + WAV streaming + silence trim
 │  ├─ cues.rs             rodio start/stop tones (custom file override)
 │  └─ devices.rs          Input device enumeration
-├─ hotkey.rs              Registers 6 hotkeys; HotkeyEvent has sticky_invoke flag
+├─ hotkey.rs              Registers active adaptive bindings; forwards physical edges
 ├─ inject/
 │  ├─ mod.rs              Dispatcher: try SendInput, fall back to clipboard
 │  ├─ sendinput.rs        windows-rs SendInput w/ KEYEVENTF_UNICODE
@@ -204,9 +214,10 @@ src/lib/
 Important fields in `AppSettings` (Rust) / `AppSettings` (TS):
 
 ```
-light_hotkey / advanced_hotkey / drafting_hotkey       # main push-to-talk
-light_sticky_hotkey / advanced_sticky_hotkey / ...     # Super+F8/F9/F10 sticky-invoke
-sticky_light / sticky_advanced / sticky_drafting       # per-mode sticky default
+light_hotkey / advanced_hotkey / drafting_hotkey       # active adaptive mode bindings
+force_clean_hotkey                                     # active one-shot cleanup binding
+light_sticky_hotkey / advanced_sticky_hotkey / ...     # serialized legacy compatibility only
+sticky_light / sticky_advanced / sticky_drafting       # serialized legacy compatibility only
 auto_clean_in_light                                    # default false (F8 raw)
 auto_clean_in_advanced / auto_clean_in_drafting        # default true
 stt_provider / stt_model                               # global STT
@@ -221,16 +232,15 @@ autostart
 
 ## Architectural decisions (locked — don't change without explicit approval)
 
-1. Three global hotkeys (F8/F9/F10) + three sticky-invoke variants
-   (`Super+F8/F9/F10`). User explicitly didn't want Ctrl+Win+Space-style
-   combos (collide with Windows IME picker).
+1. Every active dictation binding uses the same 700 ms adaptive contract.
+   There are no separately registered sticky-invoke variants.
 2. SendInput first, clipboard+Ctrl+V fallback (with prior-clipboard restore).
 3. Light prompt wraps raw text in `<transcript>...</transcript>` with
    prompt-injection defenses + length-delta tripwire. **Security boundary.**
 4. **F8 LLM cleanup OFF by default.** User explicitly didn't want F8
    touched by the LLM.
-5. **F9 is strict copy-edit only.** Earlier draft-style F9 prompt was
-   rewritten because it overlapped F10's drafting role.
+5. **F9 is Drafting.** Advanced strict copy-edit remains available as an
+   optional unbound mode.
 6. Secrets: keyring primary, encrypted local fallback only after verified
    keyring failure. Separate entries per provider (`groq_stt`,
    `groq_llm`, `openai_stt`, `openai_llm`, `deepgram_stt`,
@@ -329,7 +339,8 @@ cd src-tauri && cargo clean
 ## Sibling docs in this repo
 
 - [HANDOVER.md](./HANDOVER.md) — current state + how to resume. Start here.
-- [CLAUDE.md](./CLAUDE.md) — deep architecture, conventions, gotchas.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — current module, state, trust, and release contracts.
+- [CLAUDE.md](./CLAUDE.md) — conventions, platform notes, and gotchas.
 - [README.md](./README.md) — end-user GitHub README. Keep this in sync
   with shipped features.
 - [docs/ROADMAP.md](./docs/ROADMAP.md) — what's planned.

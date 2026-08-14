@@ -76,8 +76,8 @@
   async function stopDictation() {
     onClose();
     try {
-      // sticky-invoke on the active mode toggles off — Mode doesn't matter
-      // for the stop call (the flow layer knows there's an in-flight recording).
+      // Floater commands are direct toggles. Mode is ignored when a session is
+      // already active; the coordinator always stops the original mode.
       await api.floaterTrigger("light");
     } catch (e) {
       console.warn("floater_trigger stop failed", e);

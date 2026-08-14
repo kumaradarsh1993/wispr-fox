@@ -32,7 +32,6 @@ use objc2_foundation::{NSArray, NSObject, NSString};
 use tauri::{AppHandle, Emitter, Listener};
 
 use crate::flow::Flow;
-use crate::hotkey::{Edge, HotkeyEvent};
 use crate::settings::Mode;
 
 // ---------------------------------------------------------------------------
@@ -285,35 +284,16 @@ fn wrap_item(
 // Action handlers — invoked from ObjC button selectors
 // ---------------------------------------------------------------------------
 
-/// Start recording in the given mode.  Uses `sticky_invoke: true` so a
-/// single tap starts recording (tap Stop or press again to finish).
+/// Explicitly toggle recording in the given mode.
 fn trigger_mode(mode: Mode) {
     let Some(bridge) = BRIDGE.get() else { return };
-    bridge.flow.handle_hotkey(
-        &bridge.app,
-        HotkeyEvent {
-            mode,
-            edge: Edge::Down,
-            sticky_invoke: true,
-            force_clean: false,
-        },
-    );
+    bridge.flow.toggle_recording(&bridge.app, mode, false);
 }
 
-/// Stop the current recording.  In sticky mode, a second Down edge on
-/// the same (or any) mode calls `finish_recording_async` regardless of
-/// the mode value, so Mode::Light is a safe default here.
+/// Stop the current recording without fabricating a physical shortcut edge.
 fn trigger_stop() {
     let Some(bridge) = BRIDGE.get() else { return };
-    bridge.flow.handle_hotkey(
-        &bridge.app,
-        HotkeyEvent {
-            mode: Mode::Light,
-            edge: Edge::Down,
-            sticky_invoke: true,
-            force_clean: false,
-        },
-    );
+    bridge.flow.stop_recording(&bridge.app);
 }
 
 /// Emit a skin-change event.  Both the main window sidebar and the

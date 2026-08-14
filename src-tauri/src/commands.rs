@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio;
-use crate::flow::Flow;
+use crate::flow::{Flow, FlowSnapshot};
 use crate::history::{History, Recording};
 use crate::secrets::{self, SecretKey};
 use crate::settings::AppSettings;
@@ -15,6 +15,11 @@ use crate::usage::{DailyUsage, UsageTracker};
 #[tauri::command]
 pub fn ping() -> &'static str {
     "pong"
+}
+
+#[tauri::command]
+pub fn get_flow_snapshot(flow: State<'_, Flow>) -> FlowSnapshot {
+    flow.get_flow_snapshot()
 }
 
 /// Called every 10s by the floater's JS to signal the webview is alive.
@@ -212,15 +217,14 @@ pub fn set_clickthrough(window: tauri::WebviewWindow, ignore: bool) {
 }
 
 /// Trigger a recording from the floater's right-click context menu (or any
-/// non-hotkey caller). Behaves like a sticky-invoke hotkey press: a second
-/// call toggles recording off. `mode` is "light", "advanced", or "drafting".
+/// non-hotkey caller). This is an explicit toggle, independent of physical
+/// key-edge interpretation. `mode` is "light", "advanced", or "drafting".
 #[tauri::command]
 pub fn floater_trigger(
     app: AppHandle,
     flow: State<'_, Flow>,
     mode: String,
 ) -> Result<(), String> {
-    use crate::hotkey::{Edge, HotkeyEvent};
     use crate::settings::Mode;
     let m = match mode.as_str() {
         "light" => Mode::Light,
@@ -228,15 +232,7 @@ pub fn floater_trigger(
         "drafting" => Mode::Drafting,
         other => return Err(format!("unknown mode '{other}'")),
     };
-    flow.handle_hotkey(
-        &app,
-        HotkeyEvent {
-            mode: m,
-            edge: Edge::Down,
-            sticky_invoke: true,
-            force_clean: false,
-        },
-    );
+    flow.toggle_recording(&app, m, false);
     Ok(())
 }
 
@@ -347,8 +343,24 @@ pub fn get_settings(flow: State<'_, Flow>) -> AppSettings {
 }
 
 #[tauri::command]
-pub fn set_settings(flow: State<'_, Flow>, settings: AppSettings) {
-    flow.set_settings(settings);
+pub fn set_settings(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    settings: AppSettings,
+) -> Result<(), String> {
+    let new_hotkeys = crate::hotkey::HotkeyConfig::from_settings(&settings);
+    let old = flow.set_settings(settings);
+    let old_hotkeys = crate::hotkey::HotkeyConfig::from_settings(&old);
+
+    // Startup initially registers Rust defaults. The first settings-store push
+    // replaces those with the persisted/custom bindings. Later unrelated
+    // preference writes do not churn registrations, and a binding capture
+    // remains suspended until its explicit apply_hotkeys resume.
+    if old_hotkeys != new_hotkeys {
+        crate::hotkey::refresh_if_live(&app, &new_hotkeys)
+            .map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

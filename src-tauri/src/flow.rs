@@ -1,4 +1,4 @@
-//! Top-level state machine: Idle → Recording → Transcribing → Cleaning → Injecting → Done|Error.
+//! Serialized live-dictation coordinator plus transcription/delivery pipelines.
 //!
 //! Owns no `!Send` audio handles — the cpal Stream lives on a dedicated worker
 //! thread inside `AudioController`, and we drive recording via async channel
@@ -12,6 +12,7 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter};
 
+use crate::adaptive::{AdaptiveReducer, Availability, Decision};
 use crate::audio::{AudioController, FinishedRecording};
 use crate::clippy;
 use crate::history::{AltKind, History, Status};
@@ -429,9 +430,160 @@ impl Timeline {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowPhase {
+    Idle,
+    Starting,
+    Recording,
+    Stopping,
+    Processing,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowStage {
+    Transcribing,
+    Denoising,
+    Cleaning,
+    Injecting,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputDisposition {
+    Undecided,
+    Latched,
+    HoldToTalk,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MicPhase {
+    Inactive,
+    Waking,
+    Live,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeSeverity {
+    Info,
+    Error,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FlowNotice {
+    pub code: String,
+    pub severity: NoticeSeverity,
+    pub summary: String,
+    pub detail_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FlowSnapshot {
+    pub revision: u64,
+    pub session_id: Option<String>,
+    pub phase: FlowPhase,
+    pub stage: Option<FlowStage>,
+    pub mode: Option<String>,
+    pub input: Option<InputDisposition>,
+    pub mic: MicPhase,
+    pub mic_ready_ms: Option<i64>,
+    pub notice: Option<FlowNotice>,
+}
+
+impl Default for FlowSnapshot {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            session_id: None,
+            phase: FlowPhase::Idle,
+            stage: None,
+            mode: None,
+            input: None,
+            mic: MicPhase::Inactive,
+            mic_ready_ms: None,
+            notice: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SessionContext {
+    id: String,
+    mode: Mode,
+    force_clean: bool,
+    capture_generation: u64,
+    input: InputDisposition,
+    mic: MicPhase,
+    mic_ready_ms: Option<i64>,
+}
+
+enum RuntimeState {
+    Idle,
+    Starting {
+        session: SessionContext,
+        stop_requested: bool,
+    },
+    Recording {
+        session: SessionContext,
+        in_flight: InFlight,
+    },
+    Processing {
+        session: SessionContext,
+        record_id: String,
+    },
+}
+
 struct FlowState {
-    active: Option<InFlight>,
+    input: AdaptiveReducer,
+    runtime: RuntimeState,
+    snapshot: FlowSnapshot,
+}
+
+impl Default for FlowState {
+    fn default() -> Self {
+        Self {
+            input: AdaptiveReducer::default(),
+            runtime: RuntimeState::Idle,
+            snapshot: FlowSnapshot::default(),
+        }
+    }
+}
+
+impl FlowState {
+    fn availability(&self) -> Availability {
+        match &self.runtime {
+            RuntimeState::Idle => Availability::Idle,
+            RuntimeState::Starting {
+                stop_requested: false,
+                ..
+            }
+            | RuntimeState::Recording { .. } => Availability::Active,
+            RuntimeState::Starting {
+                stop_requested: true,
+                ..
+            }
+            | RuntimeState::Processing { .. } => Availability::Busy,
+        }
+    }
+
+    fn revise(
+        &mut self,
+        phase: FlowPhase,
+        stage: Option<FlowStage>,
+        notice: Option<FlowNotice>,
+    ) -> FlowSnapshot {
+        self.snapshot.revision = self.snapshot.revision.saturating_add(1);
+        self.snapshot.phase = phase;
+        self.snapshot.stage = stage;
+        self.snapshot.notice = notice;
+        self.snapshot.clone()
+    }
 }
 
 struct InFlight {
@@ -452,20 +604,32 @@ struct InFlight {
 
 #[derive(Clone)]
 pub struct Flow {
+    /// Serializes state mutation with its externally visible side effects
+    /// (Escape registration and snapshot/legacy events). The state mutex alone
+    /// was insufficient: a Stop could publish/disarm, then an older Start
+    /// handler could resume and re-arm/publish its stale revision.
+    transitions: Arc<Mutex<()>>,
     state: Arc<Mutex<FlowState>>,
     history: History,
     settings: Arc<Mutex<AppSettings>>,
     audio_dir: PathBuf,
     audio: AudioController,
     usage: UsageTracker,
-    /// Timestamp of the last accepted Down hotkey event. Used to debounce
-    /// Windows WM_HOTKEY auto-repeat (~30/sec while a function key is
-    /// held) and the spawned-task race where two concurrent Down events
-    /// both pass the `state.active.is_some()` check before the first one
-    /// sets it. Any Down within 150ms of the previous accepted Down is
-    /// dropped — well above the auto-repeat rate, well below a human's
-    /// minimum legitimate re-press cadence.
-    last_down_at: Arc<Mutex<Option<std::time::Instant>>>,
+}
+
+enum FlowAction {
+    Start(SessionContext),
+    DisarmEscape,
+    Stop {
+        session_id: String,
+        in_flight: InFlight,
+    },
+}
+
+struct CaptureCompletion {
+    snapshot: Option<FlowSnapshot>,
+    action: Option<FlowAction>,
+    stale: Option<InFlight>,
 }
 
 impl Flow {
@@ -477,13 +641,13 @@ impl Flow {
         usage: UsageTracker,
     ) -> Self {
         Self {
+            transitions: Arc::new(Mutex::new(())),
             state: Arc::new(Mutex::new(FlowState::default())),
             history,
             settings: Arc::new(Mutex::new(settings)),
             audio_dir,
             audio,
             usage,
-            last_down_at: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -491,177 +655,265 @@ impl Flow {
         self.settings.lock().clone()
     }
 
-    pub fn set_settings(&self, s: AppSettings) {
-        *self.settings.lock() = s;
+    pub fn set_settings(&self, s: AppSettings) -> AppSettings {
+        std::mem::replace(&mut *self.settings.lock(), s)
+    }
+
+    pub fn get_flow_snapshot(&self) -> FlowSnapshot {
+        self.state.lock().snapshot.clone()
     }
 
     pub fn handle_hotkey(&self, app: &AppHandle, evt: HotkeyEvent) {
-        // Synchronous debounce gate — kept BEFORE the spawn so two near-
-        // simultaneous Down events can't both spawn tasks and race each
-        // other through `start_recording_async`. The previous v0.3.1 fix
-        // checked `state.active.is_some()` AFTER the spawn, which left a
-        // ~ms window where both tasks read None and both called start →
-        // second one errored with "recording already in progress" →
-        // flow_error event → Clippy front-end force-reset state to idle
-        // (ear disappeared, red toast) even though the original recording
-        // task was still happily running on the audio thread.
-        //
-        // Up events bypass the gate — releasing a key is always a
-        // meaningful action and never auto-repeats.
-        if matches!(evt.edge, Edge::Down) {
-            const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
-            let now = std::time::Instant::now();
-            let mut last = self.last_down_at.lock();
-            if let Some(prev) = *last {
-                if now.duration_since(prev) < DEBOUNCE {
-                    tracing::trace!(
-                        elapsed_ms = now.duration_since(prev).as_millis() as u64,
-                        "debouncing rapid Down event (auto-repeat or race)"
-                    );
-                    return;
-                }
-            }
-            *last = Some(now);
-        }
-
-        let app = app.clone();
-        let this = self.clone();
-        tauri::async_runtime::spawn(async move {
-            // Two routes to sticky behaviour:
-            //   1. The user pressed the sticky-invoke combo (e.g. Win+F8) for
-            //      this single press — `evt.sticky_invoke == true`. Forces
-            //      sticky regardless of settings.
-            //   2. The per-mode sticky_* setting is on — sticky is the default
-            //      for this mode.
-            // Both end up in sticky behaviour (ignore key-up, toggle on each
-            // key-down).
-            let s = this.settings();
-            let mode_sticky = match evt.mode {
-                Mode::Light => s.sticky_light,
-                Mode::Advanced => s.sticky_advanced,
-                Mode::Drafting => s.sticky_drafting,
+        let _transition = self.transitions.lock();
+        let at_ms = monotonic_ms();
+        let mut action = None;
+        let snapshot = {
+            let mut state = self.state.lock();
+            let availability = state.availability();
+            let decision = match evt.edge {
+                Edge::Down => state
+                    .input
+                    .physical_down(&evt.trigger_id, at_ms, availability),
+                Edge::Up => state.input.physical_up(&evt.trigger_id, at_ms),
             };
-            let sticky = evt.sticky_invoke || mode_sticky;
-
-            let mode_str = mode_to_str(evt.mode);
-
-            if sticky {
-                // Sticky: only react to Down edges; toggle recording state.
-                if !matches!(evt.edge, Edge::Down) {
-                    return;
-                }
-                let already_recording = this.state.lock().active.is_some();
-                if already_recording {
-                    if let Err(e) = this.finish_recording_async(&app).await {
-                        tracing::error!("finish_recording (sticky stop) failed: {e:#}");
-                        let _ = app.emit("wispr:flow_error", e.to_string());
-                    }
-                } else if let Err(e) = this
-                    .start_recording_async(&app, evt.mode, evt.force_clean)
-                    .await
-                {
-                    let raw = e.to_string();
-                    if raw.contains("recording already in progress") {
-                        // Race / late dispatch — another task won. Don't
-                        // alarm the user; the original recording is fine.
-                        tracing::debug!("sticky start: dropped duplicate ({raw})");
-                    } else {
-                        tracing::error!("start_recording (sticky start) failed: {e:#}");
-                        let _ = app.emit("wispr:flow_error", raw);
-                    }
-                } else {
-                    let _ = app.emit("wispr:mode", mode_str);
-                    let _ = app.emit("wispr:state", "recording");
-                }
-                return;
-            }
-
-            // Push-to-talk: down starts, up finishes.
-            //
-            // Note: the synchronous debounce gate at the top of
-            // `handle_hotkey` already swallows auto-repeats. This
-            // additional `active.is_some()` check covers the still-
-            // pathological case where a legitimate Down sneaks through
-            // > 150ms after the previous accepted Down but recording is
-            // still active (e.g. user spammed F8 + Win+F8 alternately).
-            match evt.edge {
-                Edge::Down => {
-                    if this.state.lock().active.is_some() {
-                        tracing::trace!("ignoring Down: recording already active");
-                        return;
-                    }
-                    if let Err(e) = this
-                        .start_recording_async(&app, evt.mode, evt.force_clean)
-                        .await
-                    {
-                        let raw = e.to_string();
-                        if raw.contains("recording already in progress") {
-                            // Race-condition belt-and-suspenders: another
-                            // task set state.active between our check and
-                            // start_recording_async's own check. Silently
-                            // ignore — emitting flow_error here would make
-                            // the Clippy front-end reset state to idle
-                            // even though the OTHER task's recording is
-                            // still going. v0.4.0 user-reported bug.
-                            tracing::debug!("dropped duplicate start ({raw})");
-                        } else {
-                            tracing::error!("start_recording failed: {e:#}");
-                            let _ = app.emit("wispr:flow_error", raw);
-                        }
-                    } else {
-                        let _ = app.emit("wispr:mode", mode_str);
-                        let _ = app.emit("wispr:state", "recording");
-                    }
-                }
-                Edge::Up => {
-                    if let Err(e) = this.finish_recording_async(&app).await {
-                        tracing::error!("finish_recording failed: {e:#}");
-                        let _ = app.emit("wispr:flow_error", e.to_string());
-                    }
-                }
-            }
-        });
+            let start = (decision == Decision::Start).then(|| {
+                self.new_session(evt.mode, evt.force_clean, false)
+            });
+            Self::apply_decision_locked(
+                &mut state,
+                decision,
+                start,
+                &mut action,
+            )
+        };
+        self.prepare_action(app, action.as_ref());
+        self.publish_if_some(app, snapshot);
+        self.dispatch_action(app, action);
     }
 
-    async fn start_recording_async(
-        &self,
-        app: &AppHandle,
-        mode: Mode,
-        force_clean: bool,
-    ) -> Result<()> {
-        {
-            let state = self.state.lock();
-            if state.active.is_some() {
-                return Err(anyhow!("recording already in progress"));
+    /// Explicit toggle for the floater and Touch Bar. These controls do not
+    /// fabricate physical edges, so they cannot pollute the key-repeat latch.
+    pub fn toggle_recording(&self, app: &AppHandle, mode: Mode, force_clean: bool) {
+        let _transition = self.transitions.lock();
+        let mut action = None;
+        let snapshot = {
+            let mut state = self.state.lock();
+            let availability = state.availability();
+            let decision = state.input.direct_toggle(availability);
+            let start = (decision == Decision::Start).then(|| {
+                self.new_session(mode, force_clean, true)
+            });
+            Self::apply_decision_locked(
+                &mut state,
+                decision,
+                start,
+                &mut action,
+            )
+        };
+        self.prepare_action(app, action.as_ref());
+        self.publish_if_some(app, snapshot);
+        self.dispatch_action(app, action);
+    }
+
+    pub fn stop_recording(&self, app: &AppHandle) {
+        let _transition = self.transitions.lock();
+        let mut action = None;
+        let snapshot = {
+            let mut state = self.state.lock();
+            let availability = state.availability();
+            let decision = state.input.escape(availability);
+            Self::apply_decision_locked(
+                &mut state,
+                decision,
+                None,
+                &mut action,
+            )
+        };
+        self.prepare_action(app, action.as_ref());
+        self.publish_if_some(app, snapshot);
+        self.dispatch_action(app, action);
+    }
+
+    fn new_session(&self, mode: Mode, force_clean: bool, direct: bool) -> SessionContext {
+        SessionContext {
+            id: uuid::Uuid::new_v4().to_string(),
+            mode,
+            force_clean,
+            capture_generation: self.audio.reserve_generation(),
+            input: if direct {
+                InputDisposition::Latched
+            } else {
+                InputDisposition::Undecided
+            },
+            mic: MicPhase::Waking,
+            mic_ready_ms: None,
+        }
+    }
+
+    fn apply_decision_locked(
+        state: &mut FlowState,
+        decision: Decision,
+        start: Option<SessionContext>,
+        action: &mut Option<FlowAction>,
+    ) -> Option<FlowSnapshot> {
+        match decision {
+            Decision::Start => {
+                let session = start.expect("Start decision requires a reserved session");
+                state.snapshot.session_id = Some(session.id.clone());
+                state.snapshot.mode = Some(mode_to_str(session.mode).to_owned());
+                state.snapshot.input = Some(session.input);
+                state.snapshot.mic = session.mic;
+                state.snapshot.mic_ready_ms = None;
+                state.runtime = RuntimeState::Starting {
+                    session: session.clone(),
+                    stop_requested: false,
+                };
+                *action = Some(FlowAction::Start(session));
+                Some(state.revise(FlowPhase::Starting, None, None))
+            }
+            Decision::Stop => Self::request_stop_locked(state, action),
+            Decision::Latch => {
+                let updated = match &mut state.runtime {
+                    RuntimeState::Starting { session, .. }
+                    | RuntimeState::Recording { session, .. } => {
+                        session.input = InputDisposition::Latched;
+                        true
+                    }
+                    _ => false,
+                };
+                if updated {
+                    state.snapshot.input = Some(InputDisposition::Latched);
+                    let phase = state.snapshot.phase;
+                    let stage = state.snapshot.stage;
+                    Some(state.revise(phase, stage, None))
+                } else {
+                    None
+                }
+            }
+            Decision::Busy => {
+                let phase = state.snapshot.phase;
+                let stage = state.snapshot.stage;
+                Some(state.revise(
+                    phase,
+                    stage,
+                    Some(FlowNotice {
+                        code: "session_busy".to_owned(),
+                        severity: NoticeSeverity::Info,
+                        summary: "Still finishing the previous dictation.".to_owned(),
+                        detail_ref: None,
+                    }),
+                ))
+            }
+            Decision::Ignore => None,
+        }
+    }
+
+    fn request_stop_locked(
+        state: &mut FlowState,
+        action: &mut Option<FlowAction>,
+    ) -> Option<FlowSnapshot> {
+        let runtime = std::mem::replace(&mut state.runtime, RuntimeState::Idle);
+        match runtime {
+            RuntimeState::Starting {
+                mut session,
+                stop_requested: _,
+            } => {
+                if session.input == InputDisposition::Undecided {
+                    session.input = InputDisposition::HoldToTalk;
+                    state.snapshot.input = Some(InputDisposition::HoldToTalk);
+                }
+                state.runtime = RuntimeState::Starting {
+                    session,
+                    stop_requested: true,
+                };
+                *action = Some(FlowAction::DisarmEscape);
+                Some(state.revise(FlowPhase::Stopping, None, None))
+            }
+            RuntimeState::Recording {
+                mut session,
+                in_flight,
+            } => {
+                if session.input == InputDisposition::Undecided {
+                    session.input = InputDisposition::HoldToTalk;
+                    state.snapshot.input = Some(InputDisposition::HoldToTalk);
+                }
+                let session_id = session.id.clone();
+                let record_id = in_flight.record_id.clone();
+                state.runtime = RuntimeState::Processing { session, record_id };
+                state.input.session_ended();
+                *action = Some(FlowAction::Stop {
+                    session_id,
+                    in_flight,
+                });
+                Some(state.revise(FlowPhase::Stopping, None, None))
+            }
+            other => {
+                state.runtime = other;
+                None
             }
         }
+    }
 
+    fn publish_if_some(&self, app: &AppHandle, snapshot: Option<FlowSnapshot>) {
+        if let Some(snapshot) = snapshot {
+            publish_snapshot(app, &snapshot);
+        }
+    }
+
+    fn prepare_action(&self, app: &AppHandle, action: Option<&FlowAction>) {
+        match action {
+            Some(FlowAction::Start(_)) => arm_escape_stop(app, self),
+            Some(FlowAction::DisarmEscape | FlowAction::Stop { .. }) => {
+                disarm_escape_stop(app)
+            }
+            None => {}
+        }
+    }
+
+    fn dispatch_action(&self, app: &AppHandle, action: Option<FlowAction>) {
+        match action {
+            Some(FlowAction::Start(session)) => {
+                let this = self.clone();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let session_id = session.id.clone();
+                    let result = this.prepare_recording_async(&app, &session).await;
+                    this.capture_started(&app, &session_id, result);
+                });
+            }
+            Some(FlowAction::Stop {
+                session_id,
+                in_flight,
+            }) => {
+                let this = self.clone();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let record_id = in_flight.record_id.clone();
+                    let outcome = this.do_pipeline(&app, &session_id, in_flight).await;
+                    this.pipeline_finished(&app, &session_id, &record_id, outcome);
+                });
+            }
+            Some(FlowAction::DisarmEscape) => {}
+            None => {}
+        }
+    }
+
+    async fn prepare_recording_async(
+        &self,
+        app: &AppHandle,
+        session: &SessionContext,
+    ) -> Result<InFlight> {
         let date = Utc::now().format("%Y-%m-%d").to_string();
         let id_seed = uuid::Uuid::new_v4().to_string();
         let path = self.audio_dir.join(date).join(format!("{id_seed}.wav"));
 
-        // Snapshot where the user is talking BEFORE we start the audio
-        // stream. We capture now (not on hotkey-up) because F10 release can
-        // itself shift focus (Outlook ribbon keytips), and we want the HWND
-        // of where the user actually started speaking.
         let captured_focus = inject::focus::capture();
-
-        // Surface a friendly app name to the floater so it can show
-        // "Listening for Outlook" instead of just "Listening". Empty payload
-        // = unknown / no capture; the floater falls back to the generic
-        // status line. We emit before audio.start so the floater paints the
-        // app label simultaneously with the recording state transition.
         let friendly = captured_focus
             .as_ref()
             .and_then(inject::focus::friendly_app_name)
             .unwrap_or_default();
         let _ = app.emit("wispr:active_app", friendly);
 
-        // The user's chosen input device, or None for "system default". A saved
-        // device that has since gone away falls back to the default inside the
-        // audio worker — never an error, because "my Bluetooth mic was off" is
-        // the single most likely reason for it to be missing and losing the
-        // dictation over that would be indefensible.
         let input_device = self
             .settings
             .lock()
@@ -669,63 +921,225 @@ impl Flow {
             .clone()
             .filter(|s| !s.trim().is_empty());
 
-        self.audio
-            .start(path.clone(), input_device)
-            .await
-            .context("starting audio capture")?;
-        crate::audio::cues::play_start();
+        // The history row is the transaction anchor. If audio startup fails,
+        // compensate it immediately and remove any partial WAV.
         let device_name = self.settings.lock().device_name.clone();
         let record_id = self
             .history
-            .insert_new(&path, ClippyMode::from(mode), &device_name)?;
+            .insert_new(&path, ClippyMode::from(session.mode), &device_name)
+            .context("creating recording history row")?;
 
-        let mut state = self.state.lock();
-        state.active = Some(InFlight {
-            mode,
+        if let Err(e) = self
+            .audio
+            .start(path.clone(), input_device, session.capture_generation)
+            .await
+            .context("starting audio capture")
+        {
+            let raw = format!("{e:#}");
+            let _ = self.history.set_error(&record_id, &raw);
+            let _ = std::fs::remove_file(&path);
+            return Err(e);
+        }
+        crate::audio::cues::play_start();
+
+        Ok(InFlight {
+            mode: session.mode,
             record_id,
             audio_path: path,
             captured_focus,
-            force_clean,
-        });
-        drop(state);
-
-        // Arm Escape as a global stop key for the duration of this recording.
-        // Dynamically registered/unregistered so we only steal Escape from
-        // focused apps while a dictation is genuinely in flight.
-        arm_escape_stop(app, self);
-        Ok(())
+            force_clean: session.force_clean,
+        })
     }
 
-    async fn finish_recording_async(&self, app: &AppHandle) -> Result<()> {
-        // Disarm Escape FIRST so subsequent Escape presses go back to the
-        // focused app (e.g. close a dialog) instead of being swallowed.
-        disarm_escape_stop(app);
-
-        let in_flight = {
+    fn capture_started(&self, app: &AppHandle, session_id: &str, result: Result<InFlight>) {
+        let _transition = self.transitions.lock();
+        let completion = {
             let mut state = self.state.lock();
-            state.active.take()
+            Self::apply_capture_completion_locked(&mut state, session_id, result)
         };
-        let Some(in_flight) = in_flight else {
-            return Ok(());
-        };
-        let record_id = in_flight.record_id.clone();
 
-        // Run the pipeline; whatever happens (Ok / Err / step timeout),
-        // the wrapper here GUARANTEES the UI returns to idle and any
-        // history row is properly closed out. Without this, an unhandled
-        // error in STT/LLM leaves Clippy stuck in "thinking" forever and
-        // the row stranded in `transcribing`.
-        let outcome = self.do_pipeline(app, in_flight).await;
-
-        let _ = app.emit("wispr:state", "idle");
-        if let Err(e) = &outcome {
-            let raw = format!("{e:#}");
-            tracing::warn!(record_id = %record_id, "pipeline failed: {raw}");
-            let _ = self.history.set_error(&record_id, &raw);
-            let friendly = user_friendly_error(&raw);
-            let _ = app.emit("wispr:flow_error", &friendly);
+        if let Some(orphan) = completion.stale {
+            let _ = self
+                .history
+                .set_error(&orphan.record_id, "stale capture startup completion");
+            let audio = self.audio.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = audio.stop().await;
+            });
         }
-        outcome
+        self.prepare_action(app, completion.action.as_ref());
+        self.publish_if_some(app, completion.snapshot);
+        self.dispatch_action(app, completion.action);
+    }
+
+    fn apply_capture_completion_locked(
+        state: &mut FlowState,
+        session_id: &str,
+        result: Result<InFlight>,
+    ) -> CaptureCompletion {
+        let runtime = std::mem::replace(&mut state.runtime, RuntimeState::Idle);
+        match runtime {
+            RuntimeState::Starting {
+                session,
+                stop_requested,
+            } if session.id == session_id => match result {
+                Ok(in_flight) if stop_requested => {
+                    let record_id = in_flight.record_id.clone();
+                    state.runtime = RuntimeState::Processing { session, record_id };
+                    state.input.session_ended();
+                    CaptureCompletion {
+                        snapshot: Some(state.revise(FlowPhase::Stopping, None, None)),
+                        action: Some(FlowAction::Stop {
+                            session_id: session_id.to_owned(),
+                            in_flight,
+                        }),
+                        stale: None,
+                    }
+                }
+                Ok(in_flight) => {
+                    state.runtime = RuntimeState::Recording { session, in_flight };
+                    CaptureCompletion {
+                        snapshot: Some(state.revise(FlowPhase::Recording, None, None)),
+                        action: None,
+                        stale: None,
+                    }
+                }
+                Err(e) => {
+                    let raw = format!("{e:#}");
+                    let friendly = user_friendly_error(&raw);
+                    tracing::warn!(session_id, "capture startup failed: {raw}");
+                    state.input.session_ended();
+                    state.snapshot.mic = MicPhase::Unavailable;
+                    CaptureCompletion {
+                        snapshot: Some(state.revise(
+                            FlowPhase::Failed,
+                            None,
+                            Some(FlowNotice {
+                                code: "capture_start_failed".to_owned(),
+                                severity: NoticeSeverity::Error,
+                                summary: friendly,
+                                detail_ref: Some(session_id.to_owned()),
+                            }),
+                        )),
+                        action: Some(FlowAction::DisarmEscape),
+                        stale: None,
+                    }
+                }
+            },
+            other => {
+                state.runtime = other;
+                CaptureCompletion {
+                    snapshot: None,
+                    action: None,
+                    stale: result.ok(),
+                }
+            }
+        }
+    }
+
+    fn pipeline_finished(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        record_id: &str,
+        outcome: Result<()>,
+    ) {
+        let _transition = self.transitions.lock();
+        let snapshot = {
+            let mut state = self.state.lock();
+            let matches = matches!(
+                &state.runtime,
+                RuntimeState::Processing {
+                    session,
+                    record_id: active_record,
+                } if session.id == session_id && active_record == record_id
+            );
+            if !matches {
+                return;
+            }
+
+            state.runtime = RuntimeState::Idle;
+            state.input.session_ended();
+            state.snapshot.mic = MicPhase::Inactive;
+            match outcome {
+                Ok(()) => Some(state.revise(FlowPhase::Succeeded, None, None)),
+                Err(e) => {
+                    let raw = format!("{e:#}");
+                    tracing::warn!(record_id, session_id, "pipeline failed: {raw}");
+                    let _ = self.history.set_error(record_id, &raw);
+                    let friendly = user_friendly_error(&raw);
+                    Some(state.revise(
+                        FlowPhase::Failed,
+                        None,
+                        Some(FlowNotice {
+                            code: "pipeline_failed".to_owned(),
+                            severity: NoticeSeverity::Error,
+                            summary: friendly,
+                            detail_ref: Some(record_id.to_owned()),
+                        }),
+                    ))
+                }
+            }
+        };
+        self.publish_if_some(app, snapshot);
+    }
+
+    pub fn handle_mic_ready(&self, app: &AppHandle, generation: u64, ready_ms: i64) {
+        let _transition = self.transitions.lock();
+        let snapshot = {
+            let mut state = self.state.lock();
+            Self::apply_mic_ready_locked(&mut state, generation, ready_ms)
+        };
+        self.publish_if_some(app, snapshot);
+    }
+
+    fn apply_mic_ready_locked(
+        state: &mut FlowState,
+        generation: u64,
+        ready_ms: i64,
+    ) -> Option<FlowSnapshot> {
+        let updated = match &mut state.runtime {
+            RuntimeState::Starting { session, .. }
+            | RuntimeState::Recording { session, .. }
+                if session.capture_generation == generation =>
+            {
+                session.mic = MicPhase::Live;
+                session.mic_ready_ms = Some(ready_ms);
+                true
+            }
+            _ => false,
+        };
+        if updated {
+            state.snapshot.mic = MicPhase::Live;
+            state.snapshot.mic_ready_ms = Some(ready_ms);
+            let phase = state.snapshot.phase;
+            let stage = state.snapshot.stage;
+            Some(state.revise(phase, stage, None))
+        } else {
+            None
+        }
+    }
+
+    fn report_pipeline_stage(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        stage: FlowStage,
+    ) {
+        let _transition = self.transitions.lock();
+        let snapshot = {
+            let mut state = self.state.lock();
+            let matches = matches!(
+                &state.runtime,
+                RuntimeState::Processing { session, .. } if session.id == session_id
+            );
+            if matches {
+                Some(state.revise(FlowPhase::Processing, Some(stage), None))
+            } else {
+                None
+            }
+        };
+        self.publish_if_some(app, snapshot);
     }
 
     /// Start the Settings mic test on `device` (None = system default).
@@ -756,7 +1170,12 @@ impl Flow {
         }
     }
 
-    async fn do_pipeline(&self, app: &AppHandle, in_flight: InFlight) -> Result<()> {
+    async fn do_pipeline(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        in_flight: InFlight,
+    ) -> Result<()> {
         let InFlight {
             mode,
             record_id,
@@ -769,7 +1188,7 @@ impl Flow {
         // stopped), so `total_ms` measures true end-to-end turnaround.
         let mut tl = Timeline::new();
 
-        let _ = app.emit("wispr:state", "transcribing");
+        self.report_pipeline_stage(app, session_id, FlowStage::Transcribing);
 
         let FinishedRecording {
             path,
@@ -882,8 +1301,7 @@ impl Flow {
             tracing::info!(record_id, duration_ms, "discarding too-short recording");
             self.history.set_error(&record_id, "recording too short")?;
             let _ = std::fs::remove_file(&path);
-            // wrapper emits idle for us; just return cleanly
-            return Ok(());
+            return Err(anyhow!("recording too short"));
         }
 
         self.history
@@ -907,7 +1325,7 @@ impl Flow {
         // the side file on every exit path (success, STT error, timeout).
         let nr = crate::audio::denoise::NoiseReduction::parse(&stt_settings.noise_reduction);
         let (stt_input, _denoise_guard) = if nr != crate::audio::denoise::NoiseReduction::Off {
-            let _ = app.emit("wispr:state", "denoising");
+            self.report_pipeline_stage(app, session_id, FlowStage::Denoising);
             let src = path.clone();
             let result =
                 tokio::task::spawn_blocking(move || {
@@ -916,7 +1334,7 @@ impl Flow {
                 .await
                 .map_err(anyhow::Error::new)
                 .and_then(|r| r);
-            let _ = app.emit("wispr:state", "transcribing");
+            self.report_pipeline_stage(app, session_id, FlowStage::Transcribing);
             match result {
                 Ok(out) => {
                     tl.mark(format!(
@@ -1122,7 +1540,7 @@ impl Flow {
         }
 
         let final_text = if needs_clippy {
-            let _ = app.emit("wispr:state", "cleaning");
+            self.report_pipeline_stage(app, session_id, FlowStage::Cleaning);
             self.history.update_status(&record_id, Status::Cleaning)?;
 
             // Simplified: ONE LLM provider + model for all three modes.
@@ -1261,7 +1679,7 @@ impl Flow {
             });
         }
 
-        let _ = app.emit("wispr:state", "injecting");
+        self.report_pipeline_stage(app, session_id, FlowStage::Injecting);
         self.history.update_status(&record_id, Status::Injecting)?;
 
         // Decision tree:
@@ -1356,6 +1774,8 @@ impl Flow {
                     tracing::warn!("silent clipboard set failed: {e:#}");
                     self.history
                         .set_error(&record_id, &format!("clipboard: {e}"))?;
+                    self.persist_timeline(&record_id, &tl);
+                    return Err(anyhow!("clipboard delivery failed: {e}"));
                 }
             }
         } else {
@@ -1376,6 +1796,8 @@ impl Flow {
                     tracing::warn!("injection failed: {e:#}");
                     self.history
                         .set_error(&record_id, &format!("injection: {e}"))?;
+                    self.persist_timeline(&record_id, &tl);
+                    return Err(anyhow!("injection failed: {e}"));
                 }
             }
         }
@@ -2137,12 +2559,40 @@ impl Flow {
 
 // ─── Escape-stop dynamic hotkey ─────────────────────────────────────────────
 //
-// While a recording is in flight, we want a single keystroke to bail out
-// cleanly — for sticky-mode sessions the user has no obvious way to "release"
-// the trigger key, and across both platforms Escape is the universal
-// "abandon" gesture. We register Escape via the global-shortcut plugin ONLY
-// during recording so we don't steal it from focused apps the rest of the
+// Escape means "stop and send" for both Starting and Recording. We register it
+// as soon as a session is reserved, then remove it on stop/failure so we don't
+// steal it from focused apps the rest of the
 // time (closing dialogs, exiting autocomplete, leaving fullscreen, etc.).
+
+fn monotonic_ms() -> u64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+
+fn publish_snapshot(app: &AppHandle, snapshot: &FlowSnapshot) {
+    let _ = app.emit("wispr:flow_snapshot", snapshot);
+
+    // Transitional compatibility for non-floater windows. The floater consumes
+    // only the revisioned snapshot and never infers backend state from these.
+    if let Some(mode) = snapshot.mode.as_deref() {
+        let _ = app.emit("wispr:mode", mode);
+    }
+    let legacy_state = match snapshot.phase {
+        FlowPhase::Idle | FlowPhase::Succeeded | FlowPhase::Failed => "idle",
+        FlowPhase::Starting | FlowPhase::Recording => "recording",
+        FlowPhase::Stopping => "transcribing",
+        FlowPhase::Processing => match snapshot.stage {
+            Some(FlowStage::Denoising) => "denoising",
+            Some(FlowStage::Cleaning) => "cleaning",
+            Some(FlowStage::Injecting) => "injecting",
+            Some(FlowStage::Transcribing) | None => "transcribing",
+        },
+    };
+    let _ = app.emit("wispr:state", legacy_state);
+}
 
 use std::str::FromStr;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -2175,16 +2625,7 @@ fn arm_escape_stop(app: &AppHandle, flow: &Flow) {
             // hit Escape after recording already ended but before our unregister
             // ran), do nothing — emitting a stop would be harmless but we'd
             // rather no-op cleanly.
-            if flow_clone.state.lock().active.is_none() {
-                return;
-            }
-            let app2 = app_clone.clone();
-            let flow2 = flow_clone.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = flow2.finish_recording_async(&app2).await {
-                    tracing::warn!("escape-stop: finish_recording failed: {e:#}");
-                }
-            });
+            flow_clone.stop_recording(&app_clone);
         });
     if let Err(e) = result {
         tracing::debug!("escape-stop register failed (non-fatal): {e:#}");
@@ -2199,5 +2640,247 @@ fn disarm_escape_stop(app: &AppHandle) {
         if let Err(e) = app.global_shortcut().unregister(esc) {
             tracing::debug!("escape-stop unregister failed (non-fatal): {e:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod coordinator_tests {
+    use super::*;
+
+    fn session(id: &str, mode: Mode, generation: u64) -> SessionContext {
+        SessionContext {
+            id: id.to_owned(),
+            mode,
+            force_clean: false,
+            capture_generation: generation,
+            input: InputDisposition::Undecided,
+            mic: MicPhase::Waking,
+            mic_ready_ms: None,
+        }
+    }
+
+    fn flight(id: &str, mode: Mode) -> InFlight {
+        InFlight {
+            mode,
+            record_id: id.to_owned(),
+            audio_path: PathBuf::from(format!("{id}.wav")),
+            captured_focus: None,
+            force_clean: false,
+        }
+    }
+
+    fn down(
+        state: &mut FlowState,
+        trigger: &str,
+        at_ms: u64,
+        start: Option<SessionContext>,
+    ) -> (Option<FlowSnapshot>, Option<FlowAction>) {
+        let availability = state.availability();
+        let decision = state
+            .input
+            .physical_down(trigger, at_ms, availability);
+        let mut action = None;
+        let snapshot = Flow::apply_decision_locked(state, decision, start, &mut action);
+        (snapshot, action)
+    }
+
+    fn up(
+        state: &mut FlowState,
+        trigger: &str,
+        at_ms: u64,
+    ) -> (Option<FlowSnapshot>, Option<FlowAction>) {
+        let decision = state.input.physical_up(trigger, at_ms);
+        let mut action = None;
+        let snapshot = Flow::apply_decision_locked(state, decision, None, &mut action);
+        (snapshot, action)
+    }
+
+    #[test]
+    fn queued_sub_700_up_latches_then_startup_enters_recording() {
+        let mut state = FlowState::default();
+        let (_, action) = down(
+            &mut state,
+            "F8",
+            1_000,
+            Some(session("session-a", Mode::Light, 11)),
+        );
+        assert!(matches!(action, Some(FlowAction::Start(_))));
+
+        let (snapshot, action) = up(&mut state, "F8", 1_699);
+        assert!(action.is_none());
+        assert_eq!(snapshot.unwrap().input, Some(InputDisposition::Latched));
+
+        let completion = Flow::apply_capture_completion_locked(
+            &mut state,
+            "session-a",
+            Ok(flight("record-a", Mode::Light)),
+        );
+        assert!(completion.action.is_none());
+        assert_eq!(completion.snapshot.unwrap().phase, FlowPhase::Recording);
+        assert!(matches!(
+            &state.runtime,
+            RuntimeState::Recording {
+                session: SessionContext {
+                    input: InputDisposition::Latched,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn exact_700_up_dispatches_one_stop_after_startup() {
+        let mut state = FlowState::default();
+        let _ = down(
+            &mut state,
+            "F8",
+            5_000,
+            Some(session("session-a", Mode::Light, 12)),
+        );
+
+        let (_, action) = up(&mut state, "F8", 5_700);
+        assert!(matches!(action, Some(FlowAction::DisarmEscape)));
+        let (_, duplicate_up) = up(&mut state, "F8", 5_701);
+        assert!(duplicate_up.is_none());
+
+        let completion = Flow::apply_capture_completion_locked(
+            &mut state,
+            "session-a",
+            Ok(flight("record-a", Mode::Light)),
+        );
+        assert!(matches!(completion.action, Some(FlowAction::Stop { .. })));
+        assert!(matches!(&state.runtime, RuntimeState::Processing { .. }));
+
+        let duplicate = Flow::apply_capture_completion_locked(
+            &mut state,
+            "session-a",
+            Ok(flight("duplicate", Mode::Light)),
+        );
+        assert!(duplicate.action.is_none());
+        assert!(duplicate.snapshot.is_none());
+        assert!(duplicate.stale.is_some());
+        assert!(matches!(&state.runtime, RuntimeState::Processing { .. }));
+    }
+
+    #[test]
+    fn second_key_and_escape_stop_the_original_session_mode() {
+        let mut state = FlowState::default();
+        let mut original = session("advanced", Mode::Advanced, 20);
+        original.force_clean = true;
+        let _ = down(&mut state, "F8", 0, Some(original));
+        let _ = Flow::apply_capture_completion_locked(
+            &mut state,
+            "advanced",
+            Ok(flight("record-advanced", Mode::Advanced)),
+        );
+
+        let (_, action) = down(&mut state, "F9", 100, None);
+        match action {
+            Some(FlowAction::Stop {
+                session_id,
+                in_flight,
+            }) => {
+                assert_eq!(session_id, "advanced");
+                assert!(matches!(in_flight.mode, Mode::Advanced));
+            }
+            _ => panic!("second dictation Down must stop the original session"),
+        }
+
+        let mut state = FlowState::default();
+        let _ = down(
+            &mut state,
+            "F8",
+            0,
+            Some(session("escape-owned", Mode::Drafting, 21)),
+        );
+        let _ = Flow::apply_capture_completion_locked(
+            &mut state,
+            "escape-owned",
+            Ok(flight("record-draft", Mode::Drafting)),
+        );
+        let availability = state.availability();
+        let decision = state.input.escape(availability);
+        let mut action = None;
+        let _ = Flow::apply_decision_locked(&mut state, decision, None, &mut action);
+        assert!(matches!(
+            action,
+            Some(FlowAction::Stop {
+                session_id,
+                in_flight: InFlight {
+                    mode: Mode::Drafting,
+                    ..
+                },
+            }) if session_id == "escape-owned"
+        ));
+    }
+
+    #[test]
+    fn processing_down_is_busy_and_never_starts() {
+        let mut state = FlowState::default();
+        state.runtime = RuntimeState::Processing {
+            session: session("busy", Mode::Light, 30),
+            record_id: "record-busy".to_owned(),
+        };
+        state.snapshot.session_id = Some("busy".to_owned());
+        state.snapshot.phase = FlowPhase::Processing;
+
+        let (snapshot, action) = down(&mut state, "F9", 100, None);
+        assert!(action.is_none());
+        let snapshot = snapshot.expect("busy notice revision");
+        assert_eq!(snapshot.phase, FlowPhase::Processing);
+        assert_eq!(snapshot.notice.unwrap().code, "session_busy");
+        assert!(matches!(
+            &state.runtime,
+            RuntimeState::Processing { session, .. } if session.id == "busy"
+        ));
+    }
+
+    #[test]
+    fn stale_capture_completion_cannot_replace_current_start() {
+        let mut state = FlowState::default();
+        let _ = down(
+            &mut state,
+            "F9",
+            0,
+            Some(session("current", Mode::Drafting, 40)),
+        );
+        let revision = state.snapshot.revision;
+
+        let stale = Flow::apply_capture_completion_locked(
+            &mut state,
+            "old-session",
+            Ok(flight("old-record", Mode::Light)),
+        );
+        assert!(stale.snapshot.is_none());
+        assert!(stale.action.is_none());
+        assert_eq!(stale.stale.unwrap().record_id, "old-record");
+        assert_eq!(state.snapshot.revision, revision);
+        assert!(matches!(
+            &state.runtime,
+            RuntimeState::Starting { session, .. } if session.id == "current"
+        ));
+    }
+
+    #[test]
+    fn stale_mic_generation_is_ignored_without_revision() {
+        let mut state = FlowState::default();
+        let _ = down(
+            &mut state,
+            "F8",
+            0,
+            Some(session("mic", Mode::Light, 50)),
+        );
+        let revision = state.snapshot.revision;
+
+        assert!(Flow::apply_mic_ready_locked(&mut state, 49, 123).is_none());
+        assert_eq!(state.snapshot.revision, revision);
+        assert_eq!(state.snapshot.mic, MicPhase::Waking);
+
+        let snapshot = Flow::apply_mic_ready_locked(&mut state, 50, 124)
+            .expect("matching generation becomes live");
+        assert_eq!(snapshot.revision, revision + 1);
+        assert_eq!(snapshot.mic, MicPhase::Live);
+        assert_eq!(snapshot.mic_ready_ms, Some(124));
     }
 }

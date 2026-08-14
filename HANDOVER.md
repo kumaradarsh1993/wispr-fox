@@ -1,21 +1,18 @@
 # wispr-fox — handover
 
 > Single "where are we / how to resume" doc. Read this first, then
-> `CLAUDE.md` for the deep architecture + conventions. Everything else
-> is a specialist doc (see the map at the bottom).
+> `ARCHITECTURE.md` for current topology and the approved target state model,
+> and `CLAUDE.md` for conventions and ground rules. Everything else is a
+> specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-11** (`v3.2.0` is stable; the Codex-authored
-> meeting-workflow release is `v3.3.0-nightly.1`).
+> **Last updated: 2026-08-14** (`v3.2.0` is stable; the current Codex-authored
+> desktop candidate is `v3.3.0-nightly.2`).
 
-> **⚠ Multi-machine workflow note.** This repo is now worked from TWO places:
-> this local core machine, AND a cloud Claude Code session on a second laptop
-> that commits atomic upgrades straight to git. `v3.1.0-nightly.1`
-> (`src-tauri/src/audio/denoise.rs` + the noise-reduction setting/UI) was
-> authored on the cloud machine and lives on branch
-> `claude/laptop-fan-noise-mic-w4k2ho`. **Before starting new work here, `git
-> fetch` and reconcile** — that branch/tag may be ahead of your local tree.
-> Coordination process for this split is written up at the bottom of CLAUDE.md
-> ("Multi-machine / multi-agent workflow").
+> **⚠ Multi-machine workflow note.** This repo is worked from more than one
+> machine. **Before starting new work, `git fetch` and reconcile the live branch,
+> tag, and worktree state.** The original `v3.1.0-nightly.1` cloud branch has
+> already landed; do not treat that historical branch as pending. Coordination
+> rules live at the bottom of `CLAUDE.md` ("Multi-machine / multi-agent workflow").
 
 ---
 
@@ -39,11 +36,29 @@ gitignored `../wispr-fox-web/SECRETS.local.md`).
 Desktop dictation app for Windows (primary) + macOS (secondary, unsigned).
 Press a hotkey, talk, get text pasted into whatever app you're in. Tauri 2 +
 SvelteKit + Svelte 5 (runes) + Rust. Bring-your-own AI key, no subscription,
-no account, no telemetry.
+optional account/sync, no telemetry.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
+
+- **`v3.3.0-nightly.2` (2026-08-14, Codex) - adaptive tap-or-hold
+  dictation.** Each mode now uses one shortcut: release before 700 ms to latch,
+  or hold for 700 ms and release to stop and send. A second configured
+  dictation key or Escape stops the original session. Starting, recording, and
+  processing remain owned by one serialized, revisioned coordinator, so a cold
+  microphone cannot let key-up overtake key-down or let a new run overlap the
+  prior pipeline. Microphone readiness is capture-generation scoped, custom
+  bindings are re-applied after restart without breaking key capture, and
+  terminal errors are complete, scrollable, accessible, and dismissible on
+  every floater skin.
+  - Verification before release: `npm run check` is 0 errors/0 warnings;
+    `npm run build -- --logLevel warn`, `cargo check`, and `cargo check --tests`
+    pass. The pure adaptive reducer is 7/7; six coordinator scenarios compile
+    locally and execute in release CI through `cargo test --lib`.
+  - Runtime QA remains for physical Windows key edges, cold/Bluetooth startup,
+    Escape during Starting, floater reload/resync, and very long errors across
+    skins. Release notes: `docs/RELEASE_NOTES_v3.3.0-nightly.2.md`.
 
 - **`v3.3.0-nightly.1` (2026-08-11, Codex) - meeting workflow revamp.** Diarized
   uploads are first-class meeting rows with a separate `meeting_notes_text`
@@ -338,7 +353,7 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
     deliberate live test is still owed. One sharp edge, intended per spec:
     signing an existing device with local history into an already-purged account
     wipes that device's local history to match the reset.
-- **In flight: `v3.1.0-nightly.1`** (2026-07-18, branch
+- **Historical implementation record: `v3.1.0-nightly.1`** (2026-07-18, branch
   `claude/laptop-fan-noise-mic-w4k2ho`, authored on the cloud/second machine) —
   **mic noise reduction** for fan-heavy laptop built-in mics. Opt-in setting
   `noise_reduction` ("off" default | "on" | "aggressive") in Settings →
@@ -352,8 +367,8 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   on every pipeline exit), and any denoise error **fails open** to raw audio.
   New `wispr:state` "denoising" drives a "clearing noise…" floater bubble +
   Touch Bar label + a flight-recorder timeline mark with the exact ms. Verified
-  `cargo check` + 3 denoise unit tests + `svelte-check` + vite build. Not yet
-  merged to `main`; nightly tag pending push.
+  `cargo check` + 3 denoise unit tests + `svelte-check` + vite build. It has
+  since merged and shipped; the branch is not pending.
 - **Prior stable: `v2.1.0`** (2026-07-15) — pixel pets + wave/siri minimal skins,
   avatar-visibility tri-state, auto-titles, reimagined+rebuilt onboarding,
   per-recording flight recorder, mic-drop detection, mic wake-up health-check,
@@ -471,7 +486,8 @@ AppImage/deb/rpm) on CI from the tagged commit.
 | Doc | What it's for |
 |---|---|
 | `HANDOVER.md` | This file — current state + how to resume |
-| `CLAUDE.md` | Deep architecture, conventions, ground rules, gotchas (auto-loaded each session) |
+| `ARCHITECTURE.md` | Current module/data/trust/release topology + approved target recording FSM |
+| `CLAUDE.md` | Conventions, ground rules, platform notes, gotchas (auto-loaded each session) |
 | `README.md` | Public GitHub front door (end-user) |
 | `GETTING_STARTED.md` | Dev setup / build-from-source notes |
 | `docs/ROADMAP.md` | Forward plan (Next / Likely / Maybe / Not happening) |

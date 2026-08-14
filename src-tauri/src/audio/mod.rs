@@ -34,6 +34,37 @@ pub mod wavio;
 
 type SharedWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSource {
+    Dictation,
+    Preview,
+}
+
+impl CaptureSource {
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::Dictation => 1,
+            Self::Preview => 2,
+        }
+    }
+
+    fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Dictation),
+            2 => Some(Self::Preview),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct MicReady {
+    pub generation: u64,
+    pub source: CaptureSource,
+    pub ready_ms: i64,
+}
+
 /// Live capture telemetry, shared between the cpal callback (writer) and the
 /// event-emitter task in `lib.rs` (reader). All lock-free — the callback runs
 /// on a real-time audio thread and must never block.
@@ -59,6 +90,10 @@ pub struct Meter {
     /// Milliseconds from the start command to the first audio callback.
     /// -1 while we are still waiting. Reset to -1 on every start/stop.
     ready_ms: AtomicI64,
+    /// Monotonic capture identity. A readiness edge is meaningful only for the
+    /// dictation/preview generation that armed the meter.
+    generation: AtomicU64,
+    source: std::sync::atomic::AtomicU8,
 }
 
 impl Meter {
@@ -69,15 +104,19 @@ impl Meter {
             peak: AtomicU32::new(0),
             active: AtomicBool::new(false),
             ready_ms: AtomicI64::new(-1),
+            generation: AtomicU64::new(0),
+            source: std::sync::atomic::AtomicU8::new(0),
         }
     }
 
     /// Called on start: arm the meter and clear the previous run's readings.
-    fn arm(&self) {
+    fn arm(&self, generation: u64, source: CaptureSource) {
         self.ready_ms.store(-1, Ordering::Relaxed);
         self.level.store(0, Ordering::Relaxed);
         self.rms.store(0, Ordering::Relaxed);
         self.peak.store(0, Ordering::Relaxed);
+        self.generation.store(generation, Ordering::Relaxed);
+        self.source.store(source.as_u8(), Ordering::Relaxed);
         self.active.store(true, Ordering::Relaxed);
     }
 
@@ -102,12 +141,16 @@ impl Meter {
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
-    /// Head-gap in ms, or `None` while the mic still hasn't delivered a buffer.
-    pub fn ready_ms(&self) -> Option<i64> {
-        match self.ready_ms.load(Ordering::Relaxed) {
-            n if n < 0 => None,
-            n => Some(n),
+    pub fn ready_event(&self) -> Option<MicReady> {
+        let ready_ms = self.ready_ms.load(Ordering::Acquire);
+        if ready_ms < 0 {
+            return None;
         }
+        Some(MicReady {
+            generation: self.generation.load(Ordering::Relaxed),
+            source: CaptureSource::from_u8(self.source.load(Ordering::Relaxed))?,
+            ready_ms,
+        })
     }
 }
 
@@ -148,6 +191,7 @@ enum AudioCmd {
     Start {
         path: PathBuf,
         device: Option<String>,
+        generation: u64,
         reply: oneshot::Sender<Result<()>>,
     },
     Stop {
@@ -158,6 +202,7 @@ enum AudioCmd {
     /// user can check their input without producing a history row.
     StartPreview {
         device: Option<String>,
+        generation: u64,
         reply: oneshot::Sender<Result<String>>,
     },
     StopPreview {
@@ -169,6 +214,7 @@ enum AudioCmd {
 pub struct AudioController {
     tx: mpsc::Sender<AudioCmd>,
     meter: Arc<Meter>,
+    next_generation: Arc<AtomicU64>,
 }
 
 impl AudioController {
@@ -180,7 +226,11 @@ impl AudioController {
             .name("wispr-audio".into())
             .spawn(move || worker_loop(rx, meter_for_worker))
             .expect("spawn audio thread");
-        Self { tx, meter }
+        Self {
+            tx,
+            meter,
+            next_generation: Arc::new(AtomicU64::new(1)),
+        }
     }
 
     /// Shared handle to the live capture telemetry for the emitter task.
@@ -191,10 +241,24 @@ impl AudioController {
     /// `device` is the user's saved input-device name, or `None` for "system
     /// default". A saved device that is no longer present falls back to the
     /// default rather than failing — a missing mic must never cost a dictation.
-    pub async fn start(&self, path: PathBuf, device: Option<String>) -> Result<()> {
+    pub fn reserve_generation(&self) -> u64 {
+        self.next_generation.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub async fn start(
+        &self,
+        path: PathBuf,
+        device: Option<String>,
+        generation: u64,
+    ) -> Result<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
-            .send(AudioCmd::Start { path, device, reply: reply_tx })
+            .send(AudioCmd::Start {
+                path,
+                device,
+                generation,
+                reply: reply_tx,
+            })
             .map_err(|_| anyhow!("audio worker thread is gone"))?;
         reply_rx
             .await
@@ -214,8 +278,13 @@ impl AudioController {
     /// Start the mic-test preview. Returns the resolved device name.
     pub async fn start_preview(&self, device: Option<String>) -> Result<String> {
         let (reply_tx, reply_rx) = oneshot::channel();
+        let generation = self.reserve_generation();
         self.tx
-            .send(AudioCmd::StartPreview { device, reply: reply_tx })
+            .send(AudioCmd::StartPreview {
+                device,
+                generation,
+                reply: reply_tx,
+            })
             .map_err(|_| anyhow!("audio worker thread is gone"))?;
         reply_rx
             .await
@@ -272,7 +341,12 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
 
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            AudioCmd::Start { path, device, reply } => {
+            AudioCmd::Start {
+                path,
+                device,
+                generation,
+                reply,
+            } => {
                 if active.is_some() {
                     tracing::debug!("ignoring duplicate start (key repeat)");
                     let _ = reply.send(Err(anyhow!("recording already in progress")));
@@ -292,7 +366,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                     std::fs::create_dir_all(parent).ok();
                 }
 
-                meter.arm();
+                meter.arm(generation, CaptureSource::Dictation);
 
                 // Build a fresh stream + open WAV writer.
                 match begin_cold_recording(&path, &writer, meter.clone(), device.as_deref(), t0) {
@@ -330,7 +404,11 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                 }
             }
 
-            AudioCmd::StartPreview { device, reply } => {
+            AudioCmd::StartPreview {
+                device,
+                generation,
+                reply,
+            } => {
                 if active.is_some() {
                     let _ = reply.send(Err(anyhow!(
                         "can't test the mic while a recording is in progress"
@@ -341,7 +419,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                 // device) must drop the old stream first, or two clients fight
                 // over the same device.
                 preview = None;
-                meter.arm();
+                meter.arm(generation, CaptureSource::Preview);
                 let t0 = Instant::now();
                 match begin_preview(meter.clone(), device.as_deref(), t0) {
                     Ok((stream, name)) => {
@@ -724,7 +802,7 @@ where
                         // for — until this fires, nothing the user says is
                         // reaching the WAV, and they deserve to see that.
                         let gap = cmd_at.elapsed().as_millis() as i64;
-                        meter.ready_ms.store(gap, Ordering::Relaxed);
+                        meter.ready_ms.store(gap, Ordering::Release);
                         tracing::info!(
                             samples = data.len(),
                             mic_ready_ms = gap,

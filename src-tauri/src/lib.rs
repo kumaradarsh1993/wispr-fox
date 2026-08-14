@@ -1,4 +1,5 @@
 mod audio;
+mod adaptive;
 mod clippy;
 mod commands;
 mod cursor_poller;
@@ -87,6 +88,17 @@ pub fn run() {
 
             let settings = AppSettings::default();
             let audio_ctrl = AudioController::spawn();
+            let usage = UsageTracker::open().unwrap_or_else(|e| {
+                tracing::warn!("usage tracker init failed: {e:#} (continuing)");
+                UsageTracker::open().expect("retry usage tracker init")
+            });
+            let flow = Flow::new(
+                history.clone(),
+                settings.clone(),
+                audio_dir.clone(),
+                audio_ctrl.clone(),
+                usage.clone(),
+            );
 
             // `wispr:level` feed for the wave-bar avatar. The cpal callback
             // writes an RMS level into a shared atomic while recording (0.0
@@ -97,6 +109,7 @@ pub fn run() {
                 use tauri::Emitter;
                 let meter = audio_ctrl.meter();
                 let app_for_level = app.handle().clone();
+                let flow_for_level = flow.clone();
                 tauri::async_runtime::spawn(async move {
                     #[derive(Clone, serde::Serialize)]
                     struct MicMeter {
@@ -106,7 +119,7 @@ pub fn run() {
                     let mut ticker =
                         tokio::time::interval(std::time::Duration::from_millis(90));
                     let mut last = 0.0f32;
-                    let mut announced_live = false;
+                    let mut announced_generation = 0u64;
                     loop {
                         ticker.tick().await;
 
@@ -121,13 +134,21 @@ pub fn run() {
                         // window is 2-10s. Publishing it as an event is what
                         // lets the avatar hold a "hold on" state instead of
                         // pretending recording began the instant the key went
-                        // down. Emitted once per capture.
-                        match meter.ready_ms() {
-                            Some(ms) if !announced_live => {
-                                announced_live = true;
-                                let _ = app_for_level.emit("wispr:mic_live", ms);
+                        // down. Readiness is tagged by capture generation and
+                        // source; dictation readiness re-enters Flow before the
+                        // revisioned snapshot is emitted.
+                        match meter.ready_event() {
+                            Some(ready) if ready.generation != announced_generation => {
+                                announced_generation = ready.generation;
+                                let _ = app_for_level.emit("wispr:mic_ready", ready);
+                                if ready.source == crate::audio::CaptureSource::Dictation {
+                                    flow_for_level.handle_mic_ready(
+                                        &app_for_level,
+                                        ready.generation,
+                                        ready.ready_ms,
+                                    );
+                                }
                             }
-                            None => announced_live = false,
                             _ => {}
                         }
 
@@ -148,25 +169,13 @@ pub fn run() {
                     }
                 });
             }
-            let usage = UsageTracker::open().unwrap_or_else(|e| {
-                tracing::warn!("usage tracker init failed: {e:#} (continuing)");
-                UsageTracker::open().expect("retry usage tracker init")
-            });
-            let flow = Flow::new(
-                history.clone(),
-                settings.clone(),
-                audio_dir.clone(),
-                audio_ctrl,
-                usage.clone(),
-            );
-
             // Spawn retention sweeper.
             let settings_arc: Arc<Mutex<AppSettings>> = Arc::new(Mutex::new(settings.clone()));
             gc::spawn(history.clone(), settings_arc);
 
-            // Hotkeys: 3 main + 3 sticky-invoke combos. The sticky-invoke
-            // variants (typically Win+main key) always trigger sticky toggle
-            // behaviour for that mode, independent of the per-mode setting.
+            // Every active dictation binding uses the same adaptive tap/hold
+            // contract. Legacy sticky fields still deserialize but are not
+            // registered.
             let app_for_hotkey = app.handle().clone();
             let flow_for_hotkey = flow.clone();
             // Registration is live from here on: `commands::suspend_hotkeys` /
@@ -350,6 +359,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::get_flow_snapshot,
             commands::js_heartbeat_ping,
             commands::set_clickthrough,
             commands::recover_clippy_window,

@@ -6,7 +6,7 @@
 
 <p align="center">
   A free, open-source dictation app for Windows and macOS.<br/>
-  Bring your own AI key. No subscription. No telemetry. No account.
+  Bring your own AI key. No subscription or telemetry. Optional account sync.
 </p>
 
 <p align="center">
@@ -47,16 +47,16 @@ Run the installer. The app walks you through a 2-minute onboarding on first laun
 
 ## ✨ What it does
 
-Hold a hotkey, talk, release. The text appears in whatever app you're in — Slack, Gmail, Word, your terminal, anywhere there's a text field.
+Tap a hotkey to latch recording, or hold it for push-to-talk. The text appears in whatever app you're in — Slack, Gmail, Word, your terminal, anywhere there's a text field.
 
 | Press | What you get |
 |---|---|
-| 🎙️ **F8** *(Win)* / **⌃⌥D** *(Mac)* | Raw transcript — exactly what you said |
-| ✏️ **F9** *(Win)* / **⌃⌥F** *(Mac)* | Drafted output — give a brief, get a polished email/doc/message back |
-| 🧹 **Shift+F8** / **⌃⌥C** *(Mac)* | One-shot cleaned version (spell + punctuation + paragraphing) |
-| ⏏️ **Esc** | Stop a recording in flight |
+| 🎙️ **F8** *(Win)* / **Option+Space** *(Mac)* | Raw transcript — exactly what you said |
+| ✏️ **F9** *(Win)* / **Option+Enter** *(Mac)* | Drafted output — give a brief, get a polished email/doc/message back |
+| 🧹 **Shift+F8** / **Shift+Option+Space** *(Mac)* | One-shot cleaned version (spell + punctuation + paragraphing) |
+| ⏏️ **Esc** | Stop and send the active recording |
 
-Add `Win` (or `Shift` on Mac) to any combo to make it sticky — tap once to start, tap again to stop.
+Every dictation key is adaptive: release before **700 ms** to latch recording, then press any dictation key (or Esc) to stop and send. Hold for **700 ms or longer** to stop and send on release.
 
 ---
 
@@ -89,10 +89,10 @@ Either way, most users pay **$0**. There's no wispr-fox subscription — your us
 
 ## 🤫 Privacy
 
-- 🔐 **API keys** live in your OS keychain — Windows Credential Manager / macOS Keychain. Never logged, never synced.
-- 🎧 **Audio recordings** stay on your machine. Default: 7-day retention, 500 MB cap, both configurable.
+- 🔐 **API keys** live in your OS keychain — Windows Credential Manager / macOS Keychain. If you explicitly sign in, selected provider keys are also synced through your Supabase account so your devices can share them.
+- 🎧 **Saved audio files** stay on your machine and are never synced to the wispr-fox account backend. Default: 7-day retention, 500 MB cap, both configurable.
 - ☁️ **Only the audio you choose to dictate** is sent to your chosen provider (Groq, Deepgram, OpenAI, or ElevenLabs for transcription; Groq, Gemini, or OpenAI for cleanup). Read their privacy policies — they're the parties that see your data.
-- 📡 **wispr-fox phones nothing home.** No analytics. No crash reporting. No account. There is no "us" with a server. The repo, the binary, your machine — that's the whole stack.
+- 📡 **No analytics or crash reporting.** Signed-out mode has no wispr-fox account traffic. Optional sign-in syncs transcripts and selected API keys through Supabase; update checks use GitHub Releases.
 
 ---
 
@@ -111,7 +111,7 @@ Either way, most users pay **$0**. There's no wispr-fox subscription — your us
 <details>
 <summary><strong>The Mac hotkey does nothing — F8 just plays/pauses music</strong></summary>
 
-That's macOS treating the function row as media keys by default. The Mac defaults are **⌃⌥D** (transcribe) and **⌃⌥F** (draft) for exactly this reason. If you'd rather use F-keys: System Settings → Keyboard → Keyboard Shortcuts → Function Keys → toggle "Use F1, F2, etc. as standard function keys". Or rebind in wispr-fox Settings → Dictation.
+That's macOS treating the function row as media keys by default. The Mac defaults are **Option+Space** (transcribe) and **Option+Enter** (draft) for exactly this reason. If you'd rather use F-keys: System Settings → Keyboard → Keyboard Shortcuts → Function Keys → toggle "Use F1, F2, etc. as standard function keys". Or rebind in wispr-fox Settings → Dictation.
 
 </details>
 

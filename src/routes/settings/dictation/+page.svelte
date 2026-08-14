@@ -4,7 +4,7 @@
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
   import HotkeyCapture from "$lib/HotkeyCapture.svelte";
-  import { api, type InputDeviceInfo } from "$lib/api";
+  import { api, type InputDeviceInfo, type MicReadyEvent } from "$lib/api";
   import { isMac } from "$lib/hotkey-display";
   import MicMeter from "$lib/MicMeter.svelte";
 
@@ -18,23 +18,15 @@
 
   type HotkeyField =
     | "light_hotkey"
-    | "light_sticky_hotkey"
     | "force_clean_hotkey"
-    | "force_clean_sticky_hotkey"
     | "drafting_hotkey"
-    | "drafting_sticky_hotkey"
-    | "advanced_hotkey"
-    | "advanced_sticky_hotkey";
+    | "advanced_hotkey";
 
   const HOTKEY_LABELS: Record<HotkeyField, string> = {
     light_hotkey: "Transcribe",
-    light_sticky_hotkey: "Transcribe (sticky)",
     force_clean_hotkey: "Transcribe + force-clean",
-    force_clean_sticky_hotkey: "Transcribe + force-clean (sticky)",
     drafting_hotkey: "Draft",
-    drafting_sticky_hotkey: "Draft (sticky)",
     advanced_hotkey: "Advanced cleanup",
-    advanced_sticky_hotkey: "Advanced cleanup (sticky)",
   };
 
   const HOTKEY_FIELDS = Object.keys(HOTKEY_LABELS) as HotkeyField[];
@@ -50,14 +42,15 @@
     if (clash) {
       throw new Error(`${combo.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win")} is already used by "${HOTKEY_LABELS[clash]}". Pick a different key.`);
     }
+    // set_settings refreshes live registrations, but deliberately leaves a
+    // capture-suspended registrar alone. HotkeyCapture resumes exactly once
+    // after this commit resolves, using the newly stored binding.
     await settings.set(field, combo);
-    await api.applyHotkeys();
     flash(`${HOTKEY_LABELS[field]} is now ${combo.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win")}`);
   }
 
   async function clearHotkey(field: HotkeyField) {
     await settings.set(field, "");
-    await api.applyHotkeys();
     flash(`${HOTKEY_LABELS[field]} unbound`);
   }
 
@@ -146,8 +139,8 @@
       rmsDb = e.payload.rms_dbfs;
       peakDb = e.payload.peak_dbfs;
     }).then((u) => (unlistenMeter = u));
-    listen<number>("wispr:mic_live", (e) => {
-      if (testing) readyMs = e.payload;
+    listen<MicReadyEvent>("wispr:mic_ready", (e) => {
+      if (testing && e.payload.source === "preview") readyMs = e.payload.ready_ms;
     }).then((u) => (unlistenLive = u));
   });
 
@@ -328,15 +321,15 @@
   </div>
 
   <h2 class="section-gap">Dictation keys</h2>
-  <p class="lede">Bind the keys that start and stop dictation.</p>
+  <p class="lede">Bind the keys that start and stop dictation. Changes apply immediately.</p>
   {#if isMac()}
     <p class="lede tight" title="Bare F8/F9 can be swallowed by media-key behavior unless macOS is set for standard function keys.">
       <strong>macOS defaults to Option+Space and Option+Enter.</strong>
     </p>
   {/if}
   <p class="lede tight">
-    Main is push-to-talk; sticky toggles on the next press. Changes apply immediately — no
-    restart, and your existing hotkeys pause while you're picking a new one.
+    Tap for less than 700 ms to latch recording; press any dictation key or Esc to stop and send.
+    Hold for 700 ms or longer to use hold-to-talk and send on release.
   </p>
 
   <div class="hotkey-block">
@@ -346,32 +339,11 @@
         <div class="hk-desc">Voice to text. The sidebar Clean toggle decides whether this also runs LLM cleanup.</div>
       </div>
     </div>
-    <div class="hk-pair">
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Main</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.light_hotkey}
-          oncommit={(c) => commitHotkey("light_hotkey", c)}
-        />
-      </div>
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.light_sticky_hotkey}
-          oncommit={(c) => commitHotkey("light_sticky_hotkey", c)}
-        />
-      </div>
-    </div>
-    <label class="check-row small">
-      <input
-        type="checkbox"
-        checked={settings.s.sticky_light}
-        onchange={(e) => settings.set("sticky_light", (e.currentTarget as HTMLInputElement).checked)}
-      />
-      <span>Make the main Transcribe hotkey sticky by default</span>
-    </label>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.light_hotkey}
+      oncommit={(c) => commitHotkey("light_hotkey", c)}
+    />
   </div>
 
   <div class="hotkey-block">
@@ -381,24 +353,11 @@
         <div class="hk-desc">Runs Transcribe with cleanup on for this one dictation without changing your saved preference.</div>
       </div>
     </div>
-    <div class="hk-pair">
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Main</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.force_clean_hotkey}
-          oncommit={(c) => commitHotkey("force_clean_hotkey", c)}
-        />
-      </div>
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.force_clean_sticky_hotkey}
-          oncommit={(c) => commitHotkey("force_clean_sticky_hotkey", c)}
-        />
-      </div>
-    </div>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.force_clean_hotkey}
+      oncommit={(c) => commitHotkey("force_clean_hotkey", c)}
+    />
   </div>
 
   <div class="hotkey-block">
@@ -408,32 +367,11 @@
         <div class="hk-desc">Turns a spoken brief into polished output for email, chat, docs, or social posts.</div>
       </div>
     </div>
-    <div class="hk-pair">
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Main</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.drafting_hotkey}
-          oncommit={(c) => commitHotkey("drafting_hotkey", c)}
-        />
-      </div>
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.drafting_sticky_hotkey}
-          oncommit={(c) => commitHotkey("drafting_sticky_hotkey", c)}
-        />
-      </div>
-    </div>
-    <label class="check-row small">
-      <input
-        type="checkbox"
-        checked={settings.s.sticky_drafting}
-        onchange={(e) => settings.set("sticky_drafting", (e.currentTarget as HTMLInputElement).checked)}
-      />
-      <span>Make the main Draft hotkey sticky by default</span>
-    </label>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.drafting_hotkey}
+      oncommit={(c) => commitHotkey("drafting_hotkey", c)}
+    />
   </div>
 
   <details class="hotkey-block-collapsed">
@@ -441,41 +379,17 @@
       <span class="hk-label">Advanced cleanup</span>
       <span class="hk-desc-inline">Optional legacy cleanup-only binding. Most users can leave this unbound.</span>
     </summary>
-    <div class="hk-pair">
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Main</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.advanced_hotkey}
-          oncommit={(c) => commitHotkey("advanced_hotkey", c)}
-        />
-        {#if settings.s.advanced_hotkey}
-          <button class="btn-unbind" onclick={() => clearHotkey("advanced_hotkey")}>Unbind</button>
-        {/if}
-      </div>
-      <div class="hk-pair-col">
-        <div class="hk-pair-label">Sticky</div>
-        <HotkeyCapture
-          label=""
-          bind:value={settings.s.advanced_sticky_hotkey}
-          oncommit={(c) => commitHotkey("advanced_sticky_hotkey", c)}
-        />
-        {#if settings.s.advanced_sticky_hotkey}
-          <button class="btn-unbind" onclick={() => clearHotkey("advanced_sticky_hotkey")}>Unbind</button>
-        {/if}
-      </div>
-    </div>
-    <label class="check-row small">
-      <input
-        type="checkbox"
-        checked={settings.s.sticky_advanced}
-        onchange={(e) => settings.set("sticky_advanced", (e.currentTarget as HTMLInputElement).checked)}
-      />
-      <span>Make Advanced sticky by default</span>
-    </label>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.advanced_hotkey}
+      oncommit={(c) => commitHotkey("advanced_hotkey", c)}
+    />
+    {#if settings.s.advanced_hotkey}
+      <button class="btn-unbind" onclick={() => clearHotkey("advanced_hotkey")}>Unbind</button>
+    {/if}
   </details>
 
-  <p class="hint">Press <strong>Esc</strong> during a recording to stop without sending.</p>
+  <p class="hint">Press <strong>Esc</strong> during a recording to stop and send.</p>
 
   <h3>Delivery</h3>
   <p class="lede">What wispr-fox does after transcription or cleanup finishes.</p>

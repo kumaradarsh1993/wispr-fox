@@ -14,6 +14,7 @@
     idle: "Ready",
     recording: "Recording…",
     transcribing: "Transcribing…",
+    denoising: "Clearing noise…",
     cleaning: "Cleaning up…",
     injecting: "Pasting…",
   };
@@ -22,6 +23,7 @@
     idle: "bg-gray-200 text-gray-700",
     recording: "bg-red-100 text-red-700 animate-pulse",
     transcribing: "bg-blue-100 text-blue-700",
+    denoising: "bg-blue-100 text-blue-700",
     cleaning: "bg-purple-100 text-purple-700",
     injecting: "bg-green-100 text-green-700",
   };

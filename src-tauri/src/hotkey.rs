@@ -1,12 +1,9 @@
 //! Global-shortcut wrapper.
 //!
 //! Tauri's global-shortcut plugin emits Pressed / Released edges for each
-//! registered combo. We register EIGHT combos total — three "main" hotkeys
-//! (Light, Advanced, Drafting — push-to-talk by default), three
-//! "sticky-invoke" hotkeys (typically Win+main key) that always trigger
-//! a press-once-start / press-again-stop toggle regardless of the per-mode
-//! sticky setting, and two force-clean variants. The flow layer decides
-//! actual recording state — this module just forwards edges + mode + flags.
+//! registered combo. We register the three mode hotkeys plus force-clean.
+//! Every physical combo uses the same adaptive tap/hold contract; the flow
+//! layer decides recording state and this module only forwards edges.
 //!
 //! **Registration is live, not boot-only.** The combos can be re-applied at
 //! any time (`apply`) and temporarily torn down (`suspend`). Both exist for
@@ -38,12 +35,11 @@ pub enum Edge {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyEvent {
+    /// Stable identity of the physical shortcut. Used as a key-down latch so
+    /// OS auto-repeat cannot masquerade as another press.
+    pub trigger_id: String,
     pub mode: Mode,
     pub edge: Edge,
-    /// True when fired from a sticky-invoke combo (e.g. Win+F8). Flow layer
-    /// uses this to force sticky toggle behaviour for THIS press, regardless
-    /// of the per-mode sticky setting.
-    pub sticky_invoke: bool,
     /// True when fired from a force-clean combo (Shift+F8 by default).
     /// Tells the flow layer to override `auto_clean_in_light` to TRUE for
     /// this single invocation — gives the user on-demand cleanup without
@@ -52,18 +48,14 @@ pub struct HotkeyEvent {
     pub force_clean: bool,
 }
 
-/// The eight combo strings, pulled out of `AppSettings` so this module never
+/// Active adaptive combo strings, pulled out of `AppSettings` so this module never
 /// needs the whole settings struct at a call site.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HotkeyConfig {
     pub light: String,
     pub advanced: String,
     pub drafting: String,
-    pub light_sticky: String,
-    pub advanced_sticky: String,
-    pub drafting_sticky: String,
     pub force_clean: String,
-    pub force_clean_sticky: String,
 }
 
 impl HotkeyConfig {
@@ -72,27 +64,19 @@ impl HotkeyConfig {
             light: s.light_hotkey.clone(),
             advanced: s.advanced_hotkey.clone(),
             drafting: s.drafting_hotkey.clone(),
-            light_sticky: s.light_sticky_hotkey.clone(),
-            advanced_sticky: s.advanced_sticky_hotkey.clone(),
-            drafting_sticky: s.drafting_sticky_hotkey.clone(),
             force_clean: s.force_clean_hotkey.clone(),
-            force_clean_sticky: s.force_clean_sticky_hotkey.clone(),
         }
     }
 
-    /// Tuple shape: (combo, mode, sticky_invoke, force_clean).
-    fn combos(&self) -> [(&str, Mode, bool, bool); 8] {
+    /// Tuple shape: (combo, mode, force_clean).
+    fn combos(&self) -> [(&str, Mode, bool); 4] {
         [
-            (&self.light, Mode::Light, false, false),
-            (&self.advanced, Mode::Advanced, false, false),
-            (&self.drafting, Mode::Drafting, false, false),
-            (&self.light_sticky, Mode::Light, true, false),
-            (&self.advanced_sticky, Mode::Advanced, true, false),
-            (&self.drafting_sticky, Mode::Drafting, true, false),
+            (&self.light, Mode::Light, false),
+            (&self.advanced, Mode::Advanced, false),
+            (&self.drafting, Mode::Drafting, false),
             // Force-clean variants: same Light mode, but flag the press so the
             // flow layer treats it as auto_clean_in_light=true for this run.
-            (&self.force_clean, Mode::Light, false, true),
-            (&self.force_clean_sticky, Mode::Light, true, true),
+            (&self.force_clean, Mode::Light, true),
         ]
     }
 }
@@ -103,10 +87,19 @@ type Callback = std::sync::Arc<dyn Fn(HotkeyEvent) + Send + Sync + 'static>;
 /// without the caller having to hand it back every time.
 static CALLBACK: std::sync::OnceLock<Callback> = std::sync::OnceLock::new();
 
-/// Combos this module currently owns. We unregister exactly these rather than
-/// calling `unregister_all()`, which would also rip out the dynamically-armed
-/// Escape-stop shortcut that `flow.rs` owns during a live recording.
-static REGISTERED: Mutex<Vec<Shortcut>> = Mutex::new(Vec::new());
+/// Registration and explicit capture-suspension are one atomic state. Keeping
+/// the flag under the same mutex as the owned shortcuts prevents a settings
+/// refresh from racing a rebinding capture and accidentally turning hotkeys
+/// back on while the capture overlay is open.
+struct RegistrationState {
+    registered: Vec<Shortcut>,
+    suspended: bool,
+}
+
+static REGISTRATION: Mutex<RegistrationState> = Mutex::new(RegistrationState {
+    registered: Vec::new(),
+    suspended: false,
+});
 
 /// Install the dispatcher and register the initial set of combos. Call once,
 /// at startup; use `apply` for every subsequent change.
@@ -126,7 +119,29 @@ pub fn install(
 /// and skipped rather than aborting the rest (a single bad saved binding must
 /// never leave the user with NO working hotkeys).
 pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
-    suspend(app);
+    let mut state = REGISTRATION.lock();
+    state.suspended = false;
+    rebuild_locked(app, cfg, &mut state)
+}
+
+/// Refresh bindings after settings change, but only when registration is live.
+/// A capture-suspended registrar stays suspended; `apply` is the explicit
+/// resume operation and will rebuild from Flow's latest settings afterwards.
+pub fn refresh_if_live(app: &AppHandle, cfg: &HotkeyConfig) -> Result<bool> {
+    let mut state = REGISTRATION.lock();
+    if state.suspended {
+        return Ok(false);
+    }
+    rebuild_locked(app, cfg, &mut state)?;
+    Ok(true)
+}
+
+fn rebuild_locked(
+    app: &AppHandle,
+    cfg: &HotkeyConfig,
+    state: &mut RegistrationState,
+) -> Result<()> {
+    unregister_locked(app, state);
 
     let Some(on_event) = CALLBACK.get().cloned() else {
         // apply() before install() — nothing to dispatch to. Not fatal, but it
@@ -135,8 +150,7 @@ pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
         return Ok(());
     };
 
-    let mut registered = REGISTERED.lock();
-    for (combo, mode, sticky_invoke, force_clean_flag) in cfg.combos() {
+    for (combo, mode, force_clean_flag) in cfg.combos() {
         if combo.trim().is_empty() {
             continue;
         }
@@ -151,7 +165,7 @@ pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
         let sc_match = sc.clone();
         let on_event = on_event.clone();
         let mode_capture = mode;
-        let sticky_capture = sticky_invoke;
+        let trigger_capture = combo.to_owned();
         let force_capture = force_clean_flag;
         match app
             .global_shortcut()
@@ -164,9 +178,9 @@ pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
                     ShortcutState::Released => Edge::Up,
                 };
                 on_event(HotkeyEvent {
+                    trigger_id: trigger_capture.clone(),
                     mode: mode_capture,
                     edge,
-                    sticky_invoke: sticky_capture,
                     force_clean: force_capture,
                 });
             }) {
@@ -174,11 +188,10 @@ pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
                 tracing::info!(
                     combo,
                     ?mode,
-                    sticky_invoke,
                     force_clean = force_clean_flag,
                     "hotkey registered"
                 );
-                registered.push(sc);
+                state.registered.push(sc);
             }
             Err(e) => tracing::warn!(combo, ?mode, "hotkey registration failed: {e}"),
         }
@@ -191,8 +204,13 @@ pub fn apply(app: &AppHandle, cfg: &HotkeyConfig) -> Result<()> {
 /// those keys to the focused window (which is exactly what the rebinding
 /// capture dialog needs). Safe to call when nothing is registered.
 pub fn suspend(app: &AppHandle) {
-    let mut registered = REGISTERED.lock();
-    for sc in registered.drain(..) {
+    let mut state = REGISTRATION.lock();
+    state.suspended = true;
+    unregister_locked(app, &mut state);
+}
+
+fn unregister_locked(app: &AppHandle, state: &mut RegistrationState) {
+    for sc in state.registered.drain(..) {
         if let Err(e) = app.global_shortcut().unregister(sc) {
             // Already gone is the common case on a double-suspend; not worth
             // more than a debug line.
@@ -204,5 +222,6 @@ pub fn suspend(app: &AppHandle) {
 /// Whether any dictation combo is currently registered. Used by the settings
 /// UI to show honest state ("hotkeys paused while you pick a key").
 pub fn is_active() -> bool {
-    !REGISTERED.lock().is_empty()
+    let state = REGISTRATION.lock();
+    !state.suspended && !state.registered.is_empty()
 }
