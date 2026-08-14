@@ -5,8 +5,9 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-14** (`v3.2.0` is stable; the current Codex-authored
-> desktop candidate is `v3.3.0-nightly.2`).
+> **Last updated: 2026-08-14** (`v3.2.0` is stable; the current desktop
+> candidate is `v3.3.0-nightly.3`. **`v3.3.0-nightly.2` is burned — it froze on
+> the first hotkey press; do not install or test it.**)
 
 > **⚠ Multi-machine workflow note.** This repo is worked from more than one
 > machine. **Before starting new work, `git fetch` and reconcile the live branch,
@@ -42,8 +43,38 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
-- **`v3.3.0-nightly.2` (2026-08-14, Codex) - adaptive tap-or-hold
-  dictation.** Each mode now uses one shortcut: release before 700 ms to latch,
+- **`v3.3.0-nightly.3` (2026-08-14) — unfreezes nightly.2.** nightly.2 wedged
+  permanently on the FIRST hotkey press: no floater, no recording, no history
+  row, tray menu and main window unresponsive, but the process still alive so
+  the tray icon looked healthy. Root cause: nightly.2 moved `arm_escape_stop` /
+  `disarm_escape_stop` into `Flow::prepare_action`, which runs synchronously
+  inside the global-shortcut callback. `tauri-plugin-global-shortcut` 2.3.1
+  invokes handlers **while holding its `shortcuts: Mutex<HashMap<..>>`**
+  (`set_event_handler` → `shortcuts_.lock().unwrap().get(&e.id)` → `handler(..)`
+  with the guard still alive), and `arm_escape_stop` immediately calls
+  `is_registered`, which re-locks that same non-reentrant `std::sync::Mutex` on
+  the same thread. On Windows that thread is the main/event-loop thread, which
+  is why the tray and windows died too. In nightly.1 the same two helpers were
+  called from inside `start_recording_async` / `finish_recording_async` — i.e.
+  spawned tasks, never the callback thread — which is why only nightly.2 broke.
+  - Fix: `prepare_action` now records the intent and applies it off-thread.
+    Ordering is preserved by revision (`EscapeIntent::record` / `claim`) so a
+    late arm cannot re-arm a session a newer stop already ended — the hazard
+    that put arm/disarm in the serialized section in the first place.
+  - **Generalise: never call a callback-registry API from inside its own
+    callback.** The lock is invisible at the call site; only the plugin source
+    shows it. `cargo check`, `npm run check` and the six coordinator tests all
+    passed on nightly.2 because none of them go through the real plugin — this
+    class of bug is runtime-only and first-keypress-only.
+  - Verified: `cargo check --all-targets` clean, `npm run check` 0/0, and the new
+    `stale_escape_applier_cannot_rearm_after_a_newer_stop` case executed in a
+    scratch crate (the main crate can't link tests locally — GNU ld export
+    limit; CI's new `verify` job runs `cargo test --lib`).
+
+- **`v3.3.0-nightly.2` (2026-08-14, Codex) — BURNED, do not install.** Froze on
+  the first hotkey press; superseded by nightly.3 above. Its feature work is
+  otherwise intact and carried forward. Original description follows — adaptive
+  tap-or-hold dictation. Each mode now uses one shortcut: release before 700 ms to latch,
   or hold for 700 ms and release to stop and send. A second configured
   dictation key or Escape stops the original session. Starting, recording, and
   processing remain owned by one serialized, revisioned coordinator, so a cold

@@ -610,6 +610,8 @@ pub struct Flow {
     /// handler could resume and re-arm/publish its stale revision.
     transitions: Arc<Mutex<()>>,
     state: Arc<Mutex<FlowState>>,
+    /// Latest Escape-stop registration intent. See `EscapeIntent`.
+    escape: Arc<Mutex<EscapeIntent>>,
     history: History,
     settings: Arc<Mutex<AppSettings>>,
     audio_dir: PathBuf,
@@ -632,6 +634,35 @@ struct CaptureCompletion {
     stale: Option<InFlight>,
 }
 
+/// Desired Escape-stop registration, plus the revision that asked for it.
+///
+/// The registration itself CANNOT happen on the thread that decided it — see
+/// `Flow::prepare_action`. Decoupling the decision from the effect reintroduces
+/// the ordering hazard that putting arm/disarm inside the serialized section
+/// was meant to solve (a stale Start re-arming after a newer Stop disarmed), so
+/// each decision stamps a monotonic revision and the applier drops anything
+/// that is no longer the latest intent.
+#[derive(Default)]
+struct EscapeIntent {
+    revision: u64,
+    armed: bool,
+}
+
+impl EscapeIntent {
+    /// Stamp the newest intent, returning the revision the applier must quote.
+    fn record(&mut self, armed: bool) -> u64 {
+        self.revision = self.revision.saturating_add(1);
+        self.armed = armed;
+        self.revision
+    }
+
+    /// `Some(armed)` when `revision` is still the newest intent, `None` when a
+    /// later transition has superseded it and this applier must do nothing.
+    fn claim(&self, revision: u64) -> Option<bool> {
+        (self.revision == revision).then_some(self.armed)
+    }
+}
+
 impl Flow {
     pub fn new(
         history: History,
@@ -643,6 +674,7 @@ impl Flow {
         Self {
             transitions: Arc::new(Mutex::new(())),
             state: Arc::new(Mutex::new(FlowState::default())),
+            escape: Arc::new(Mutex::new(EscapeIntent::default())),
             history,
             settings: Arc::new(Mutex::new(settings)),
             audio_dir,
@@ -860,14 +892,47 @@ impl Flow {
         }
     }
 
+    /// Record the Escape-stop intent for this transition and apply it OFF the
+    /// deciding thread.
+    ///
+    /// **Never touch the global-shortcut registry from here synchronously.**
+    /// `handle_hotkey` and `stop_recording` both run *inside* a global-shortcut
+    /// callback, and tauri-plugin-global-shortcut invokes handlers while
+    /// holding its `shortcuts: Mutex<HashMap<..>>`:
+    ///
+    /// ```ignore
+    /// if let Some(shortcut) = shortcuts_.lock().unwrap().get(&e.id) {
+    ///     handler(&app_handle, &shortcut.shortcut, e);   // lock still held
+    /// ```
+    ///
+    /// `arm_escape_stop`/`disarm_escape_stop` call `is_registered`,
+    /// `on_shortcut` and `unregister`, each of which re-locks that same
+    /// non-reentrant `std::sync::Mutex` — and `register`/`unregister`
+    /// additionally block on a main-thread round-trip. Calling them here wedged
+    /// the hotkey event thread on the very first key-down, with the registry
+    /// mutex still held, which killed every shortcut for the rest of the
+    /// process (v3.3.0-nightly.2).
     fn prepare_action(&self, app: &AppHandle, action: Option<&FlowAction>) {
-        match action {
-            Some(FlowAction::Start(_)) => arm_escape_stop(app, self),
-            Some(FlowAction::DisarmEscape | FlowAction::Stop { .. }) => {
-                disarm_escape_stop(app)
+        let armed = match action {
+            Some(FlowAction::Start(_)) => true,
+            Some(FlowAction::DisarmEscape | FlowAction::Stop { .. }) => false,
+            None => return,
+        };
+
+        let revision = self.escape.lock().record(armed);
+
+        let this = self.clone();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // Holding the intent lock across the apply serializes concurrent
+            // appliers, so an older one can never land after a newer one.
+            let intent = this.escape.lock();
+            match intent.claim(revision) {
+                Some(true) => arm_escape_stop(&app, &this),
+                Some(false) => disarm_escape_stop(&app),
+                None => {}
             }
-            None => {}
-        }
+        });
     }
 
     fn dispatch_action(&self, app: &AppHandle, action: Option<FlowAction>) {
@@ -2646,6 +2711,34 @@ fn disarm_escape_stop(app: &AppHandle) {
 #[cfg(test)]
 mod coordinator_tests {
     use super::*;
+
+    /// Escape arm/disarm is applied off the deciding thread (the global-shortcut
+    /// callback holds the plugin's registry mutex, so touching it there
+    /// deadlocks). Ordering is preserved by revision instead: whichever
+    /// transition stamped last wins, and an older applier that wakes up late
+    /// must decline rather than re-arm a session that has already stopped.
+    #[test]
+    fn stale_escape_applier_cannot_rearm_after_a_newer_stop() {
+        let mut intent = EscapeIntent::default();
+
+        let start = intent.record(true);
+        assert_eq!(intent.claim(start), Some(true));
+
+        // A stop lands before the start's applier got to run.
+        let stop = intent.record(false);
+        assert_ne!(start, stop);
+        assert_eq!(
+            intent.claim(start),
+            None,
+            "the superseded start must not re-arm Escape"
+        );
+        assert_eq!(intent.claim(stop), Some(false));
+
+        // Re-arming for a fresh session still works after the stale decline.
+        let restart = intent.record(true);
+        assert_eq!(intent.claim(restart), Some(true));
+        assert_eq!(intent.claim(stop), None);
+    }
 
     fn session(id: &str, mode: Mode, generation: u64) -> SessionContext {
         SessionContext {
