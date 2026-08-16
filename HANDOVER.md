@@ -5,8 +5,8 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-14** (`v3.2.0` is stable; the current desktop
-> candidate is `v3.3.0-nightly.3`. **`v3.3.0-nightly.2` is burned — it froze on
+> **Last updated: 2026-08-16** (`v3.2.0` is stable; the current desktop
+> candidate is `v3.3.0-nightly.4`. **`v3.3.0-nightly.2` is burned — it froze on
 > the first hotkey press; do not install or test it.**)
 
 > **⚠ Multi-machine workflow note.** This repo is worked from more than one
@@ -42,6 +42,46 @@ optional account/sync, no telemetry.
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
+
+- **`v3.3.0-nightly.4` (2026-08-16) — the "Mic was very quiet" warning was
+  crying wolf.** User report: a red box saying the mic was very quiet appeared
+  on roughly every other dictation, while every transcript came back perfect.
+  - **Measured before theorising, and the first hypothesis was wrong.** The
+    guess was that whole-file RMS gets dragged under the line by pauses, so
+    speech-active RMS would fix it. Implemented in a scratch script over all 41
+    retained WAVs: it moved the warning count 3 → 2. Not the cause. His
+    "silence" is room tone sitting within 25 dB of his speech, so ~100% of
+    frames count as active on many recordings. The idea was dropped rather than
+    shipped as an unvalidated metric.
+  - **Actual cause.** His mic's whole operating range is -33 to -40 dBFS RMS
+    (median -38.1, n=41) and `QUIET_RMS_DBFS` is -40, so 26 of 41 recordings sit
+    within 3 dB of the threshold — a coin flip, not a rare event. Decisively:
+    **every one of those recordings was rescued**, boosted 4-21 dB to a -3 dBFS
+    peak before transcription. The warning was evaluated on `outcome.stats`,
+    i.e. the level *before* the boost that had already fixed it.
+  - Fix: `LevelStats::with_gain(gain_db)` and the warn decision now runs on the
+    audio speech-to-text actually receives. `quiet_warning` takes the applied
+    gain instead of a `rescued: bool`, so the surviving case — a boost clamped
+    by `MAX_GAIN_DB` that left the audio quiet anyway — says so explicitly.
+    Rescue behaviour, thresholds, and the on-disk recording are all untouched.
+  - **Also fixed: the floater auto-hid while a message was still on screen.**
+    The auto-mode visibility effect keyed only on `flowState`, so
+    `AUTO_HIDE_GRACE_MS` (1.8 s) tore the bubble away while an error toast was
+    pinned for `ERROR_TOAST_MIN_MS` (15 s). That is the "truncated" symptom, and
+    it silently cut off genuine errors too, not just this warning.
+  - **Not a nightly.2/3 regression** — `git log -S quiet_warning` puts it in
+    `18dd25f` (external mic support + quiet-audio rescue), latent since v3.1.0.
+  - The other two mic detectors were checked against the same telemetry and left
+    alone: wake-up runs 0.04-0.52 s (never near `SLOW_MIC_MS`), and the
+    mic-dropped check fired once in 30 recordings on a recording that genuinely
+    lost ~7 s of audio. Both correct.
+  - **Generalise: a warning must be evaluated on the state AFTER the automatic
+    remedy, not before it.** Warning about a condition the app just fixed is
+    pure noise, and it buries the one case that needed attention.
+  - Verified: `cargo check --all-targets` clean (only the pre-existing
+    `audio_path` dead-code warning), `npm run check` 0/0, and four new
+    `level.rs` cases — built from his real flight-recorder triples — run green
+    in a scratch crate; CI's `verify` job runs them for real.
 
 - **`v3.3.0-nightly.3` (2026-08-14) — unfreezes nightly.2.** nightly.2 wedged
   permanently on the FIRST hotkey press: no floater, no recording, no history

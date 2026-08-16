@@ -1554,6 +1554,14 @@
     if (st !== "idle") {
       // Active pipeline → make sure we're shown (cancels any pending hide).
       void autoShow();
+    } else if (toastMessage !== "" && _autoShown) {
+      // Idle, but a notice is still on screen. AUTO_HIDE_GRACE_MS is 1.8s and
+      // an error toast is pinned for at least ERROR_TOAST_MIN_MS (15s), so
+      // hiding on flow state alone tore the bubble away mid-sentence — which is
+      // exactly what "the warning looks truncated" was. Hold the floater open;
+      // toastMessage is read on every idle pass, so this effect re-runs when
+      // the toast clears and the hide is scheduled then.
+      cancelPendingAutoHide();
     } else if (_autoShown) {
       // Returned to idle while shown → schedule the graceful hide.
       scheduleAutoHide();

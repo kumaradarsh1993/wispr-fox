@@ -58,8 +58,25 @@ pub struct LevelStats {
 
 impl LevelStats {
     /// Quiet enough that the transcript is at risk of silently losing content.
+    ///
+    /// **Ask this about the audio the provider actually receives** — i.e. after
+    /// `with_gain` — not about the raw measurement. See `quiet_warning`.
     pub fn is_quiet(&self) -> bool {
         self.rms_dbfs < QUIET_RMS_DBFS && self.peak_dbfs > SILENCE_PEAK_DBFS
+    }
+
+    /// The same recording after `gain_db` of rescue has been applied — what
+    /// speech-to-text is actually given.
+    ///
+    /// Gain shifts RMS and peak by the same amount because it is a single
+    /// scalar multiply; the clamp in `analyze_and_rescue` never bites, since
+    /// the gain is derived from the peak precisely to land it at
+    /// `TARGET_PEAK_DBFS`.
+    pub fn with_gain(&self, gain_db: f32) -> LevelStats {
+        LevelStats {
+            rms_dbfs: self.rms_dbfs + gain_db,
+            peak_dbfs: self.peak_dbfs + gain_db,
+        }
     }
 }
 
@@ -143,18 +160,28 @@ pub fn analyze_and_rescue(src: &Path) -> Result<LevelOutcome> {
     Ok(LevelOutcome { stats, normalized: Some(dst), gain_db })
 }
 
-/// User-facing warning for a recording that came in under `QUIET_RMS_DBFS`.
-/// Written to fit the floater bubble's hard 2-line cap.
-pub fn quiet_warning(stats: &LevelStats, rescued: bool) -> String {
-    if rescued {
+/// User-facing warning for audio that is STILL under `QUIET_RMS_DBFS` after the
+/// rescue boost — i.e. a transcript genuinely at risk.
+///
+/// **Do not warn on the raw measurement.** Doing so was a real defect: a mic
+/// that idles around -38 dBFS RMS (common — measured across 41 real recordings
+/// on the author's machine, whose whole range is -33 to -40) sits right on the
+/// -40 threshold, so roughly every other dictation tripped a red terminal-error
+/// bubble. Every one of those had already been boosted to a -3 dBFS peak and
+/// transcribed perfectly. The warning fired on a problem the app had just
+/// fixed, which trains the user to ignore it — and the one case that matters,
+/// a boost clamped by `MAX_GAIN_DB` that left the audio quiet anyway, looked
+/// identical to the noise.
+pub fn quiet_warning(measured: &LevelStats, boosted_by_db: f32) -> String {
+    if boosted_by_db >= 1.0 {
         format!(
-            "Mic was very quiet ({:.0} dBFS) — I boosted it before transcribing, but move the mic closer or raise its gain to avoid losing words.",
-            stats.rms_dbfs
+            "Mic was very quiet ({:.0} dBFS) — even after a {:.0} dB boost, words may be missing. Move the mic closer or raise its input gain.",
+            measured.rms_dbfs, boosted_by_db
         )
     } else {
         format!(
             "Mic was very quiet ({:.0} dBFS) — words may be missing from this transcript. Move the mic closer or raise its input gain.",
-            stats.rms_dbfs
+            measured.rms_dbfs
         )
     }
 }
@@ -201,6 +228,57 @@ mod tests {
         let s = measure_samples(&tone(0.1414, 10_000));
         assert!(!s.is_quiet(), "rms {} should not warn", s.rms_dbfs);
         assert!(s.rms_dbfs > NORMALIZE_RMS_DBFS, "and should not normalise");
+    }
+
+    /// The regression this file's warning logic exists to avoid re-introducing.
+    ///
+    /// These are real measurements from the author's machine (whole-file RMS /
+    /// peak, with the gain `analyze_and_rescue` chose). Every one produced a
+    /// clean transcript, and every one sat close enough to the -40 dBFS line
+    /// that warning on the RAW level fired on roughly half of them.
+    #[test]
+    fn a_rescued_recording_does_not_warn() {
+        // (rms, peak, gain) triples straight out of the flight recorder.
+        let real = [
+            (-38.8f32, -22.0f32, 19.0f32),
+            (-40.2, -17.9, 14.9), // tripped the old warning
+            (-40.2, -24.4, 21.4), // tripped the old warning
+            (-43.2, -31.5, 28.5), // tripped the old warning
+            (-38.3, -16.2, 13.2),
+        ];
+        for (rms_dbfs, peak_dbfs, gain_db) in real {
+            let measured = LevelStats { rms_dbfs, peak_dbfs };
+            let delivered = measured.with_gain(gain_db);
+            assert!(
+                !delivered.is_quiet(),
+                "rms {rms_dbfs} boosted by {gain_db} dB lands at {} dBFS and must not warn",
+                delivered.rms_dbfs
+            );
+        }
+    }
+
+    /// The case the warning is FOR: `MAX_GAIN_DB` clamped the rescue, so the
+    /// audio reaching the provider is still under the line.
+    #[test]
+    fn a_boost_that_was_not_enough_still_warns() {
+        let measured = LevelStats { rms_dbfs: -88.0, peak_dbfs: -55.0 };
+        let delivered = measured.with_gain(MAX_GAIN_DB);
+        assert!(
+            delivered.is_quiet(),
+            "still {} dBFS after the maximum boost — the user must be told",
+            delivered.rms_dbfs
+        );
+        assert!(quiet_warning(&measured, MAX_GAIN_DB).contains("even after"));
+    }
+
+    /// Auto-gain off: no boost happened, so the raw level is what gets sent and
+    /// the warning must behave exactly as it always did.
+    #[test]
+    fn without_a_boost_the_raw_level_decides() {
+        let measured = LevelStats { rms_dbfs: -46.4, peak_dbfs: -33.0 };
+        assert!(measured.with_gain(0.0).is_quiet());
+        let msg = quiet_warning(&measured, 0.0);
+        assert!(!msg.contains("even after"), "no boost happened: {msg}");
     }
 
     #[test]

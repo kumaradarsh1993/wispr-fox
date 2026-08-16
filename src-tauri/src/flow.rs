@@ -1448,9 +1448,9 @@ impl Flow {
                                 outcome.gain_db
                             ));
                             let guard = TempFileGuard(boosted.clone());
-                            (boosted, Some(guard), Some((outcome.stats, true)))
+                            (boosted, Some(guard), Some((outcome.stats, outcome.gain_db)))
                         }
-                        None => (stt_input, None, Some((outcome.stats, false))),
+                        None => (stt_input, None, Some((outcome.stats, outcome.gain_db))),
                     }
                 }
                 Err(e) => {
@@ -1475,17 +1475,29 @@ impl Flow {
                     stats.rms_dbfs, stats.peak_dbfs
                 ));
             }
-            (stt_input, None, measured.map(|s| (s, false)))
+            (stt_input, None, measured.map(|s| (s, 0.0f32)))
         };
 
-        // Warn on genuinely quiet input even when we rescued it — the fix at
-        // the source (move the mic closer, raise its gain) is better than
-        // relying on a software boost every time.
-        if let Some((stats, rescued)) = level_stats {
-            if stats.is_quiet() {
+        // Warn only when the audio the provider ACTUALLY RECEIVES is still too
+        // quiet — i.e. after the rescue boost, not before it.
+        //
+        // Warning on the raw measurement was a real defect. A mic that idles
+        // near -38 dBFS RMS sits right on the -40 warn line, so about every
+        // other dictation raised a red terminal-error bubble even though the
+        // audio had already been boosted to a healthy -3 dBFS peak and
+        // transcribed perfectly. A warning that fires on a problem the app just
+        // fixed is noise, and it buries the case that genuinely matters: a
+        // boost clamped by MAX_GAIN_DB that left the recording quiet anyway.
+        if let Some((stats, gain_db)) = level_stats {
+            let delivered = stats.with_gain(gain_db);
+            if delivered.is_quiet() {
+                tl.mark(format!(
+                    "quiet WARNING · {:.1} dBFS RMS reaching speech-to-text",
+                    delivered.rms_dbfs
+                ));
                 let _ = app.emit(
                     "wispr:clippy_warning",
-                    crate::audio::level::quiet_warning(&stats, rescued),
+                    crate::audio::level::quiet_warning(&stats, gain_db),
                 );
             }
         }
