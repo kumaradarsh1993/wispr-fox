@@ -5,8 +5,8 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-16** (`v3.2.0` is stable; the current desktop
-> candidate is `v3.3.0-nightly.4`. **`v3.3.0-nightly.2` is burned — it froze on
+> **Last updated: 2026-08-19** (`v3.2.0` is stable; the current desktop
+> candidate is `v3.3.0-nightly.5`. **`v3.3.0-nightly.2` is burned — it froze on
 > the first hotkey press; do not install or test it.**)
 
 > **⚠ Multi-machine workflow note.** This repo is worked from more than one
@@ -42,6 +42,48 @@ optional account/sync, no telemetry.
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
+
+- **`v3.3.0-nightly.5` (2026-08-19) — the capture-gap alarm was measuring the
+  wrong thing, and error bubbles were unreadable.** User report: a red box said
+  "only 336s of 339s captured, record again", rendered ~3 words per line over
+  ~10 lines and still scrolling.
+  - **Diagnosed from the WAV, and one hypothesis died on the evidence.** First
+    scan claimed 9,723 zero-runs of exactly 20 ms — a scary "driver feeding
+    silent buffers" story. It was a bug in the scan (`start` was never reset on
+    a short run, so every zero-to-nonzero transition ≥960 samples away got
+    counted). Re-checked: **the longest zero run in the file is 4 samples.**
+    No silence, no zero-fill.
+  - **Where the audio went:** nowhere findable, because it is not one hole.
+    3.39 s short over 339 s = 1.0%, with no envelope discontinuity anywhere and
+    a coherent transcript start to end. That is WASAPI shedding individual
+    ~10 ms capture buffers — the cpal callback writes the WAV inline
+    (`wav.write_sample` under a mutex on the real-time thread), so any disk or
+    scheduler stall costs buffers. cpal reported no stream error, which is why
+    `stream_errored` was false.
+  - **The baseline proves the arithmetic is otherwise sound:** every healthy
+    recording reads exactly **-0.21 s** (captured EXCEEDS duration) regardless
+    of length, 0.1 s to 692 s, because `duration_ms` is snapshotted before the
+    220 ms tail drain. A constant offset, not drift.
+  - Fix: `audio::is_capture_gap(duration_ms, captured_ms, stream_errored)` —
+    shortfall must clear BOTH `CAPTURE_GAP_FLOOR_MS` (1 s) and
+    `CAPTURE_GAP_PERCENT` (3%) of duration; a cpal stream error always reports.
+    Replaces the flat 1000 ms in `flow.rs` and the flat 750 ms in `audio/mod.rs`
+    (which had drifted apart from each other). Message reworded — the old one
+    told the user to re-record to "get the rest", which was never possible.
+  - **Error bubbles get their own geometry.** `BUBBLE_W` (226) is deliberately
+    narrow for status text and the user has explicitly asked to keep it that
+    way; errors now use `ERROR_BUBBLE_W` (430) + `ERROR_TEXT_MAX_H` 180→260,
+    applied only while an error is on screen. `boxFor` takes the width as a
+    parameter. **The CSS `max-width` must track `ERROR_BUBBLE_W`** — the window
+    sizes off the constant, so a narrower max-width silently re-creates the
+    ribbon.
+  - **Generalise: a threshold on an absolute quantity that scales with duration
+    will fire on the longest, most valuable recordings.** Loss that is
+    proportional needs a proportional test.
+  - Verified: `cargo check --all-targets` clean, `npm run check` 0/0, and the
+    five new `capture_gap_tests` — built from the real flight-recorder numbers
+    and **extracted from the source file rather than retyped** — pass in a
+    scratch crate; CI's `verify` job runs them for real.
 
 - **`v3.3.0-nightly.4` (2026-08-16) — the "Mic was very quiet" warning was
   crying wolf.** User report: a red box saying the mic was very quiet appeared

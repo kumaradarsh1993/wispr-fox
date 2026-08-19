@@ -313,6 +313,7 @@
     bubbleScale: number,
     bubbleBand = BUBBLE_BAND,
     showMinimalError = false,
+    bubbleW = BUBBLE_W,
   ): Size {
     const a = ART[skin] ?? ART.fox;
     const rest: Size = {
@@ -327,7 +328,7 @@
       ? a.h + BOTTOM_PAD
       : a.head;
     return {
-      w: Math.max(rest.w, Math.ceil(BUBBLE_W * bubbleScale)),
+      w: Math.max(rest.w, Math.ceil(bubbleW * bubbleScale)),
       h: Math.max(
         rest.h,
         Math.ceil(bubbleAnchor * avatarScale + bubbleGapFor(avatarScale) + bubbleBand * bubbleScale),
@@ -381,12 +382,17 @@
   // count: proportional fonts, URLs, and long tokens make that guess unsafe.
   // CSS scrolls only the text beyond the cap, so every byte remains reachable
   // without letting an always-on-top floater grow without bound.
-  const ERROR_TEXT_MAX_H = 180;
+  // BUBBLE_W (226) is deliberately narrow for STATUS bubbles — the user does
+  // not want a wide window during normal dictation. Error prose is a different
+  // job: at 226px a real sentence wrapped to 2-3 words per line, ran ~10 lines,
+  // and STILL scrolled. Errors therefore get their own, much wider box; it only
+  // exists while an error is actually on screen, so the resting floater is
+  // unaffected.
+  const ERROR_BUBBLE_W = 430;
+  const ERROR_TEXT_MAX_H = 260;
   const ERROR_BUBBLE_BAND = ERROR_TEXT_MAX_H + 28;
-  let bubbleBand = $derived.by(() => {
-    if (toastKind !== "error" || toastMessage === "") return BUBBLE_BAND;
-    return ERROR_BUBBLE_BAND;
-  });
+  let bubbleBand = $derived(terminalErrorUp ? ERROR_BUBBLE_BAND : BUBBLE_BAND);
+  let bubbleWidth = $derived(terminalErrorUp ? ERROR_BUBBLE_W : BUBBLE_W);
 
   // Where the bubble's tail sits (logical px from window bottom), scaled.
   // The bubble anchors here and grows upward. v2.0.0 keeps a minimum physical
@@ -493,6 +499,7 @@
       bubbleScale,
       bubbleBand,
       terminalErrorUp,
+      bubbleWidth,
     );
     let w = box.w;
     let h = box.h;
@@ -3231,7 +3238,10 @@
     background: #b3261e;
     color: #fff;
     border-color: #b3261e;
-    max-width: calc(216px * var(--bubble-scale, 1));
+    /* Must track ERROR_BUBBLE_W in the script (minus the bubble's own padding
+       and border) — the window is sized from that constant, and a narrower
+       max-width here just reintroduces the 3-words-per-line wrap. */
+    max-width: calc(412px * var(--bubble-scale, 1));
     white-space: normal;
     align-items: flex-start;
     pointer-events: auto;

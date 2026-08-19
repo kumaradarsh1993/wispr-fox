@@ -154,6 +154,37 @@ impl Meter {
     }
 }
 
+/// Absolute floor before a shortfall is worth mentioning at all. Below this it
+/// is tail-drain rounding, not lost speech.
+pub const CAPTURE_GAP_FLOOR_MS: i64 = 1_000;
+
+/// ...and it must ALSO be this share of the recording. See `is_capture_gap`.
+pub const CAPTURE_GAP_PERCENT: i64 = 3;
+
+/// Did enough audio go missing to be worth interrupting the user about?
+///
+/// **The flat-threshold version of this was wrong, and it fired on healthy
+/// recordings.** WASAPI sheds the occasional capture buffer whenever the audio
+/// callback stalls — and this callback writes the WAV inline, so a disk hiccup
+/// is enough. That loss scales with how long the stream ran. A real 5m39s
+/// dictation lost 3.4s (1.0%), spread so thinly that the WAV contained no
+/// silence, no splice, and transcribed cleanly end to end; a flat 1000ms of
+/// slack called that "mic dropped mid-recording" and told the user to record it
+/// all again.
+///
+/// A genuine drop — device unplugged, exclusive-mode steal, driver reset —
+/// costs a large FRACTION of the take, not a rounding error. So the shortfall
+/// must clear both an absolute floor and a share of the duration. A cpal stream
+/// error is always reported regardless, because that is a direct signal rather
+/// than an inference.
+pub fn is_capture_gap(duration_ms: i64, captured_ms: i64, stream_errored: bool) -> bool {
+    if stream_errored {
+        return true;
+    }
+    let lost = duration_ms - captured_ms;
+    lost > CAPTURE_GAP_FLOOR_MS && lost * 100 > duration_ms * CAPTURE_GAP_PERCENT
+}
+
 #[derive(Debug)]
 pub struct FinishedRecording {
     pub path: PathBuf,
@@ -505,9 +536,7 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                     0
                 };
                 let stream_errored = stream_error.load(Ordering::Relaxed);
-                if stream_errored || captured_ms + 750 < duration_ms {
-                    // 750ms slack absorbs the normal tail-drain rounding; beyond
-                    // that, real audio went missing.
+                if is_capture_gap(duration_ms, captured_ms, stream_errored) {
                     tracing::warn!(
                         duration_ms,
                         captured_ms,
@@ -961,5 +990,60 @@ impl ToI16Sample for f32 {
     fn to_i16_sample(self) -> i16 {
         let clamped = self.clamp(-1.0, 1.0);
         (clamped * 32767.0) as i16
+    }
+}
+
+#[cfg(test)]
+mod capture_gap_tests {
+    use super::*;
+
+    /// Real numbers from the flight recorder. These are HEALTHY recordings that
+    /// the old flat-1000ms rule called "mic dropped mid-recording" — the 339s
+    /// one produced a clean, coherent 3,981-character transcript with no
+    /// silence and no splice anywhere in the WAV.
+    #[test]
+    fn thin_distributed_loss_on_a_long_take_is_not_a_drop() {
+        for (duration_ms, captured_ms) in [(339_438, 336_268), (316_768, 310_100)] {
+            let lost = duration_ms - captured_ms;
+            assert!(
+                lost > CAPTURE_GAP_FLOOR_MS,
+                "this case must clear the old flat floor, or it proves nothing"
+            );
+            assert!(
+                !is_capture_gap(duration_ms, captured_ms, false),
+                "{lost}ms lost from {duration_ms}ms ({:.1}%) is buffer churn, not a dropped mic",
+                100.0 * lost as f64 / duration_ms as f64
+            );
+        }
+    }
+
+    /// The normal case: the 220ms tail drain means captured EXCEEDS duration.
+    #[test]
+    fn the_healthy_baseline_never_warns() {
+        assert!(!is_capture_gap(75_421, 75_630, false));
+        assert!(!is_capture_gap(692_500, 692_710, false));
+    }
+
+    #[test]
+    fn a_real_drop_still_warns() {
+        // Mic yanked a third of the way through a 100s take.
+        assert!(is_capture_gap(100_000, 66_000, false));
+        // Short recording, proportionally large loss.
+        assert!(is_capture_gap(20_000, 17_000, false));
+    }
+
+    /// A cpal stream error is a direct signal, not an inference — always report
+    /// it, however small the shortfall looks.
+    #[test]
+    fn a_stream_error_always_warns() {
+        assert!(is_capture_gap(339_438, 336_268, true));
+        assert!(is_capture_gap(1_000, 1_200, true));
+    }
+
+    /// Sub-second shortfalls stay quiet even when proportionally large, so a
+    /// very short take can't trip on rounding alone.
+    #[test]
+    fn rounding_on_a_tiny_take_stays_quiet() {
+        assert!(!is_capture_gap(2_000, 1_400, false));
     }
 }

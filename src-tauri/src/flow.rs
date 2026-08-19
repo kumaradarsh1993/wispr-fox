@@ -1274,7 +1274,7 @@ impl Flow {
         // truncated, because the audio simply isn't there. We flag this loudly
         // (timeline + a user-facing warning) instead of silently pasting a
         // fragment and calling it a success. Retrying can't recover lost audio.
-        let capture_gap = stream_errored || captured_ms + 1000 < duration_ms;
+        let capture_gap = crate::audio::is_capture_gap(duration_ms, captured_ms, stream_errored);
         // Which mic this actually ran on. Recorded unconditionally so "why did
         // it use the laptop mic?" is answerable from the (i) inspector after
         // the fact, instead of being a guess.
@@ -1889,7 +1889,7 @@ impl Flow {
             let _ = app.emit(
                 "wispr:clippy_warning",
                 format!(
-                    "Mic dropped mid-recording — only ~{got:.0}s of ~{recorded:.0}s was captured, so the transcript is cut short. Re-record to get the rest (retry won't recover lost audio)."
+                    "Mic dropped mid-recording — only ~{got:.0}s of ~{recorded:.0}s reached the file, so this transcript is incomplete. The missing audio was never captured, so retrying can't recover it."
                 ),
             );
         }
