@@ -38,6 +38,12 @@ pub struct AppSettings {
     #[serde(default = "default_force_clean_sticky_hotkey")]
     pub force_clean_sticky_hotkey: String,
 
+    /// Global "show / hide the main window" combo. NOT a dictation binding —
+    /// it never starts a recording, so it is registered on its own path and
+    /// carries no Mode. Empty string disables it.
+    #[serde(default = "default_toggle_window_hotkey")]
+    pub toggle_window_hotkey: String,
+
     // ── Cleanup behaviour per mode ────────────────────────────────────────
     // Whether each mode runs the LLM cleanup step. Light defaults to OFF
     // (raw Whisper transcript is good enough; user can opt in). Advanced
@@ -225,6 +231,7 @@ impl Default for AppSettings {
             drafting_sticky_hotkey: if mac { "Super+Alt+Enter" } else { "Super+F9" }.to_string(),
             force_clean_hotkey: default_force_clean_hotkey(),
             force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
+            toggle_window_hotkey: default_toggle_window_hotkey(),
             // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
             auto_clean_in_light: false,
             auto_clean_in_advanced: true,
@@ -327,6 +334,30 @@ fn default_open_silently() -> bool {
 
 fn default_force_clean_hotkey() -> String {
     if cfg!(target_os = "macos") { "Shift+Alt+Space" } else { "Shift+F8" }.to_string()
+}
+
+/// Show/hide the main window.
+///
+/// **Windows: `Win+F8`**, which the owner asked for by name. It sits next to
+/// the F8/F9 dictation keys, and Windows does not reserve Win+F8 (unlike
+/// Win+L, Win+D, Win+Tab and friends). If a future Windows build does claim
+/// it, registration fails loudly in the log and the binding is rebindable.
+///
+/// **macOS: `Cmd+Shift+Space`.** The Mac function row sends media keys, so an
+/// F-key default is out for the same reason F8/F9 were dropped there. The
+/// combos deliberately NOT chosen, and why:
+///   - `Cmd+Space`      — Spotlight.
+///   - `Ctrl+Space`     — previous input source.
+///   - `Cmd+Alt+Space`  — Finder search window.
+///   - `Ctrl+Cmd+Space` — Emoji & Symbols viewer.
+///   - `Alt+Space`      — already this app's dictate key (and Alfred's default).
+///   - `Shift+Alt+Space`— already this app's force-clean key.
+/// `Cmd+Shift+Space` is unassigned by default on macOS and is not bound in
+/// Word, Chrome, WhatsApp or Claude. A global shortcut wins over the focused
+/// app, so the cost of a wrong guess is stealing a key from an app — which is
+/// why the list above errs conservative.
+fn default_toggle_window_hotkey() -> String {
+    if cfg!(target_os = "macos") { "Super+Shift+Space" } else { "Super+F8" }.to_string()
 }
 
 fn default_true() -> bool {

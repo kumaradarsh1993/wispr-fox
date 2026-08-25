@@ -70,6 +70,7 @@ const FALLBACK: AppSettings = {
   open_silently: true,
   force_clean_hotkey: "Shift+F8",
   force_clean_sticky_hotkey: "Shift+Super+F8",
+  toggle_window_hotkey: "Super+F8",
   adapt_to_app: true,
   device_name: "",
 };
@@ -173,6 +174,30 @@ class SettingsStore {
         remap("force_clean_sticky_hotkey", "Shift+Super+F8", "Super+Shift+Alt+Space");
         try {
           await store?.set("macHotkeyMigrated", true);
+          await store?.save();
+        } catch {
+          /* best-effort marker */
+        }
+      }
+
+      // Step 3: the show/hide-window binding, added in v3.4.0.
+      //
+      // Its Windows default is Win+F8, and the frontend DEFAULTS above are
+      // Windows-shaped by convention. On a Mac that would register ⌘F8 — an
+      // F-key, which is the exact thing the whole Mac scheme exists to avoid
+      // (the function row sends media keys, so it would never fire). Rust's
+      // per-platform serde default already gets a fresh install right; this
+      // catches the case where the Windows value reached a Mac anyway.
+      let macToggleDone = false;
+      try {
+        macToggleDone = (await store?.get<boolean>("macToggleWindowMigrated")) ?? false;
+      } catch {
+        /* treat as not-yet-migrated */
+      }
+      if (!macToggleDone) {
+        remap("toggle_window_hotkey", "Super+F8", "Super+Shift+Space");
+        try {
+          await store?.set("macToggleWindowMigrated", true);
           await store?.save();
         } catch {
           /* best-effort marker */

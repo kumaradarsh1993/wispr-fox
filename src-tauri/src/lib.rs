@@ -15,6 +15,7 @@ mod settings;
 mod stt;
 mod sync;
 mod tray;
+mod updater;
 #[cfg(target_os = "macos")]
 mod touchbar;
 mod usage;
@@ -391,6 +392,8 @@ pub fn run() {
             commands::list_devices,
             commands::list_devices_cached,
             commands::set_device_meta,
+            updater::update_status,
+            updater::download_and_install,
             commands::transcribe_upload,
             commands::generate_alt_version,
             commands::set_speaker_names,
@@ -404,7 +407,6 @@ pub fn run() {
             commands::hotkeys_active,
             commands::app_paths,
             commands::reveal_folder,
-            commands::check_for_updates,
             commands::daily_usage,
             commands::stats_summary,
             commands::current_models,

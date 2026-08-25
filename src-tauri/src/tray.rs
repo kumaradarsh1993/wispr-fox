@@ -124,17 +124,24 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-fn toggle_main(app: &AppHandle) {
+/// Show the window if hidden, focus it if visible-but-behind, hide it if it is
+/// already the focused window. Shared by the tray icon and the global
+/// show/hide hotkey.
+pub fn toggle_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        match w.is_visible() {
-            Ok(true) => {
-                let _ = w.hide();
-            }
-            _ => {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+        let visible = w.is_visible().unwrap_or(false);
+        let minimized = w.is_minimized().unwrap_or(false);
+        let focused = w.is_focused().unwrap_or(false);
+        // Only hide when the window is genuinely in front of the user. If it is
+        // merely behind another app, "toggle" has to mean RAISE — hiding an
+        // already-hidden-looking window is what makes a show/hide hotkey feel
+        // broken (press once: nothing appears to happen; press again: it opens).
+        if visible && !minimized && focused {
+            let _ = w.hide();
+        } else {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
         }
     }
 }

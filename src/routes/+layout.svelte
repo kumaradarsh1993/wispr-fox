@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import AppContextMenu from "$lib/AppContextMenu.svelte";
   import { listen } from "@tauri-apps/api/event";
   import { usageStore } from "$lib/usage-store.svelte";
   import { skinStore, type Skin } from "$lib/skin-store.svelte";
@@ -355,6 +356,11 @@
     false,
   );
 
+  // The floater runs in its own window and owns its right-click menu
+  // (FloaterContextMenu: skin, scale, position). Mounting the app-wide one
+  // there too would put two handlers on the same event.
+  let isFloater = $derived(page.url?.pathname?.startsWith("/clippy") ?? false);
+
   // Nav icons are inline stroke SVGs (see the snippet in the markup) instead
   // of emoji — emoji glyphs render with the OS emoji font (inconsistent
   // weight/colour, can't follow the theme), while currentColor strokes pick
@@ -380,6 +386,13 @@
 
   let sidebarStyle = $derived(collapsed ? "" : `width: ${sidebarWidth}px;`);
 </script>
+
+<!-- App-wide right-click handling. Outside the chrome branch so onboarding
+     gets it too: WebView2's Back / Reload / Save as / Print / Inspect menu
+     should never appear on any surface of this app. -->
+{#if !isFloater}
+  <AppContextMenu />
+{/if}
 
 {#if hideChrome}
   {@render children?.()}

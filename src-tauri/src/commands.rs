@@ -965,93 +965,11 @@ pub fn app_paths(app: AppHandle) -> Result<AppPaths, String> {
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Update check (manual — auto-updater is separate work)
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-pub struct UpdateInfo {
-    /// Version currently installed (from `CARGO_PKG_VERSION`).
-    pub current: String,
-    /// Newest release tag name on GitHub, e.g. `"v1.2.0"` or `"v1.2.0-nightly.3"`.
-    pub latest: String,
-    /// Whether `latest` is strictly newer than `current` (semver-aware,
-    /// pre-releases sort below their plain version per semver 11).
-    pub newer: bool,
-    /// HTML URL of the latest release page — Settings opens this if the user
-    /// clicks the "Open release page" link.
-    pub html_url: String,
-    /// `true` if the latest release is a pre-release (nightly / RC / beta).
-    /// Settings shows a slightly different copy ("Nightly available") so the
-    /// user knows it isn't a stable.
-    pub prerelease: bool,
-}
-
-#[derive(Deserialize)]
-struct GhRelease {
-    tag_name: String,
-    html_url: String,
-    prerelease: bool,
-}
-
-/// Hit GitHub's "latest releases" endpoint and compare against the current
-/// build's version. We deliberately use `/releases` (not `/releases/latest`)
-/// because that endpoint hides pre-releases; we want users on a nightly
-/// channel to see a newer nightly too. The first entry is always the most
-/// recent regardless of channel.
-///
-/// No auto-update — we only report. Auto-update is a separate Tauri plugin
-/// (`tauri-plugin-updater`) and a bigger trust-decision than we want to make
-/// without explicit owner sign-off.
-#[tauri::command]
-pub async fn check_for_updates() -> Result<UpdateInfo, String> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
-        .user_agent(concat!("wispr-fox/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-
-    let url = "https://api.github.com/repos/kumaradarsh1993/wispr-fox/releases?per_page=1";
-    let resp = client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("network: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("GitHub returned HTTP {}", resp.status().as_u16()));
-    }
-
-    let releases: Vec<GhRelease> = resp
-        .json()
-        .await
-        .map_err(|e| format!("decode: {e}"))?;
-
-    let Some(latest) = releases.into_iter().next() else {
-        return Err("no releases found".into());
-    };
-
-    // Strip leading "v" if present so we compare "1.2.0" to "1.2.0".
-    let latest_clean = latest.tag_name.trim_start_matches('v').to_string();
-    let newer = version_is_newer(&current, &latest_clean);
-
-    Ok(UpdateInfo {
-        current,
-        latest: latest.tag_name,
-        newer,
-        html_url: latest.html_url,
-        prerelease: latest.prerelease,
-    })
-}
-
 /// Tiny semver-ish comparator. Splits on `.` and `-`, compares dotted numeric
 /// parts first then any pre-release suffix lexicographically. Enough for our
 /// "1.1.0-nightly.5 vs 1.1.0-nightly.6" comparisons; not a full semver
 /// implementation.
-fn version_is_newer(current: &str, candidate: &str) -> bool {
+pub fn version_is_newer(current: &str, candidate: &str) -> bool {
     fn parts(v: &str) -> (Vec<u32>, &str) {
         let (head, tail) = v.split_once('-').unwrap_or((v, ""));
         let nums: Vec<u32> = head.split('.').filter_map(|s| s.parse().ok()).collect();

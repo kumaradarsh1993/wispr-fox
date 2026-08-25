@@ -20,12 +20,14 @@
     | "light_hotkey"
     | "force_clean_hotkey"
     | "drafting_hotkey"
+    | "toggle_window_hotkey"
     | "advanced_hotkey";
 
   const HOTKEY_LABELS: Record<HotkeyField, string> = {
     light_hotkey: "Transcribe",
     force_clean_hotkey: "Transcribe + force-clean",
     drafting_hotkey: "Draft",
+    toggle_window_hotkey: "Show / hide window",
     advanced_hotkey: "Advanced cleanup",
   };
 
@@ -372,6 +374,28 @@
       bind:value={settings.s.drafting_hotkey}
       oncommit={(c) => commitHotkey("drafting_hotkey", c)}
     />
+  </div>
+
+  <div class="hotkey-block">
+    <div class="hotkey-head">
+      <div>
+        <div class="hk-label">Show / hide window <span class="hk-tag">{isMac() ? "Cmd+Shift+Space" : "Win+F8"} default</span></div>
+        <div class="hk-desc">
+          Brings this window up from anywhere, and tucks it away again. Never starts a
+          recording. {#if isMac()}Chosen to dodge Spotlight (Cmd+Space), the input-source
+          switcher (Ctrl+Space), Finder search (Cmd+Option+Space) and the emoji picker
+          (Ctrl+Cmd+Space).{/if}
+        </div>
+      </div>
+    </div>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.toggle_window_hotkey}
+      oncommit={(c) => commitHotkey("toggle_window_hotkey", c)}
+    />
+    {#if settings.s.toggle_window_hotkey}
+      <button class="btn-unbind" onclick={() => clearHotkey("toggle_window_hotkey")}>Unbind</button>
+    {/if}
   </div>
 
   <details class="hotkey-block-collapsed">

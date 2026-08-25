@@ -11,7 +11,7 @@
   // Icons are inline stroke SVGs (see the navIcon snippet) rather than letter
   // glyphs — the old K/M/D/A/G/! read like keyboard shortcuts. Same 15px /
   // currentColor / 1.6-stroke style as the main sidebar nav.
-  type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security" | "account";
+  type IconName = "providers" | "modes" | "dictation" | "appearance" | "general" | "security" | "account" | "about";
   type NavItem = { href: string; label: string; icon: IconName };
   // User-goal labels. Routes stay stable for migrations and deep links; the
   // language no longer exposes implementation nouns as the information
@@ -24,6 +24,10 @@
     { href: "/settings/general", label: "App & data", icon: "general" },
     { href: "/settings/account", label: "Account", icon: "account" },
     { href: "/settings/security", label: "Advanced", icon: "security" },
+    // Last in the nav but a top-level destination: version + updates used to
+    // be buried at the bottom of App & data, where you had to already know it
+    // existed to find it.
+    { href: "/settings/about", label: "About", icon: "about" },
   ];
 
   function isActive(href: string): boolean {
@@ -72,6 +76,13 @@
     <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
       <circle cx="8" cy="5.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
       <path d="M 3 13.5 C 3 10.8 5.2 9.5 8 9.5 C 10.8 9.5 13 10.8 13 13.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    </svg>
+  {:else if icon === "about"}
+    <!-- info circle -->
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6" />
+      <path d="M 8 7.2 V 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <circle cx="8" cy="4.9" r="0.95" fill="currentColor" />
     </svg>
   {:else}
     <!-- shield -->

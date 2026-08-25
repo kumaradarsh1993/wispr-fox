@@ -116,50 +116,17 @@
     }
   }
 
-  // ── Update check ───────────────────────────────────────────────────────
-  // No auto-updater (separate Tauri plugin, separate trust decision). This
-  // is a button-driven check that hits the GitHub releases API from the
-  // Rust side (webview CSP blocks the request) and reports back whether a
-  // newer build is available. The "Open release page" link routes to the
-  // release on GitHub where the user picks the right installer.
-  import type { UpdateInfo } from "$lib/api";
-  let updateInfo = $state<UpdateInfo | null>(null);
-  let updateChecking = $state(false);
-  let updateError = $state<string | null>(null);
-
-  async function checkUpdates() {
-    updateChecking = true;
-    updateError = null;
-    try {
-      updateInfo = await api.checkForUpdates();
-    } catch (e) {
-      updateError = String(e);
-    } finally {
-      updateChecking = false;
-    }
-  }
-
-  async function openReleasePage(url: string) {
-    try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-    } catch (e) {
-      console.warn("openUrl failed", e);
-    }
-  }
-
+  // Updates moved to Settings -> About, where version, both release channels
+  // and the installer live together. Keeping a second, weaker copy here would
+  // just be two places to look.
   onMount(() => {
     refreshSounds();
-    // Auto-check on mount but silently — no toast, no spinner. The button
-    // gives an explicit re-check path. If this fails (offline, GitHub down),
-    // we show nothing rather than nagging.
-    checkUpdates().catch(() => {});
   });
 </script>
 
 <section>
   <h2>App &amp; data</h2>
-  <p class="lede">Startup, sounds, data retention, and updates.</p>
+  <p class="lede">Startup, sounds, and data retention.</p>
 
   <h3>Startup</h3>
 
@@ -278,39 +245,4 @@
     </div>
   </div>
 
-  <h3>Updates</h3>
-  <p class="lede">Manual check — see if a newer build is on GitHub.</p>
-
-  <div class="update-card">
-    <div class="update-status">
-      {#if updateChecking}
-        <span class="update-line">Checking GitHub…</span>
-      {:else if updateError}
-        <span class="update-line update-err">⚠ {updateError}</span>
-      {:else if updateInfo}
-        {#if updateInfo.newer}
-          <span class="update-line update-new">
-            ✨ {updateInfo.prerelease ? "Nightly" : "Update"} available — <strong>{updateInfo.latest}</strong>
-            <span class="update-current">(you're on v{updateInfo.current})</span>
-          </span>
-        {:else}
-          <span class="update-line update-current-only">
-            You're on the latest — v{updateInfo.current}
-          </span>
-        {/if}
-      {:else}
-        <span class="update-line">—</span>
-      {/if}
-    </div>
-    <div class="update-actions">
-      <button class="btn-secondary small" onclick={checkUpdates} disabled={updateChecking}>
-        {updateChecking ? "Checking…" : "Check for updates"}
-      </button>
-      {#if updateInfo}
-        <button class="btn-secondary small" onclick={() => openReleasePage(updateInfo!.html_url)}>
-          Open release page
-        </button>
-      {/if}
-    </div>
-  </div>
 </section>

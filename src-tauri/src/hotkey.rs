@@ -56,6 +56,9 @@ pub struct HotkeyConfig {
     pub advanced: String,
     pub drafting: String,
     pub force_clean: String,
+    /// Show/hide the main window. Not a dictation binding: it carries no Mode
+    /// and never reaches the flow layer, so it lives outside `combos()`.
+    pub toggle_window: String,
 }
 
 impl HotkeyConfig {
@@ -65,6 +68,7 @@ impl HotkeyConfig {
             advanced: s.advanced_hotkey.clone(),
             drafting: s.drafting_hotkey.clone(),
             force_clean: s.force_clean_hotkey.clone(),
+            toggle_window: s.toggle_window_hotkey.clone(),
         }
     }
 
@@ -197,7 +201,51 @@ fn rebuild_locked(
         }
     }
 
+    register_window_toggle(app, cfg, state);
     Ok(())
+}
+
+/// Register the show/hide-window combo.
+///
+/// Separate from the dictation loop because it dispatches to the window layer,
+/// not the flow layer — it has no Mode, no edge semantics, and must not be
+/// able to start a recording.
+fn register_window_toggle(app: &AppHandle, cfg: &HotkeyConfig, state: &mut RegistrationState) {
+    let combo = cfg.toggle_window.trim();
+    if combo.is_empty() {
+        return;
+    }
+    let sc = match Shortcut::from_str(combo) {
+        Ok(sc) => sc,
+        Err(e) => {
+            tracing::warn!(combo, "window-toggle hotkey parse failed, skipping: {e}");
+            return;
+        }
+    };
+    let sc_match = sc.clone();
+    match app.global_shortcut().on_shortcut(sc.clone(), move |app, fired, event| {
+        if fired != &sc_match || event.state() != ShortcutState::Pressed {
+            return;
+        }
+        // Hop to the main thread before touching windows.
+        //
+        // This callback runs while the global-shortcut plugin still holds its
+        // internal registry lock, on the same thread that drives the tray and
+        // every window. Doing window work inline here is exactly the shape of
+        // the bug that froze the app on the first keypress in v3.3.0-nightly.2
+        // (see its release notes). `run_on_main_thread` queues instead, so it
+        // cannot deadlock whichever thread we are called on.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            crate::tray::toggle_main(&handle);
+        });
+    }) {
+        Ok(()) => {
+            tracing::info!(combo, "window-toggle hotkey registered");
+            state.registered.push(sc);
+        }
+        Err(e) => tracing::warn!(combo, "window-toggle hotkey registration failed: {e}"),
+    }
 }
 
 /// Unregister every combo this module owns, leaving the OS free to deliver

@@ -202,6 +202,7 @@ src/lib/
 | **F8** | Light (Transcribe) | Raw transcript OR LLM-cleaned (per `auto_clean_in_light` toggle) |
 | **F9** | Drafting | Full LLM rewrite/format per the brief (was F10 in v0.1.x — F10 retired) |
 | **Shift+F8** | Light w/ force-clean | One-shot cleanup override, ignores the toggle |
+| **Win+F8** | *(not a dictation key)* | Show / hide the main window. Registered on its own path in `hotkey.rs::register_window_toggle` — it carries no `Mode` and can never start a recording. |
 
 All active bindings are adaptive: release before 700 ms to latch; press any
 dictation binding or Escape to stop and send. Hold for 700 ms or longer to stop
@@ -226,6 +227,27 @@ marker-gated migrations in `settings-store.svelte.ts`: `macHotkeyMigrated`
 renders combos via `src/lib/hotkey-display.ts` `prettyHotkey()` (emits ⌥/⌘/⇧/⌃
 symbols on Mac; Space/Enter pass through) — single source of truth, no hardcoded
 key strings in user-facing copy.
+
+**Mac show/hide window = ⌘⇧Space** (v3.4.0). The combos deliberately NOT used,
+each because macOS or a common launcher already owns them — check this list
+before ever proposing a new Mac default:
+
+| Combo | Owner |
+|---|---|
+| `⌘Space` | Spotlight |
+| `⌃Space` | Previous input source |
+| `⌘⌥Space` | Finder search window |
+| `⌃⌘Space` | Emoji & Symbols viewer |
+| `⌥Space` | This app's dictate key — and Alfred's default trigger |
+| `⇧⌥Space` | This app's force-clean key |
+| any bare F-key | The Mac function row sends media keys, so it never fires |
+
+A global shortcut **wins over the focused app**, so a wrong guess doesn't just
+fail — it silently steals a key from Word/Chrome/whatever. That asymmetry is why
+the default errs conservative. A THIRD marker-gated migration
+(`macToggleWindowMigrated`) remaps a leaked Windows `Super+F8` to
+`Super+Shift+Space`, because the frontend `DEFAULTS` are Windows-shaped by
+convention and ⌘F8 on a Mac is an F-key that would never fire.
 
 **Escape stops a recording in flight** (since nightly.9, both platforms).
 Registered dynamically via the global-shortcut plugin when
