@@ -13,10 +13,24 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v3.2.0`** (Latest, 2026-08-11) — the Codex-authored
-fox-in-the-field visual overhaul, rebuilt onboarding, responsive Settings and
-History, on-device recent voice insights, and avatar-gallery refinement. It
-promotes the two v3.2.0 nightlies after the user's explicit stable signal. The
+**Current stable: `v3.3.0`** (Latest, 2026-08-25) — promotes the five v3.3.0
+nightlies on the user's explicit stable signal: meetings (speaker turns, speaker
+naming, Meeting Notes as its own version, one Rerun dialog), adaptive
+tap-or-hold dictation on a serialized coordinator, the nightly.2 first-keypress
+freeze fix, and three false-alarm fixes (quiet-mic measured pre-boost,
+capture-gap flagging rounding errors, floater hiding messages mid-read). Also
+two layout defects of one family: History card text was capped at a fixed `88ch`
+that did not scale (measured 45% card fill on a maximised window — now 95%), and
+Insights was a centred 1040px scroll container whose scrollbar floated mid-pane,
+with `@media` breakpoints that measured the WINDOW while the page only ever gets
+window-minus-sidebar (a 1100px window squeezed 4 stat cards into 176px each).
+Insights now uses the full pane and `@container stats`, matching History and
+Settings. **Rule of thumb this produced: in this app a breakpoint is almost
+always a container query — the sidebar is 272px, user-resizable, and
+collapsible, so the window width is never the pane width.**
+The prior `v3.2.0` (2026-08-11) was the Codex-authored fox-in-the-field visual
+overhaul, rebuilt onboarding, responsive Settings and History, on-device recent
+voice insights, and avatar-gallery refinement. The
 prior v3.1.0 line added external-mic selection, audio rescue, diarization,
 meeting capture, and on-demand AI tools. The earlier v3.0.0 = **accounts +
 optional cross-device sync** (Supabase; transcripts + API keys sync, audio never

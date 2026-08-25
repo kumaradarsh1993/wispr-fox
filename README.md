@@ -33,13 +33,22 @@
 
 ## ⬇️ Download
 
-| Platform | 🟢 Stable (recommended) | 🟡 Beta builds (newer, less tested) |
-|---|---|---|
-| 🪟 **Windows** | [**wispr-fox setup.exe**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_x64-setup.exe) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
-| 🍎 **macOS** (Apple Silicon) | [**wispr-fox.dmg**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_aarch64.dmg) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
-| 🐧 **Linux** | [**wispr-fox AppImage**](https://github.com/kumaradarsh1993/wispr-fox/releases/download/v3.1.0/wispr-fox_3.1.0_amd64.AppImage) | [Browse beta builds →](https://github.com/kumaradarsh1993/wispr-fox/releases) |
+### → [**Get the latest stable release**](https://github.com/kumaradarsh1993/wispr-fox/releases/latest)
 
-Run the installer. The app walks you through a 2-minute onboarding on first launch.
+That link always points at the newest stable build. Grab the one file for your
+platform and run it:
+
+| Platform | File on the release page |
+|---|---|
+| 🪟 **Windows** | `wispr-fox_<version>_x64-setup.exe` |
+| 🍎 **macOS** (Apple Silicon) | `wispr-fox_<version>_aarch64.dmg` |
+| 🐧 **Linux** | `wispr-fox_<version>_amd64.AppImage` · `.deb` · `.rpm` |
+
+The app walks you through a 2-minute onboarding on first launch.
+
+📓 [**All releases and their notes →**](https://github.com/kumaradarsh1993/wispr-fox/releases) — every version, newest first.
+Builds tagged **Pre-release** are nightlies: newer, less tested, and safe to skip
+unless you want to try something early. Anything not tagged Pre-release is stable.
 
 > ℹ️ **Mac first-launch:** the build isn't code-signed (Apple charges $99/yr for that). After dragging to Applications, right-click → Open the first time. If you see *"app is damaged"*, run `xattr -dr com.apple.quarantine /Applications/wispr-fox.app` once and double-click as normal.
 
@@ -57,6 +66,21 @@ Tap a hotkey to latch recording, or hold it for push-to-talk. The text appears i
 | ⏏️ **Esc** | Stop and send the active recording |
 
 Every dictation key is adaptive: release before **700 ms** to latch recording, then press any dictation key (or Esc) to stop and send. Hold for **700 ms or longer** to stop and send on release.
+
+### Beyond dictation
+
+- 🗂️ **History** keeps every recording with its Raw, Cleaned, Drafted, and Meeting
+  Notes versions side by side — searchable, replayable, and re-runnable through a
+  different provider or model without re-recording.
+- 🎧 **Transcribe files you already have.** Drag any audio file onto the window,
+  or upload from your phone — same pipeline, same versions.
+- 🗣️ **Meetings.** Turn on speaker labels and a recording renders as named speaker
+  turns, with a leadership-ready summary available as its own version.
+- 📊 **Insights** shows lifetime time-saved, words, sessions and streaks, plus an
+  on-device portrait of how you actually speak. Kept even after you clear recordings.
+- ☁️ **Optional account sync.** Sign in and transcripts and provider keys follow you
+  between devices. Your audio never leaves the machine it was recorded on. Signed
+  out, the app behaves exactly as it always did and talks to no backend.
 
 ---
 
@@ -98,8 +122,11 @@ Either way, most users pay **$0**. There's no wispr-fox subscription — your us
 
 ## 🎨 Make it yours
 
-- 🦊 **Pick a floater** from the sidebar: Off, Fox (default), Paperclip, real Clippy, Desk Cat, or the experimental Cat (lab).
-- 🌗 **Dark, Light, or Retro themes** in Settings → Appearance.
+- 🦊 **Pick a floater** from Settings → Avatar: Fox (default), Codex Fox, Clippo,
+  the real Clippy, Blacky, Uru & Gujia, Mochi & Marmalade, Pikachu, the pixel-pet
+  set, or the minimal Wavy / Siri skins. Whether it shows is a separate choice —
+  always, only while dictating, or hidden.
+- 🌗 **Auto, Light, Dark, or Retro themes** in Settings → Appearance.
 - ⌨️ **Rebind any hotkey** — Settings → Dictation. Defaults are sensible on each platform.
 - 🎭 **Customise the LLM prompts** per mode if you want a specific tone — Settings → Modes → Show system prompt.
 - 🚀 **Launch at login** — Settings → General.
@@ -147,7 +174,9 @@ Apple charges $99/year for a Developer ID certificate. We're not there as a free
 
 ## 📦 What's next
 
-See the [**Roadmap**](docs/ROADMAP.md) for what's planned. Highlights: time-saved / words-saved stats, Sarvam Saaras as a Hindi-friendly STT provider, plugin-based avatar system.
+See the [**Roadmap**](docs/ROADMAP.md) for what's planned. Highlights: merging
+usage and insights across all your signed-in devices, Sarvam Saaras as a
+Hindi-friendly STT provider, and a plugin-based avatar system.
 
 ---
 
@@ -157,12 +186,12 @@ See the [**Roadmap**](docs/ROADMAP.md) for what's planned. Highlights: time-save
 ### Build from source
 
 ```bash
-# Prerequisites: Rust 1.75+, Node 20+, pnpm
+# Prerequisites: Rust 1.75+, Node 20+
 git clone https://github.com/kumaradarsh1993/wispr-fox
 cd wispr-fox
-pnpm install
-pnpm tauri dev      # development
-pnpm tauri build    # production binary (heavy, needs ≥16 GB RAM)
+npm install
+npm run tauri dev      # development
+npm run tauri build    # production binary (heavy, needs ≥16 GB RAM)
 ```
 
 Full dev notes: [GETTING_STARTED.md](./GETTING_STARTED.md).

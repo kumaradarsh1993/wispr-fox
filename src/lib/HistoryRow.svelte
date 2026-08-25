@@ -1460,8 +1460,15 @@
     word-break: break-word;
   }
 
+  /* Transcript text fills the card. It used to carry a fixed `max-width:
+     88ch` reading measure, which does not scale with the card: the same
+     sentence wrapped at the same word in a 900px window and a maximised
+     one, so on a wide window the copy stopped around half-way across the
+     card and the rest sat empty. The card is the measure — it already sits
+     in a padded column inside the history pane — so cap at 100% and let the
+     line length follow the window the user chose. */
   .readable-text {
-    max-width: 88ch;
+    max-width: 100%;
     letter-spacing: 0.004em;
   }
 

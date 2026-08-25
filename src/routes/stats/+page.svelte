@@ -206,14 +206,22 @@
 </div>
 
 <style>
+  /* Full-bleed scroll pane, matching History (.rows) and Settings
+     (.section-body). This page used to BE its own scroll container while
+     also being `max-width: 1040px; margin: 0 auto` — so on a wide window
+     the scrollbar was centred with the content and floated in the middle
+     of the pane with dead surface either side of it, instead of sitting on
+     the right edge where every other screen puts it. The scroller is now
+     the full pane; the content inside decides its own width. */
   .stats-page {
     height: 100vh;
     overflow-y: auto;
-    padding: 28px 32px 60px;
+    padding: 28px clamp(20px, 3.4vw, 44px) 60px;
     box-sizing: border-box;
-    max-width: 1040px;
-    margin: 0 auto;
+    background: var(--bg-surface);
     color: var(--text-primary);
+    scrollbar-gutter: stable;
+    container: stats / inline-size;
   }
 
   .stats-header {
@@ -563,19 +571,25 @@
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--sun) 16%, transparent);
   }
 
-  @media (max-width: 720px) {
-    .cards { grid-template-columns: repeat(2, 1fr); }
-    .hero-fox { display: none; }
-  }
-
-  @media (max-width: 920px) {
+  /* Breakpoints are CONTAINER queries, not media queries. These used to be
+     @media, which measures the window — but this page only ever gets the
+     window minus the sidebar (272px by default, user-resizable, and
+     collapsible to 64px). A 1000px window put a ~700px pane through the
+     ">920px" four-across layout and squashed it. Measuring the pane is the
+     same thing History (@container) and Settings (@container settings) do. */
+  @container stats (max-width: 920px) {
     .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .voice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .voice-heading { flex-direction: column; gap: 12px; }
     .signature-tags { max-width: none; justify-content: flex-start; }
   }
 
-  @media (max-width: 560px) {
+  @container stats (max-width: 720px) {
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .hero-fox { display: none; }
+  }
+
+  @container stats (max-width: 560px) {
     .voice-grid { grid-template-columns: 1fr; }
   }
 </style>
