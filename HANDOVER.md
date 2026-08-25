@@ -5,9 +5,56 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-19** (`v3.2.0` is stable; the current desktop
-> candidate is `v3.3.0-nightly.5`. **`v3.3.0-nightly.2` is burned — it froze on
-> the first hotkey press; do not install or test it.**)
+> **Last updated: 2026-08-25** (**`v3.3.0` is stable and Latest**; the current
+> desktop candidate is `v3.4.0-nightly.1`. **`v3.3.0-nightly.2` is burned — it
+> froze on the first hotkey press; do not install or test it.**)
+
+## Where we are (2026-08-25)
+
+**`v3.3.0` promoted to stable** on the user's explicit signal — the five v3.3
+nightlies (meetings, adaptive tap-or-hold, the nightly.2 freeze fix, three
+false-alarm fixes) plus two layout defects he reported against nightly.5:
+
+- History card text was capped at a fixed `max-width: 88ch`. Measured on an
+  1800px window: **45% card fill**, and the same sentence wrapped at the same
+  word regardless of window size. Now 95%.
+- Insights was itself the scroll container AND `max-width: 1040px; margin: 0
+  auto`, so its scrollbar floated mid-pane with dead surface either side. Now
+  full-bleed, matching History (`.rows`) and Settings (`.section-body`).
+- Insights breakpoints were `@media`, which measures the WINDOW — but the page
+  only ever gets window-minus-sidebar. A 1100px window put a 828px pane through
+  the ">920px" branch and crushed four stat cards into 176px each. Now
+  `@container stats`.
+
+**Rule this produced: in this app a breakpoint is almost always a container
+query.** The sidebar is 272px, user-resizable and collapsible, so the window
+width is never the pane width. Settings and History already did this correctly;
+Insights was the straggler.
+
+**`v3.4.0-nightly.1` — the fleet.** Insights merges analytics across every
+signed-in device (the user had two desktops reporting two different "since"
+dates and two different totals); history cards show which device produced them;
+Settings → Account lists every device with an assignable icon and name. New
+`src-tauri/src/sync/fleet.rs`, `src/lib/fleet-store.svelte.ts`,
+`src/lib/device-icons.ts`.
+
+**It needed NO Supabase migration** — device identity and per-device rollups
+ride on the generic `user_settings` KV that `SYNC_DESIGN.md` already reserves
+for "future shared prefs", plus the `devices` table the engine has written
+since v3.0.0. Worth remembering before proposing DDL on the user's project: the
+KV table absorbs most "we need one more synced field" asks.
+
+### Owed / next
+
+- **Live multi-device test.** The fleet merge was verified against a mocked
+  three-device account in a browser, not against real Supabase rows. Sign a
+  second machine in and confirm the merged "since" date and totals.
+- This is the same class of gap as the delete/purge paths noted below — both
+  are protocol code that has only ever been typechecked and CI-built.
+- **Codex avatars: nothing to inherit** (checked 2026-08-25). All 8 Codex CLI
+  pets are already in `static/pets/`, and the only pet in `~/.codex/pets/` is
+  `mochi-marmalade`, which is **byte-identical** (md5) to the shipped copy. Do
+  not re-investigate without a new pet appearing there first.
 
 > **⚠ Multi-machine workflow note.** This repo is worked from more than one
 > machine. **Before starting new work, `git fetch` and reconcile the live branch,
