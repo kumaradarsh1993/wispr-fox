@@ -10,6 +10,8 @@
   import SpeakerLabelsDialog from "./SpeakerLabelsDialog.svelte";
   import ReadingMode from "./ReadingMode.svelte";
   import { applySpeakerNames, namedSpeaker, speakerNames, speakerTurns } from "./meeting-text";
+  import { fleet } from "./fleet-store.svelte";
+  import { deviceGlyph, deviceDisplayName } from "./device-icons";
 
   let { rec } = $props<{ rec: Recording }>();
 
@@ -194,6 +196,37 @@
   // mobile), the badge earns its place.
   let showPlatformBadge = $derived(rec.remote || rec.platform === "web" || rec.platform === "mobile");
 
+  // Which device made this recording.
+  //
+  // `device_id` is the reliable join, but it only exists on rows created
+  // after that column shipped. Two fallbacks, in order of trustworthiness:
+  // a LOCAL row is by definition this device (that is what `remote` means),
+  // and failing that we match on the recorded device name. Name matching is
+  // last because two machines can share a name — it is a display hint, not
+  // an identity.
+  let sourceDevice = $derived.by(() => {
+    const byId = fleet.byId(rec.device_id);
+    if (byId) return byId;
+    if (!rec.remote) return fleet.thisDevice;
+    if (rec.device_name) {
+      return fleet.devices.find((d) => d.name === rec.device_name) ?? null;
+    }
+    return null;
+  });
+
+  // On a one-device account this chip is pure noise — the answer is always
+  // "this computer". It earns its place only once there is a second device.
+  let showDeviceChip = $derived(fleet.isMultiDevice);
+
+  let deviceChipGlyph = $derived(
+    deviceGlyph(sourceDevice?.icon, sourceDevice?.platform ?? rec.platform),
+  );
+  let deviceChipName = $derived(
+    sourceDevice
+      ? deviceDisplayName(sourceDevice)
+      : (rec.device_name ?? "Unknown device"),
+  );
+
   async function ensureAudioUrl() {
     if (audioUrl) return;
     try {
@@ -362,6 +395,17 @@
       </svg>
     </button>
     <div class="meta">
+      <!-- Which machine this came from, before the timestamp so the eye picks
+           up "where" and "when" in one pass. Icon-only to stay out of the
+           way; the name is in the tooltip and in Settings -> Account. -->
+      {#if showDeviceChip}
+        <span
+          class="dev-chip"
+          class:mine={sourceDevice?.this_device}
+          title="Recorded on {deviceChipName}"
+          aria-label="Recorded on {deviceChipName}"
+        >{deviceChipGlyph}</span>
+      {/if}
       <span class="when">{timeShort(rec.created_at)}</span>
       <span class="dot">·</span>
       <span class="dur">{durationShort(rec.duration_ms)}</span>
@@ -1321,6 +1365,25 @@
     font-size: 11px;
     color: var(--text-secondary);
     line-height: 1.5;
+  }
+
+  /* Device chip. Sized and baseline-aligned to sit quietly next to the
+     timestamp rather than competing with it. */
+  .dev-chip {
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+    opacity: 0.75;
+    cursor: help;
+    /* Emoji glyphs vary wildly in optical weight; a fixed box stops cards
+       from shifting by a pixel or two depending on which icon is assigned. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+  }
+  .dev-chip.mine {
+    opacity: 0.95;
   }
 
   .body {

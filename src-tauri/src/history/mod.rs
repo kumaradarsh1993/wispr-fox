@@ -169,6 +169,10 @@ pub struct Recording {
     /// the synced device's `device_name` setting). None on old rows and on
     /// remote rows pulled before a device ever set a name.
     pub device_name: Option<String>,
+    /// Stable id of the originating device, joining this row to the fleet
+    /// registry so History can show the icon the user assigned to that
+    /// machine. None on rows created before this column existed.
+    pub device_id: Option<String>,
     /// True when this row has local edits that haven't been pushed to the
     /// cloud yet. Only rows with `status = done` and `dirty = true` are
     /// eligible for the next push.
@@ -297,6 +301,11 @@ impl History {
             [],
         );
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN remote INTEGER", []);
+        // Which device produced this row. `device_name` alone is not a usable
+        // key: two machines can share a name, and renaming one would silently
+        // re-point every card it ever made. Old rows stay NULL and fall back
+        // to the platform glyph.
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN device_id TEXT", []);
 
         // Repair for the `mark_all_done_dirty` defect shipped in v3.0.0: it
         // marked PULLED rows dirty as well as local ones. `list_dirty` refuses
@@ -333,6 +342,40 @@ impl History {
         Ok(Self { inner: Arc::new(Mutex::new(conn)) })
     }
 
+    /// This install's stable device id, creating it if it does not exist yet.
+    ///
+    /// Shares the `sync_meta` key `device_id` with `sync::engine::device_id()`
+    /// — whichever runs first writes it and the other adopts the same value —
+    /// so a row stamped before the user ever signs in still attributes to the
+    /// right device afterwards.
+    ///
+    /// Insert-if-absent inside ONE lock, deliberately: the plain `meta_set`
+    /// is last-write-wins, so two threads racing here could mint two ids and
+    /// the loser's already-stamped rows would attribute to a device that does
+    /// not exist.
+    ///
+    /// CALLER CONTRACT: call this BEFORE taking `self.inner.lock()`. The
+    /// mutex is not reentrant, so calling it while holding the connection
+    /// deadlocks the whole app.
+    fn stamp_device_id(&self) -> Option<String> {
+        let conn = self.inner.lock();
+        if conn
+            .execute(
+                "INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('device_id', ?1)",
+                params![Uuid::new_v4().to_string()],
+            )
+            .is_err()
+        {
+            return None;
+        }
+        conn.query_row(
+            "SELECT value FROM sync_meta WHERE key = 'device_id'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
     /// `device_name` is this desktop install's current display name (from
     /// Settings → Account, or the hostname default) — stamped onto every new
     /// row alongside `platform = "desktop"` so History/Settings can show
@@ -346,11 +389,13 @@ impl History {
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        // Before the lock — see stamp_device_id's caller contract.
+        let this_device = self.stamp_device_id();
         let conn = self.inner.lock();
         conn.execute(
             r#"INSERT INTO recordings
-               (id, created_at, audio_path, mode, status, platform, device_name)
-               VALUES (?1, ?2, ?3, ?4, ?5, 'desktop', ?6)"#,
+               (id, created_at, audio_path, mode, status, platform, device_name, device_id)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'desktop', ?6, ?7)"#,
             params![
                 id,
                 now,
@@ -358,6 +403,7 @@ impl History {
                 mode_str(mode),
                 Status::Recording.as_str(),
                 device_name,
+                this_device,
             ],
         )?;
         Ok(id)
@@ -369,11 +415,13 @@ impl History {
     pub fn insert_upload(&self, audio_path: &Path, mode: ClippyMode, device_name: &str) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        // Before the lock — see stamp_device_id's caller contract.
+        let this_device = self.stamp_device_id();
         let conn = self.inner.lock();
         conn.execute(
             r#"INSERT INTO recordings
-               (id, created_at, audio_path, mode, status, source, platform, device_name)
-               VALUES (?1, ?2, ?3, ?4, ?5, 'upload', 'desktop', ?6)"#,
+               (id, created_at, audio_path, mode, status, source, platform, device_name, device_id)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'upload', 'desktop', ?6, ?7)"#,
             params![
                 id,
                 now,
@@ -381,6 +429,7 @@ impl History {
                 mode_str(mode),
                 Status::Transcribing.as_str(),
                 device_name,
+                this_device,
             ],
         )?;
         Ok(id)
@@ -737,7 +786,7 @@ SELECT id, created_at, audio_path, duration_ms, mode, status,
        stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
        stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
-       platform, device_name, dirty, remote
+       platform, device_name, dirty, remote, device_id
 FROM recordings WHERE id = ?1"#;
 
 const SELECT_ALL_COLUMNS: &str = r#"
@@ -747,7 +796,7 @@ SELECT id, created_at, audio_path, duration_ms, mode, status,
        stt_provider, llm_provider,
        clippy_used, clippy_note, retry_count, error, title,
        stt_ms, cleanup_ms, total_ms, event_log, audio_captured_ms, source,
-       platform, device_name, dirty, remote
+       platform, device_name, dirty, remote, device_id
 FROM recordings"#;
 
 fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
@@ -793,6 +842,7 @@ fn row_to_recording(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recording> {
         device_name: row.get(28)?,
         dirty: row.get::<_, i32>(29)? != 0,
         remote: row.get::<_, Option<i32>>(30)?.unwrap_or(0) != 0,
+        device_id: row.get(31)?,
     })
 }
 
@@ -909,10 +959,10 @@ impl History {
                   transcript, cleaned_text, drafted_text, meeting_notes_text,
                   speaker_turns, speaker_names, is_meeting, diarization_enabled,
                   stt_provider, llm_provider,
-                  title, platform, device_name, dirty, remote, source)
+                  title, platform, device_name, device_id, dirty, remote, source)
                VALUES (?1, ?2, '', ?3, 'light', 'done',
                        ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                       ?12, ?13, ?14, ?15, ?16, 0, 1, 'mic')
+                       ?12, ?13, ?14, ?15, ?16, ?17, 0, 1, 'mic')
                ON CONFLICT(id) DO UPDATE SET
                  transcript   = excluded.transcript,
                  cleaned_text = excluded.cleaned_text,
@@ -927,6 +977,7 @@ impl History {
                  title        = excluded.title,
                  platform     = excluded.platform,
                  device_name  = excluded.device_name,
+                 device_id    = excluded.device_id,
                  duration_ms  = excluded.duration_ms,
                  dirty        = 0,
                  remote       = 1"#,
@@ -947,6 +998,7 @@ impl History {
                 note.title,
                 note.platform,
                 note.device_name,
+                note.device_id,
             ],
         )?;
         Ok(true)

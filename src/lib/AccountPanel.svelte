@@ -8,6 +8,8 @@
   import { api } from "./api";
   import { account } from "./account-store.svelte";
   import { settings } from "./settings-store.svelte";
+  import { fleet } from "./fleet-store.svelte";
+  import { DEVICE_ICONS, deviceGlyph, deviceDisplayName, lastSeenLabel } from "./device-icons";
 
   // `compact` trims the chrome for the onboarding step (no card border/title).
   let { compact = false } = $props<{ compact?: boolean }>();
@@ -22,6 +24,10 @@
 
   let deviceName = $state("");
   let deviceSaved = $state(false);
+  /** Which device's icon picker is open, by id. Only one at a time. */
+  let iconPickerFor = $state<string | null>(null);
+  /** Inline rename buffer, keyed by device id. */
+  let labelDraft = $state<Record<string, string>>({});
   let now = $state(Date.now());
 
   let configured = $derived(account.status.configured);
@@ -36,6 +42,7 @@
     await settings.init();
     await account.init();
     deviceName = settings.s.device_name || "";
+    void fleet.subscribe();
     tick = setInterval(() => (now = Date.now()), 30_000);
   });
   onDestroy(() => {
@@ -92,6 +99,28 @@
       error = `${e}`;
     } finally {
       busy = false;
+    }
+  }
+
+  async function pickIcon(deviceId: string, icon: string | null) {
+    iconPickerFor = null;
+    try {
+      const current = fleet.byId(deviceId);
+      await fleet.setMeta(deviceId, icon, current?.label ?? null);
+    } catch {
+      /* the store restores the previous value and records the error */
+    }
+  }
+
+  async function saveLabel(deviceId: string) {
+    const current = fleet.byId(deviceId);
+    const next = (labelDraft[deviceId] ?? "").trim();
+    try {
+      await fleet.setMeta(deviceId, current?.icon ?? null, next || null);
+      delete labelDraft[deviceId];
+      labelDraft = { ...labelDraft };
+    } catch {
+      /* ditto */
     }
   }
 
@@ -241,6 +270,91 @@
         </div>
         <span class="field-hint">Shown on your transcripts so you can tell which device made each one.</span>
       </label>
+
+      <!-- My devices. The registry has existed since v3.0.0 but was never
+           surfaced; without it there was no way to see what was signed in,
+           and no way to tell two machines apart on a history card. -->
+      <div class="devices-block">
+        <div class="devices-head">
+          <span class="field-label">My devices</span>
+          {#if fleet.devices.length > 0}
+            <span class="devices-count">{fleet.devices.length}</span>
+          {/if}
+        </div>
+        <span class="field-hint">
+          Give each machine an icon and a name you'd actually recognise. The icon shows
+          on every transcript from that device.
+        </span>
+
+        {#if fleet.devices.length === 0}
+          <p class="devices-empty">
+            {fleet.loading ? "Looking for your devices…" : "No devices registered yet — they appear after the first sync."}
+          </p>
+        {:else}
+          <ul class="devices-list">
+            {#each fleet.devices as dev (dev.id)}
+              <li class="device" class:mine={dev.this_device}>
+                <button
+                  class="device-icon"
+                  onclick={() => (iconPickerFor = iconPickerFor === dev.id ? null : dev.id)}
+                  aria-haspopup="true"
+                  aria-expanded={iconPickerFor === dev.id}
+                  title="Choose an icon for this device"
+                >{deviceGlyph(dev.icon, dev.platform)}</button>
+
+                <div class="device-main">
+                  <div class="device-name">
+                    {deviceDisplayName(dev)}
+                    {#if dev.this_device}<span class="device-you">this device</span>{/if}
+                  </div>
+                  <div class="device-sub">
+                    {dev.platform ?? "unknown"}
+                    {#if lastSeenLabel(dev.last_seen_at)}
+                      · last seen {lastSeenLabel(dev.last_seen_at)}
+                    {/if}
+                    <!-- Only ever said of ANOTHER device. This machine's
+                         numbers are read locally and are always available,
+                         whether or not it has pushed a rollup yet — saying
+                         "not reporting" about the computer you are sitting
+                         at reads as a fault when nothing is wrong. -->
+                    {#if !dev.stats && !dev.this_device}
+                      · not reporting yet
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="device-rename">
+                  <input
+                    type="text"
+                    placeholder={dev.name ?? "Name this device"}
+                    value={labelDraft[dev.id] ?? dev.label ?? ""}
+                    oninput={(e) => (labelDraft = { ...labelDraft, [dev.id]: e.currentTarget.value })}
+                    onkeydown={(e) => { if (e.key === "Enter") saveLabel(dev.id); }}
+                  />
+                  {#if labelDraft[dev.id] !== undefined && labelDraft[dev.id] !== (dev.label ?? "")}
+                    <button class="btn secondary tiny" onclick={() => saveLabel(dev.id)}>Save</button>
+                  {/if}
+                </div>
+
+                {#if iconPickerFor === dev.id}
+                  <div class="icon-picker" role="group" aria-label="Device icons">
+                    {#each DEVICE_ICONS as ico (ico.id)}
+                      <button
+                        class="icon-opt"
+                        class:chosen={dev.icon === ico.id}
+                        title={ico.label}
+                        aria-label={ico.label}
+                        onclick={() => pickIcon(dev.id, ico.id)}
+                      >{ico.glyph}</button>
+                    {/each}
+                    <button class="icon-opt clear" title="No icon" onclick={() => pickIcon(dev.id, null)}>✕</button>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
 
       <div class="actions-row">
         <button class="btn secondary" onclick={syncNow} disabled={account.sync.state === "syncing"}>
@@ -584,6 +698,160 @@
     color: var(--text-secondary);
     margin-top: 6px;
     line-height: 1.4;
+  }
+
+  /* ── My devices ─────────────────────────────────────────────────────── */
+  .devices-block {
+    margin-top: 22px;
+  }
+  .devices-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .devices-count {
+    font-size: 10px;
+    color: var(--text-secondary);
+    background: var(--bg-subtle);
+    padding: 1px 7px;
+    border-radius: 9999px;
+  }
+  .devices-empty {
+    margin: 12px 0 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .devices-list {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .device {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-card);
+  }
+  .device.mine {
+    border-color: color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+    background: color-mix(in srgb, var(--accent-fade) 26%, var(--bg-card));
+  }
+  .device-icon {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    line-height: 1;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-subtle);
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .device-icon:hover {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+  }
+  .device-main {
+    min-width: 0;
+  }
+  .device-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .device-you {
+    margin-left: 7px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+  .device-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .device-rename {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .device-rename input {
+    width: 150px;
+    font-size: 12px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: inherit;
+  }
+  .btn.tiny {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+  /* The picker spans the full row underneath, so a 10-icon grid never
+     squeezes the name column. */
+  .icon-picker {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 10px;
+    margin-top: 2px;
+    border-top: 1px dashed var(--border-subtle);
+  }
+  .icon-opt {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-surface);
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .icon-opt:hover {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+  }
+  .icon-opt.chosen {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    box-shadow: 0 0 0 2px var(--accent-fade);
+  }
+  .icon-opt.clear {
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+
+  @media (max-width: 620px) {
+    .device {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    .device-rename {
+      grid-column: 1 / -1;
+    }
+    .device-rename input {
+      width: 100%;
+    }
   }
 
   .actions-row {

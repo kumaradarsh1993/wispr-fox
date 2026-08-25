@@ -53,7 +53,9 @@ pub struct SyncEngine {
 }
 
 static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-fn http() -> reqwest::Client {
+/// Shared connection pool. `pub(super)` so `fleet` reuses this exact client
+/// rather than building a second pool with different timeouts.
+pub(super) fn http() -> reqwest::Client {
     HTTP.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -156,7 +158,67 @@ impl SyncEngine {
         if let Err(e) = self.sync_settings(&token).await {
             tracing::warn!("sync: settings (API key) sync failed (non-fatal): {e:#}");
         }
+        // Fleet (device registry + per-device analytics) is presentation-only:
+        // it must never fail a cycle that already delivered the transcripts
+        // that actually matter.
+        if let Err(e) = self.sync_fleet(&token).await {
+            tracing::warn!("sync: fleet sync failed (non-fatal): {e:#}");
+        }
         Ok(())
+    }
+
+    /// Publish this device's analytics rollup, then re-read the whole fleet.
+    async fn sync_fleet(&self, token: &str) -> anyhow::Result<()> {
+        let device_id = self.device_id();
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("fleet sync: not signed in"))?;
+        super::fleet::push_stats(&self.history, token, &user_id, &device_id).await?;
+        super::fleet::pull_fleet(&self.history, token, &device_id).await?;
+        // Insights listens for this and re-reads the merged numbers, so a
+        // second device's totals appear without needing a restart.
+        let _ = self.app.emit("wispr:fleet_changed", ());
+        Ok(())
+    }
+
+    /// Assemble the fleet on demand (Settings -> Account opening, or the user
+    /// pressing Sync now). Falls back to the local cache when offline.
+    pub async fn fleet_now(&self) -> Vec<super::fleet::FleetDevice> {
+        let device_id = self.device_id();
+        if let Ok(token) = auth::ensure_access_token().await {
+            if let Ok(list) = super::fleet::pull_fleet(&self.history, &token, &device_id).await {
+                return list;
+            }
+        }
+        super::fleet::cached_fleet(&self.history)
+    }
+
+    /// Assign an icon / label to any device in the account.
+    pub async fn set_device_meta(
+        &self,
+        device_id: &str,
+        meta: &super::fleet::DeviceMeta,
+    ) -> anyhow::Result<Vec<super::fleet::FleetDevice>> {
+        let token = auth::ensure_access_token().await?;
+        let user_id = auth::current_user()
+            .map(|u| u.user_id)
+            .ok_or_else(|| anyhow::anyhow!("device meta: not signed in"))?;
+        super::fleet::put_device_meta(&token, &user_id, device_id, meta).await?;
+        let this = self.device_id();
+        let list = super::fleet::pull_fleet(&self.history, &token, &this).await?;
+        let _ = self.app.emit("wispr:fleet_changed", ());
+        Ok(list)
+    }
+
+    /// The locally cached fleet, with no network access at all.
+    pub fn fleet_cached(&self) -> Vec<super::fleet::FleetDevice> {
+        super::fleet::cached_fleet(&self.history)
+    }
+
+    /// Borrow the history handle. Used by sign-out to clear fleet caches that
+    /// belong to the session being ended.
+    pub fn history_ref(&self) -> &crate::history::History {
+        &self.history
     }
 
     async fn register_device(&self, token: &str) -> anyhow::Result<()> {

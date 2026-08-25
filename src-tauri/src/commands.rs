@@ -488,8 +488,60 @@ pub fn cancel_google_sign_in() {
 #[tauri::command]
 pub async fn sign_out(app: AppHandle) -> Result<AuthStatus, String> {
     crate::sync::auth::sign_out().await;
+    // Drop the cached fleet with the session. Without this, signing out and
+    // into a DIFFERENT account shows the previous account's device list until
+    // the first sync lands.
+    if let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() {
+        crate::sync::fleet::clear_cache(engine.history_ref());
+    }
     emit_auth_status(&app);
     Ok(auth_status())
+}
+
+/// Every device signed into this account, with its assigned icon/label and
+/// its published analytics. Hits the network; falls back to the local cache
+/// when offline so Settings still renders something truthful.
+#[tauri::command]
+pub async fn list_devices(app: AppHandle) -> Result<Vec<crate::sync::fleet::FleetDevice>, String> {
+    let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() else {
+        return Ok(Vec::new());
+    };
+    let engine = engine.inner().clone();
+    Ok(engine.fleet_now().await)
+}
+
+/// The cached fleet with no network round-trip — for painting the UI on mount
+/// before `list_devices` resolves.
+#[tauri::command]
+pub fn list_devices_cached(app: AppHandle) -> Vec<crate::sync::fleet::FleetDevice> {
+    app.try_state::<crate::sync::engine::SyncEngine>()
+        .map(|e| e.fleet_cached())
+        .unwrap_or_default()
+}
+
+/// Assign an icon and/or display label to any device in the account (not just
+/// this one — the user is as likely to label the laptop from the desktop).
+#[tauri::command]
+pub async fn set_device_meta(
+    app: AppHandle,
+    device_id: String,
+    icon: Option<String>,
+    label: Option<String>,
+) -> Result<Vec<crate::sync::fleet::FleetDevice>, String> {
+    let Some(engine) = app.try_state::<crate::sync::engine::SyncEngine>() else {
+        return Err("sync is not configured in this build".to_string());
+    };
+    let engine = engine.inner().clone();
+    // Empty strings from a cleared text field mean "unset", not "set to
+    // empty" — otherwise clearing a label leaves a blank name on the card.
+    let meta = crate::sync::fleet::DeviceMeta {
+        icon: icon.filter(|s| !s.trim().is_empty()),
+        label: label.filter(|s| !s.trim().is_empty()),
+    };
+    engine
+        .set_device_meta(&device_id, &meta)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Manual "Sync now" from Settings → Account.

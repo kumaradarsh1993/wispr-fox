@@ -1,19 +1,73 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { statsStore } from "$lib/stats-store.svelte";
-  import { TYPING_WPM, fmtDuration, fmtDurationLong, fmtNum, type DayPoint } from "$lib/stats";
+  import { fleet, mergeSummaries } from "$lib/fleet-store.svelte";
+  import { deviceGlyph, deviceDisplayName } from "$lib/device-icons";
+  import { deriveStats, TYPING_WPM, fmtDuration, fmtDurationLong, fmtNum, type DayPoint } from "$lib/stats";
 
   // Chart window + which metric the bars show.
   let windowDays = $state<7 | 30 | 90>(30);
   type Metric = "words" | "time" | "sessions";
   let metric = $state<Metric>("words");
 
+  // "All devices" vs just this one. Defaults to the merged view: the whole
+  // point is that a per-install number was never the number the user wanted —
+  // two machines reported two different "since" dates and two different
+  // totals, and neither was the truth about their dictation.
+  let scope = $state<"all" | "mine">("all");
+
   onMount(() => {
     statsStore.subscribe();
+    void fleet.subscribe();
   });
 
-  let d = $derived(statsStore.derived(windowDays));
+  // The merged summary needs THIS device's own numbers too. The published
+  // rollup is trimmed to 180 days and only refreshes on sync, so for this
+  // device we always prefer the live local summary — otherwise today's
+  // dictation would not appear until the next sync cycle.
+  let mergedSummary = $derived.by(() => {
+    const local = statsStore.summary;
+    const others = fleet.devices
+      .filter((dev) => !dev.this_device && dev.stats)
+      .map((dev) => dev.stats!);
+    if (others.length === 0) return local;
+    return mergeSummaries(local ? [local, ...others] : others);
+  });
+
+  let activeSummary = $derived(scope === "mine" ? statsStore.summary : mergedSummary);
+  let d = $derived(activeSummary ? deriveStats(activeSummary, windowDays) : null);
   let voice = $derived(statsStore.voice);
+
+  // Only offer the scope switch once a second device has actually reported.
+  // A toggle whose two positions show identical numbers is worse than no
+  // toggle at all.
+  let otherReporting = $derived(
+    fleet.devices.filter((dev) => !dev.this_device && dev.stats),
+  );
+  let showScope = $derived(otherReporting.length > 0);
+
+  // Devices signed in but not publishing analytics yet (older client, or not
+  // synced since this shipped). Surfaced honestly rather than silently
+  // dropped, so a missing machine doesn't read as lost data.
+  let silentDevices = $derived(
+    fleet.devices.filter((dev) => !dev.this_device && !dev.stats),
+  );
+
+  /** Per-device lifetime totals for the breakdown strip. */
+  let perDevice = $derived.by(() => {
+    const rows = fleet.devices.map((dev) => ({
+      id: dev.id,
+      name: deviceDisplayName(dev),
+      glyph: deviceGlyph(dev.icon, dev.platform),
+      thisDevice: dev.this_device,
+      // Same reasoning as mergedSummary: live numbers for this machine.
+      summary: dev.this_device ? (statsStore.summary ?? dev.stats) : dev.stats,
+    }));
+    return rows
+      .filter((r) => r.summary)
+      .map((r) => ({ ...r, words: r.summary!.total_words, sessions: r.summary!.total_sessions }))
+      .sort((a, b) => b.words - a.words);
+  });
 
   function metricVal(p: DayPoint): number {
     return metric === "words" ? p.words : metric === "time" ? p.dictation_ms : p.sessions;
@@ -48,15 +102,49 @@
 
 <div class="stats-page">
   <header class="stats-header">
-    <div>
-      <p class="wf-kicker">A view from the hill</p>
-      <h1 class="wf-page-title">Your voice, in motion</h1>
-      {#if d?.firstDay}
-        <p class="subtle">Since {sinceLabel(d.firstDay)} · these totals are kept forever, even after recordings are cleared.</p>
-      {:else}
-        <p class="subtle">Time saved, words, and streaks — kept forever, even after recordings are cleared.</p>
+    <div class="stats-header-row">
+      <div>
+        <p class="wf-kicker">A view from the hill</p>
+        <h1 class="wf-page-title">Your voice, in motion</h1>
+        {#if d?.firstDay}
+          <p class="subtle">
+            Since {sinceLabel(d.firstDay)}
+            {#if scope === "all" && showScope}· across {perDevice.length} devices{/if}
+            · these totals are kept forever, even after recordings are cleared.
+          </p>
+        {:else}
+          <p class="subtle">Time saved, words, and streaks — kept forever, even after recordings are cleared.</p>
+        {/if}
+      </div>
+
+      <!-- Scope switch. Hidden entirely on a single-device account, where
+           both positions would show the same numbers. -->
+      {#if showScope}
+        <div class="seg scope-seg" role="group" aria-label="Which devices to count">
+          <button
+            class="seg-btn"
+            class:active={scope === "all"}
+            onclick={() => (scope = "all")}
+            title="Every device signed into this account"
+          >All devices</button>
+          <button
+            class="seg-btn"
+            class:active={scope === "mine"}
+            onclick={() => (scope = "mine")}
+            title="Only what you dictated on this computer"
+          >This device</button>
+        </div>
       {/if}
     </div>
+
+    {#if scope === "all" && silentDevices.length > 0}
+      <p class="scope-note">
+        {silentDevices.length} other device{silentDevices.length === 1 ? " is" : "s are"} signed in but
+        {silentDevices.length === 1 ? "hasn't" : "haven't"} reported yet —
+        {silentDevices.length === 1 ? "its" : "their"} numbers will fold in after
+        {silentDevices.length === 1 ? "it syncs" : "they sync"}.
+      </p>
+    {/if}
   </header>
 
   {#if !d || d.totalSessions === 0}
@@ -105,6 +193,28 @@
       </div>
     </section>
 
+    {#if showScope}
+      <!-- Per-device split. The merged headline answers "how much have I
+           dictated"; this answers "and where from", which is the question
+           the merge would otherwise erase. -->
+      <section class="fleet-split" aria-label="Breakdown by device">
+        {#each perDevice as row (row.id)}
+          {@const share = d && d.totalWords > 0 ? Math.round((row.words / d.totalWords) * 100) : 0}
+          <article class="fleet-row" class:mine={row.thisDevice}>
+            <span class="fleet-glyph" aria-hidden="true">{row.glyph}</span>
+            <span class="fleet-name">
+              {row.name}{#if row.thisDevice}<span class="fleet-you"> · this device</span>{/if}
+            </span>
+            <span class="fleet-bar" aria-hidden="true">
+              <span class="fleet-bar-fill" style="width: {scope === 'all' ? share : 100}%"></span>
+            </span>
+            <span class="fleet-num">{fmtNum(row.words)} words</span>
+            <span class="fleet-sub">{fmtNum(row.sessions)} sessions</span>
+          </article>
+        {/each}
+      </section>
+    {/if}
+
     {#if voice}
       <section class="voice-block">
         <div class="voice-heading">
@@ -113,7 +223,8 @@
             <h2>Voice signature</h2>
             <p>
               Based on {voice.sessions} retained microphone session{voice.sessions === 1 ? "" : "s"}
-              and {fmtNum(voice.words)} raw words. Uploads, meeting speakers, and AI-polished text are excluded.
+              and {fmtNum(voice.words)} raw words {#if showScope}<strong>on this device only</strong>{/if}.
+              Uploads, meeting speakers, and AI-polished text are excluded.
             </p>
           </div>
           <div class="signature-tags" aria-label="Voice signature summary">
@@ -226,6 +337,91 @@
 
   .stats-header {
     padding: 4px 2px 2px;
+  }
+  .stats-header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .scope-seg {
+    flex-shrink: 0;
+    margin-top: 6px;
+  }
+  .scope-note {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  /* ── Per-device breakdown ─────────────────────────────────────────────
+     A quiet table, not a second chart: the merged headline above is the
+     story, this is the footnote that says where it came from. */
+  .fleet-split {
+    margin-top: 16px;
+    display: grid;
+    gap: 6px;
+  }
+  .fleet-row {
+    display: grid;
+    grid-template-columns: 20px minmax(90px, 1.1fr) minmax(60px, 2fr) auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  }
+  .fleet-row.mine {
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--border-subtle));
+    background: color-mix(in srgb, var(--accent-fade) 30%, var(--bg-card));
+  }
+  .fleet-glyph {
+    font-size: 13px;
+    line-height: 1;
+    text-align: center;
+  }
+  .fleet-name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fleet-you {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .fleet-bar {
+    display: block;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--bg-subtle);
+    overflow: hidden;
+    min-width: 0;
+  }
+  .fleet-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--accent);
+    opacity: 0.75;
+  }
+  .fleet-num {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .fleet-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .stats-header h1 {
     margin-bottom: 5px;
@@ -587,6 +783,17 @@
   @container stats (max-width: 720px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
     .hero-fox { display: none; }
+  }
+
+  @container stats (max-width: 700px) {
+    /* Drop the proportion bar first — it is the most decorative column, and
+       the numbers either side of it carry the same information. */
+    .fleet-row {
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      row-gap: 2px;
+    }
+    .fleet-bar { display: none; }
+    .fleet-sub { grid-column: 2 / -1; }
   }
 
   @container stats (max-width: 560px) {

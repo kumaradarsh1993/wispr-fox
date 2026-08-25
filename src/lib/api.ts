@@ -126,6 +126,22 @@ export interface AppSettings {
 }
 
 /** Account / sync status (accounts + cross-device sync, v3.0.0). */
+/** One device signed into this account, as assembled by
+ *  `src-tauri/src/sync/fleet.rs`. `stats` is null for a device that has not
+ *  published a rollup yet (an older client, or one that hasn't synced since
+ *  the fleet feature shipped) — render "not reporting yet", never a zero. */
+export interface FleetDevice {
+  id: string;
+  name: string | null;
+  platform: string | null;
+  created_at: string | null;
+  last_seen_at: string | null;
+  icon: string | null;
+  label: string | null;
+  this_device: boolean;
+  stats: StatsSummary | null;
+}
+
 export interface AuthStatus {
   /** Whether this build has a real Supabase project baked in. When false the
    *  account UI shows "Sync not configured in this build" and behaves as
@@ -453,6 +469,15 @@ export const api = {
   configureCues: (start: string, stop: string, enabled: boolean) =>
     invoke<void>("configure_cues", { start, stop, enabled }),
   // macOS auto-paste permission (Accessibility). Always true off-macOS.
+  /** Every device on this account. Hits the network; falls back to the local
+   *  cache when offline. */
+  listDevices: () => invoke<FleetDevice[]>("list_devices"),
+  /** Cached fleet, no network — paints the UI before listDevices resolves. */
+  listDevicesCached: () => invoke<FleetDevice[]>("list_devices_cached"),
+  /** Assign an icon and/or display label to ANY device on the account.
+   *  Returns the refreshed fleet. Pass null to clear a field. */
+  setDeviceMeta: (deviceId: string, icon: string | null, label: string | null) =>
+    invoke<FleetDevice[]>("set_device_meta", { deviceId, icon, label }),
   accessibilityOk: () => invoke<boolean>("accessibility_ok"),
   openAccessibilitySettings: () =>
     invoke<void>("open_accessibility_settings"),

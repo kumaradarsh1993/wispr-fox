@@ -8,6 +8,7 @@
   import DeleteDialog from "$lib/DeleteDialog.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { account } from "$lib/account-store.svelte";
+  import { fleet } from "$lib/fleet-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
 
   let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
@@ -33,6 +34,9 @@
     history.refresh();
     history.subscribe();
     account.init();
+    // Device identities for the per-card chips. Best-effort: signed out, this
+    // resolves to an empty fleet and the chips simply never render.
+    void fleet.subscribe();
 
     // Window-wide drag-and-drop. Tauri delivers real filesystem paths here
     // (HTML5 drag-drop in a webview can't see them), so this is the reliable
