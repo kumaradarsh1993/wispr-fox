@@ -3,6 +3,7 @@
   import { history } from "./history-store.svelte";
   import { settings } from "./settings-store.svelte";
   import { LLM_PROVIDERS, STT_PROVIDERS, llmModelsFor, llmReady, sttModelsFor, sttReady } from "./provider-options";
+  import { askConfirm } from "./dialogs";
 
   let { open = $bindable(false), rec } = $props<{ open?: boolean; rec: Recording }>();
   let transcribe = $state(false), diarize = $state(false), cleanup = $state(false), draft = $state(false), meeting = $state(false);
@@ -50,7 +51,7 @@
 
   async function run() {
     if (!ready || !(transcribe || cleanup || draft || meeting)) return;
-    if (transcribe && rec.transcript && !confirm("Replace the current transcript and run the selected follow-up steps?")) return;
+    if (transcribe && rec.transcript && !(await askConfirm("Replace the current transcript and run the selected follow-up steps?"))) return;
     running = true; error = "";
     try {
       if (transcribe) { stage = "Transcribing..."; await api.rerunTranscription(rec.id, sttProvider, sttModel, diarize); }

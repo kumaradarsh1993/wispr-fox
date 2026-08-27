@@ -2278,7 +2278,10 @@ impl Flow {
                     None,
                     llm.as_ref(),
                     if do_meeting_notes {
-                        clippy::ON_DEMAND_TIMEOUT
+                        // Scaled to the transcript: a 40-minute call blows
+                        // straight past a flat 90s, and the fallback on
+                        // timeout is to hand back the raw transcript.
+                        clippy::on_demand_timeout_for(&transcript.text)
                     } else {
                         llm.timeout_hint()
                     },
@@ -2441,7 +2444,7 @@ impl Flow {
             custom.as_deref(),
             None,
             llm.as_ref(),
-            clippy::ON_DEMAND_TIMEOUT,
+            clippy::on_demand_timeout_for(transcript),
         )
         .await;
         self.usage
@@ -2596,7 +2599,7 @@ impl Flow {
                 custom.as_deref(),
                 None,
                 llm.as_ref(),
-                clippy::ON_DEMAND_TIMEOUT,
+                clippy::on_demand_timeout_for(&transcript.text),
             )
             .await;
             let clean_elapsed = clean_t0.elapsed().as_millis() as i64;
