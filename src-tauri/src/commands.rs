@@ -965,59 +965,6 @@ pub fn app_paths(app: AppHandle) -> Result<AppPaths, String> {
     })
 }
 
-/// Tiny semver-ish comparator. Splits on `.` and `-`, compares dotted numeric
-/// parts first then any pre-release suffix lexicographically. Enough for our
-/// "1.1.0-nightly.5 vs 1.1.0-nightly.6" comparisons; not a full semver
-/// implementation.
-pub fn version_is_newer(current: &str, candidate: &str) -> bool {
-    fn parts(v: &str) -> (Vec<u32>, &str) {
-        let (head, tail) = v.split_once('-').unwrap_or((v, ""));
-        let nums: Vec<u32> = head.split('.').filter_map(|s| s.parse().ok()).collect();
-        (nums, tail)
-    }
-    fn compare_prerelease(a: &str, b: &str) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        let mut aa = a.split('.');
-        let mut bb = b.split('.');
-        loop {
-            match (aa.next(), bb.next()) {
-                (None, None) => return Ordering::Equal,
-                (None, Some(_)) => return Ordering::Less,
-                (Some(_), None) => return Ordering::Greater,
-                (Some(x), Some(y)) => {
-                    let ord = match (x.parse::<u32>(), y.parse::<u32>()) {
-                        (Ok(xn), Ok(yn)) => xn.cmp(&yn),
-                        _ => x.cmp(y),
-                    };
-                    if ord != Ordering::Equal {
-                        return ord;
-                    }
-                }
-            }
-        }
-    }
-    let (cnums, ctail) = parts(current);
-    let (lnums, ltail) = parts(candidate);
-    let max_len = cnums.len().max(lnums.len());
-    for i in 0..max_len {
-        let c = cnums.get(i).copied().unwrap_or(0);
-        let l = lnums.get(i).copied().unwrap_or(0);
-        if l > c {
-            return true;
-        }
-        if l < c {
-            return false;
-        }
-    }
-    // Dotted-numeric parts equal — fall through to pre-release suffix.
-    // Per semver 11: NO suffix beats ANY suffix (1.0.0 > 1.0.0-rc.1).
-    match (ctail.is_empty(), ltail.is_empty()) {
-        (false, true) => true,   // current is a pre-release, latest is stable → newer
-        (true, false) => false,  // current is stable, latest is pre-release → not newer
-        _ => compare_prerelease(ltail, ctail).is_gt(),
-    }
-}
-
 /// Reveal a wispr-fox folder in the OS file manager. `kind` is one of:
 ///   "audio"   → %APPDATA%/com.wispr-fox.app/audio/
 ///   "sounds"  → %APPDATA%/com.wispr-fox.app/sounds/

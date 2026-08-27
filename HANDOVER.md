@@ -9,6 +9,30 @@
 > desktop candidate is `v3.4.0-nightly.1`. **`v3.3.0-nightly.2` is burned — it
 > froze on the first hotkey press; do not install or test it.**)
 
+## 2026-08-27 — one update module, shared across all four Fox desktop apps
+
+`docs/UPDATES.md` is the contract; **the same `src-tauri/src/updates.rs` and the
+same `UpdatePanel.svelte` now ship in wispr-fox, FoxCull, Fox MD and Fox Mark**,
+differing only in three constants. Fix a bug in one, copy it to the other three.
+
+What it buys: two channels visible at once, and on Windows an Install button
+that downloads, runs the NSIS installer **silently** (`/S /R`) and relaunches —
+no wizard, no uninstall/reinstall. macOS and Linux download and open, which is as
+far as an unsigned build can honestly go.
+
+Three things that will silently break it, all documented in `docs/UPDATES.md`:
+a nightly published as a **draft** is invisible to the API; a **renamed CI
+artifact** degrades Install to "no installer for this platform" rather than
+erroring; and a **string-compare** version check sorts `nightly.10` below
+`nightly.9`. The last two are pinned by `md-reader/tools/updates-selftest`, which
+slices the real `updates.rs` rather than restating it — 9/9 passing.
+
+Local to this repo: the old `src-tauri/src/updater.rs` is gone, `commands.rs`
+lost its duplicate `version_is_newer`, and Settings → About is now a thin frame
+around the shared panel. The event renamed from `wispr:update_progress` to
+`update://progress`.
+
+
 ## Where we are (2026-08-25)
 
 **`v3.3.0` promoted to stable** on the user's explicit signal — the five v3.3

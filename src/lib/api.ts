@@ -277,40 +277,6 @@ export interface SecretAuditEvent {
   detail: string;
 }
 
-/** One release as the About screen shows it. */
-export interface ReleaseInfo {
-  tag: string;
-  version: string;
-  html_url: string;
-  published_at: string | null;
-  prerelease: boolean;
-  /** Newer than the running build. */
-  newer: boolean;
-  /** Installer for THIS platform. Null means the release shipped nothing we
-   *  can install here — offer the release page, not an Install button. */
-  asset: { name: string; url: string; size: number } | null;
-  summary: string | null;
-}
-
-export interface UpdateStatus {
-  current: string;
-  current_is_nightly: boolean;
-  stable: ReleaseInfo | null;
-  /** Only set when a pre-release is NEWER than the newest stable. */
-  nightly: ReleaseInfo | null;
-  /** Whether this platform can install in place (Windows). */
-  can_self_install: boolean;
-  checked_at: string;
-}
-
-export interface UpdateProgress {
-  phase: "starting" | "downloading" | "launching";
-  downloaded: number;
-  total: number;
-  tag: string;
-}
-
-
 export interface InputDeviceInfo {
   name: string;
   is_default: boolean;
@@ -506,20 +472,10 @@ export const api = {
    *  Returns the refreshed fleet. Pass null to clear a field. */
   setDeviceMeta: (deviceId: string, icon: string | null, label: string | null) =>
     invoke<FleetDevice[]>("set_device_meta", { deviceId, icon, label }),
-  /** Both release channels at once, each compared against this build. */
-  updateStatus: () => invoke<UpdateStatus>("update_status"),
-  /** Download the installer for `tag` and hand it to the OS. On Windows the
-   *  app quits so the installer can replace locked files. */
-  downloadAndInstall: (tag: string) => invoke<string>("download_and_install", { tag }),
   accessibilityOk: () => invoke<boolean>("accessibility_ok"),
   openAccessibilitySettings: () =>
     invoke<void>("open_accessibility_settings"),
 };
-
-/** Download progress while an update is being fetched. */
-export function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<UnlistenFn> {
-  return listen<UpdateProgress>("wispr:update_progress", (e) => cb(e.payload));
-}
 
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */
 export function onFlowState(cb: (s: FlowState) => void): Promise<UnlistenFn> {

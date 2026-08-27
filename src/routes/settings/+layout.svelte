@@ -4,6 +4,7 @@
   import { page } from "$app/state";
   import { settings } from "$lib/settings-store.svelte";
   import { toast } from "$lib/settings-toast.svelte";
+  import { updates, primeUpdateCheck } from "$lib/updates.svelte";
   import "./settings.css";
 
   let { children } = $props();
@@ -37,6 +38,10 @@
 
   onMount(async () => {
     await settings.init();
+    // One unauthenticated GitHub call per app run, so the About tab can carry a
+    // dot when a newer build exists rather than waiting to be visited. Failures
+    // are silent on purpose: being offline is not news.
+    void primeUpdateCheck();
   });
 </script>
 
@@ -109,6 +114,9 @@
         >
           <span class="nav-icon">{@render navIcon(item.icon)}</span>
           <span>{item.label}</span>
+          {#if item.icon === "about" && updates.available}
+            <span class="nav-dot" title="A newer build is available"></span>
+          {/if}
         </a>
       {/each}
     </nav>
@@ -122,3 +130,13 @@
     {@render children?.()}
   </main>
 </div>
+
+<style>
+  .nav-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+</style>
