@@ -121,6 +121,13 @@ fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        // macOS: show() + set_focus() alone leave the window ordered behind the
+        // frontmost app — `is_visible()` reports true while the user sees
+        // nothing happen. Clicking the tray icon does not activate the app the
+        // way clicking a Dock icon does, so we have to ask AppKit ourselves.
+        // Without this the tray icon is simply dead on macOS.
+        #[cfg(target_os = "macos")]
+        crate::macos_activate_app();
     }
 }
 
@@ -142,6 +149,10 @@ pub fn toggle_main(app: &AppHandle) {
             let _ = w.show();
             let _ = w.unminimize();
             let _ = w.set_focus();
+            // Same activation requirement as show_main — this is the path the
+            // tray left-click and the show/hide hotkey both take.
+            #[cfg(target_os = "macos")]
+            crate::macos_activate_app();
         }
     }
 }

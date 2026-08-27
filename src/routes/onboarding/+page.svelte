@@ -341,6 +341,30 @@
   let unlistenState: (() => void) | null = null;
   let unlistenMicDiag: (() => void) | null = null;
   let unlistenSecrets: (() => void) | null = null;
+
+  // macOS auto-paste needs the Accessibility permission (CGEvent injection and
+  // the Cmd+V fallback both require it). Onboarding never mentioned this, so a
+  // first dictation appeared to work — the transcript was correct — while the
+  // text silently landed on the clipboard instead of the focused app, with
+  // nothing on screen explaining why. Always true off-macOS.
+  let a11yOk = $state(true);
+  let onWindowFocus: (() => void) | null = null;
+
+  async function refreshA11y() {
+    try {
+      a11yOk = await api.accessibilityOk();
+    } catch {
+      a11yOk = true; // fail open — never block onboarding on a failed check
+    }
+  }
+
+  async function openA11ySettings() {
+    try {
+      await api.openAccessibilitySettings();
+    } catch (e) {
+      console.warn("could not open Accessibility settings", e);
+    }
+  }
   onMount(async () => {
     await settings.init();
     // If user already has keys saved, just mark it — the welcome screen
@@ -380,12 +404,20 @@
       micDiag = e.payload;
     });
 
+    // The grant is made in System Settings, not here, so the only reliable
+    // signal that it happened is the user coming back to this window.
+    await refreshA11y();
+    onWindowFocus = () => {
+      void refreshA11y();
+    };
+    window.addEventListener("focus", onWindowFocus);
   });
 
   onDestroy(() => {
     unlistenState?.();
     unlistenMicDiag?.();
     unlistenSecrets?.();
+    if (onWindowFocus) window.removeEventListener("focus", onWindowFocus);
     stopRecCounter();
   });
 
@@ -815,6 +847,29 @@
             {/if}
           {/if}
         </div>
+
+        {#if isMac()}
+          {#if !a11yOk}
+            <div class="mic-check warn">
+              <div class="mic-check-head">
+                ⚠ Auto-paste is off — macOS needs <strong>Accessibility</strong> permission.
+              </div>
+              <p>
+                Your words are still transcribed correctly, but they can only be
+                copied to the clipboard — wispr-fox cannot type them into the app
+                you are working in until you grant this. Turn on
+                <strong>wispr-fox</strong> in the list, then come back here.
+              </p>
+              <button class="btn ghost" onclick={openA11ySettings}>
+                Open Accessibility settings
+              </button>
+            </div>
+          {:else}
+            <div class="mic-check ok">
+              ✓ Auto-paste is enabled — dictation types straight into the app you are in.
+            </div>
+          {/if}
+        {/if}
 
         <div class="tips">
           <div class="tip-row">

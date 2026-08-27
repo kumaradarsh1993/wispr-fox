@@ -166,12 +166,27 @@ class SettingsStore {
         }
       };
       if (!macDone) {
-        remap("light_hotkey", "F8", "Alt+Space");
-        remap("drafting_hotkey", "F9", "Alt+Enter");
-        remap("light_sticky_hotkey", "Super+F8", "Super+Alt+Space");
-        remap("drafting_sticky_hotkey", "Super+F9", "Super+Alt+Enter");
-        remap("force_clean_hotkey", "Shift+F8", "Shift+Alt+Space");
-        remap("force_clean_sticky_hotkey", "Shift+Super+F8", "Super+Shift+Alt+Space");
+        // macOS now ships the SAME F-key defaults as Windows, so a fresh
+        // install must keep what FALLBACK gave it and skip this remap
+        // entirely. `fromDisk === null` is exactly "nothing was ever saved
+        // on this machine", i.e. first run.
+        //
+        // The remap still runs for installs that PREDATE the platform split:
+        // those users learned ⌥Space, and silently moving a working hotkey
+        // out from under them is worse than the inconsistency. They can
+        // rebind to F8 in Settings if they want parity.
+        //
+        // Note F8/F9 are media keys on a MacBook unless "Use F1, F2, etc.
+        // keys as standard function keys" is on — Fn+F8 works regardless.
+        // That trade-off is deliberate and called out in onboarding.
+        if (fromDisk !== null) {
+          remap("light_hotkey", "F8", "Alt+Space");
+          remap("drafting_hotkey", "F9", "Alt+Enter");
+          remap("light_sticky_hotkey", "Super+F8", "Super+Alt+Space");
+          remap("drafting_sticky_hotkey", "Super+F9", "Super+Alt+Enter");
+          remap("force_clean_hotkey", "Shift+F8", "Shift+Alt+Space");
+          remap("force_clean_sticky_hotkey", "Shift+Super+F8", "Super+Shift+Alt+Space");
+        }
         try {
           await store?.set("macHotkeyMigrated", true);
           await store?.save();
