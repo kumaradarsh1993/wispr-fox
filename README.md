@@ -50,7 +50,9 @@ The app walks you through a 2-minute onboarding on first launch.
 Builds tagged **Pre-release** are nightlies: newer, less tested, and safe to skip
 unless you want to try something early. Anything not tagged Pre-release is stable.
 
-> ℹ️ **Mac first-launch:** the build isn't code-signed (Apple charges $99/yr for that). After dragging to Applications, right-click → Open the first time. If you see *"app is damaged"*, run `xattr -dr com.apple.quarantine /Applications/wispr-fox.app` once and double-click as normal.
+> ℹ️ **Mac first-launch:** the build is ad-hoc code-signed but not notarized (notarization needs Apple's $99/yr Developer Program), so Gatekeeper stops it once. Drag to Applications, double-click, click **Done** on the "cannot verify the developer" dialog, then go to **System Settings → Privacy & Security** and click **Open Anyway**. One-line equivalent: `xattr -dr com.apple.quarantine /Applications/wispr-fox.app`.
+>
+> Right-click → Open stopped working as a Gatekeeper bypass in macOS 15 (Sequoia) — use **Open Anyway**.
 
 ---
 
