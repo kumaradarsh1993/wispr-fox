@@ -6604,7 +6604,7 @@ dependencies = [
 
 [[package]]
 name = "wispr-fox"
-version = "3.4.0-nightly.5"
+version = "3.4.0-nightly.6"
 dependencies = [
  "anyhow",
  "arboard",
