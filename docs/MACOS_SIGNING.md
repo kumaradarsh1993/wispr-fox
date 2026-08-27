@@ -1,5 +1,16 @@
 # macOS code signing — making the Accessibility grant stick
 
+> **Update (v3.4.0):** CI now **ad-hoc signs** the app bundle by default
+> (`bundle.macOS.signingIdentity: "-"` in `tauri.conf.json`). That was a
+> separate, more severe bug: the bundle had no `_CodeSignature`, so macOS
+> called the app **"damaged"** and refused to open it at all, with no
+> "Open Anyway" option. That is fixed with no secrets required.
+>
+> The self-signed certificate below is still worth doing — ad-hoc signatures
+> change hash on every build, so the **Accessibility grant still resets on
+> every update** until you set up a stable identity. Setting the three
+> secrets overrides the ad-hoc default automatically.
+
 **Problem this solves:** on macOS, the Accessibility permission (the one that
 lets wispr-fox auto-paste) is tied to the app's *code-signing identity*. Our
 nightly builds were **unsigned**, so macOS identified the app by a hash that
@@ -18,8 +29,9 @@ across updates. You grant it **once** and it sticks.
   /Applications/wispr-fox.app`). That's a one-time-per-install thing and is
   separate from the Accessibility persistence this fixes.
 
-Until the three secrets below exist, CI builds **unsigned exactly as before** —
-so nothing breaks in the meantime.
+Until the three secrets below exist, CI builds are **ad-hoc signed** — valid
+bundles that Gatekeeper treats normally, but with a per-build identity, so the
+Accessibility grant still resets on each update.
 
 ---
 

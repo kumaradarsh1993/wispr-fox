@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened-runtime entitlements for the macOS bundle.
+
+    These are inert while bundle.macOS.hardenedRuntime is false (our current
+    ad-hoc signing setup adds no runtime restrictions). They exist so that
+    turning hardened runtime on - which notarization requires - does not
+    silently break dictation: under hardened runtime the microphone is denied
+    unless the audio-input entitlement is present, no matter what the user
+    grants in System Settings.
+  -->
+
+  <!-- Recording audio is the whole app. Required once hardened runtime is on. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- Pairs with NSAppleEventsUsageDescription in Info.plist; needed to drive
+       other apps for the text-injection path under hardened runtime. -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

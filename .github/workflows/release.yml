@@ -137,10 +137,15 @@ jobs:
               '',
               '**Windows.** Run the `.exe`, click through SmartScreen ("More info" → "Run anyway") on first launch since the binary isn\'t code-signed yet.',
               '',
-              '**macOS.** The build isn\'t notarized. One of two things will happen on first launch:',
+              '**macOS.** The build is code-signed (ad-hoc) but not notarized, so Gatekeeper stops it exactly once. After dragging to Applications:',
               '',
-              '- *"developer cannot be verified" dialog:* Cancel → right-click the app in Applications → Open → click Open in the new dialog.',
-              '- *"App is damaged" dialog:* open Terminal and run `xattr -dr com.apple.quarantine /Applications/wispr-fox.app`, then double-click normally.',
+              '1. Double-click wispr-fox. macOS says it *cannot verify the developer* — click **Done**.',
+              '2. Open **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to wispr-fox.',
+              '3. Confirm. It launches normally from then on.',
+              '',
+              'One-line Terminal equivalent: `xattr -dr com.apple.quarantine /Applications/wispr-fox.app`',
+              '',
+              '> Right-click → Open no longer bypasses Gatekeeper on macOS 15 (Sequoia) and newer. Use **Open Anyway** above.',
               '',
               'Then grant two permissions when prompted:',
               '1. **Microphone** (first time you press F8) — required',
@@ -242,6 +247,29 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+      # Guard against the failure that shipped in every build up to v3.4.0:
+      # tauri-bundler wrapped a linker-signed (ad-hoc) Mach-O into an .app but
+      # never signed the BUNDLE, so Contents/_CodeSignature was missing. The
+      # signature then claims sealed resources that do not exist, and macOS
+      # reports "wispr-fox is damaged and can't be opened" - a hard failure
+      # with no "Open Anyway" escape hatch. Catch it in CI, not in Downloads.
+      - name: Verify macOS bundle signature
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos \
+                  -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app bundle produced by the build"; exit 1
+          fi
+          echo "Verifying $APP"
+          if [ ! -f "$APP/Contents/_CodeSignature/CodeResources" ]; then
+            echo "::error::Missing Contents/_CodeSignature/CodeResources - Gatekeeper will call this app damaged"
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "Bundle signature verified."
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
