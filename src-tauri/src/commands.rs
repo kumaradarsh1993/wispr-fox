@@ -51,6 +51,11 @@ pub(crate) fn force_repaint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>)
         let _ = window.hide();
         let _ = window.show();
         let _ = window.set_always_on_top(true);
+        // Re-assert Space visibility too: a recovered window that only floats
+        // on the Space it was created in is still invisible to a user who has
+        // moved to a fullscreen app.
+        let _ = window.set_visible_on_all_workspaces(true);
+        crate::macos_pin_floater(window);
         return;
     }
     #[allow(unreachable_code)]

@@ -308,6 +308,13 @@ pub fn run() {
                         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                         let _ = c.show();
                         let _ = c.set_always_on_top(true);
+                        // always_on_top only floats the window WITHIN its own
+                        // Space on macOS. Without this the floater vanishes
+                        // behind a fullscreen app or on a different desktop —
+                        // it is still "on top", just not of anything you are
+                        // looking at. No Windows equivalent is needed.
+                        let _ = c.set_visible_on_all_workspaces(true);
+                        macos_pin_floater(&c);
                     });
                 }
             }
@@ -466,6 +473,8 @@ pub fn run() {
                     let _ = c.hide();
                     let _ = c.show();
                     let _ = c.set_always_on_top(true);
+                    let _ = c.set_visible_on_all_workspaces(true);
+                    macos_pin_floater(&c);
                 }
                 macos_activate_app();
             }
@@ -481,8 +490,57 @@ pub fn run() {
 /// reports `is_visible() == true`. Calling this immediately after `show()`
 /// is what makes the window actually appear on screen on a fresh M-series
 /// MacBook (reported on M4 Pro, nightly.8/9).
+/// Pin the floater above everything, including other apps' fullscreen Spaces.
+///
+/// `set_always_on_top(true)` maps to `NSFloatingWindowLevel` (3) on macOS. That
+/// only wins against ordinary windows *inside the current Space* — which is why
+/// the avatar kept disappearing behind whatever the user was actually working
+/// in. Two things are needed beyond it:
+///
+///   * **Level 25** (`NSStatusWindowLevel`) — the band menu-bar extras live in.
+///     High enough to stay above normal and floating windows, deliberately
+///     below `NSPopUpMenuWindowLevel` so it never paints over an open menu.
+///   * **Collection behavior** — `CanJoinAllSpaces` (1 << 0) makes it follow
+///     the user between desktops, and `FullScreenAuxiliary` (1 << 8) is the bit
+///     that lets a window sit over *another app's* fullscreen Space at all.
+///     Without the second flag the floater is still hidden the moment anything
+///     goes fullscreen, no matter how high its level is.
+///
+/// Windows and Linux keep their existing `always_on_top` behaviour untouched.
 #[cfg(target_os = "macos")]
-fn macos_activate_app() {
+pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    const NS_STATUS_WINDOW_LEVEL: isize = 25;
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+
+    // setLevel:/setCollectionBehavior: are main-thread-only, and one caller is
+    // a spawned tokio task (the post-show compositing kick). Marshal rather
+    // than assume — Tauri's own window methods do this internally, which is
+    // why they were safe to call from there and raw msg_send would not be.
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(ptr) = w.ns_window() else { return };
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: ns_window() hands back the live NSWindow for this webview
+        // window, and this closure is guaranteed to be on the main thread.
+        unsafe {
+            let ns_window = ptr as *mut AnyObject;
+            let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+            let _: () = msg_send![
+                ns_window,
+                setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY
+            ];
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_activate_app() {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::NSApplication;

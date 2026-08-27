@@ -325,8 +325,17 @@
   <h2 class="section-gap">Dictation keys</h2>
   <p class="lede">Bind the keys that start and stop dictation. Changes apply immediately.</p>
   {#if isMac()}
-    <p class="lede tight" title="Bare F8/F9 can be swallowed by media-key behavior unless macOS is set for standard function keys.">
-      <strong>macOS defaults to Option+Space and Option+Enter.</strong>
+    <p class="lede tight">
+      <strong>Using F8 / F9 on a MacBook:</strong> those keys are play/pause and
+      fast-forward by default, and macOS consumes them before wispr-fox sees
+      them. Two ways round it — press <kbd>Fn</kbd>+<kbd>F8</kbd>, which always
+      sends a real F8, or turn on
+      <strong>System Settings → Keyboard → Keyboard Shortcuts… → Function Keys →
+      “Use F1, F2, etc. keys as standard function keys”</strong> to make bare F8
+      work everywhere (media controls then need Fn instead).
+      Prefer a chord? Rebind below — <kbd>Control+Option+Space</kbd> is a safe
+      pick. Avoid <kbd>Option+Space</kbd> if you run Raycast or Alfred; that is
+      their default and whichever app registers first wins.
     </p>
   {/if}
   <p class="lede tight">
@@ -337,7 +346,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe <span class="hk-tag">{isMac() ? "Option+Space" : "F8"} default</span></div>
+        <div class="hk-label">Transcribe <span class="hk-tag">F8 default</span></div>
         <div class="hk-desc">Voice to text. The sidebar Clean toggle decides whether this also runs LLM cleanup.</div>
       </div>
     </div>
@@ -351,7 +360,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">{isMac() ? "Shift+Option+Space" : "Shift+F8"} default</span></div>
+        <div class="hk-label">Transcribe + force-clean <span class="hk-tag">Shift+F8 default</span></div>
         <div class="hk-desc">Runs Transcribe with cleanup on for this one dictation without changing your saved preference.</div>
       </div>
     </div>
@@ -365,7 +374,7 @@
   <div class="hotkey-block">
     <div class="hotkey-head">
       <div>
-        <div class="hk-label">Draft <span class="hk-tag">{isMac() ? "Option+Enter" : "F9"} default</span></div>
+        <div class="hk-label">Draft <span class="hk-tag">F9 default</span></div>
         <div class="hk-desc">Turns a spoken brief into polished output for email, chat, docs, or social posts.</div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "3.4.0-nightly.4"
+version = "3.4.0-nightly.5"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -13,7 +13,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png", "devtools"] }
+# `macos-private-api` backs the transparent floater window on macOS. It has to
+# live here, not in a [target.'cfg(target_os = "macos")'] block: tauri-build
+# reads this table directly, so a target-scoped feature is invisible to its
+# config/feature consistency check. The feature is INERT off-macOS — every
+# code path it unlocks inside tauri/wry is #[cfg(target_os = "macos")].
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png", "devtools", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-store = "2"
