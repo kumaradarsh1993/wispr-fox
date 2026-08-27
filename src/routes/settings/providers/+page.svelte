@@ -18,6 +18,7 @@
     sttReady,
   } from "$lib/provider-options";
   import { flash } from "$lib/settings-toast.svelte";
+  import { askConfirm } from "$lib/dialogs";
 
   type TestResult =
     | { kind: "idle" }
@@ -70,7 +71,7 @@
   }
 
   async function deleteKey(name: SecretKeyName) {
-    if (!confirm(`Delete ${name}?`)) return;
+    if (!(await askConfirm(`Delete ${name}?`))) return;
     await api.deleteSecret(name);
     await refreshSecrets();
     flash("Deleted");

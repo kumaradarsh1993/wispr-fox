@@ -9,6 +9,7 @@
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
+  import { askConfirm } from "$lib/dialogs";
 
   let defaultPrompts = $state<{ light: string; advanced: string; drafting: string; meeting: string } | null>(null);
   let meetingPromptOpen = $state(false);
@@ -32,7 +33,7 @@
   }
 
   async function resetPrompt(mode: "light" | "advanced" | "drafting") {
-    if (!confirm(`Reset the ${mode} prompt to its default? Any custom edits will be lost.`)) return;
+    if (!(await askConfirm(`Reset the ${mode} prompt to its default? Any custom edits will be lost.`))) return;
     const customField = `custom_${mode}_prompt` as keyof typeof settings.s;
     await settings.set(customField, "" as any);
     flash(`${mode} prompt reset`);
@@ -50,7 +51,7 @@
   }
 
   async function resetMeetingPrompt() {
-    if (!confirm("Reset the meeting notes prompt to its default? Any custom edits will be lost.")) return;
+    if (!(await askConfirm("Reset the meeting notes prompt to its default? Any custom edits will be lost."))) return;
     await settings.set("custom_meeting_prompt", "" as any);
     flash("Meeting notes prompt reset");
   }

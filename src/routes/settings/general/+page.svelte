@@ -6,6 +6,7 @@
   import { api } from "$lib/api";
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
+  import { showMessage } from "$lib/dialogs";
 
   async function setNumber<K extends keyof typeof settings.s>(key: K, value: number) {
     await settings.set(key, value as (typeof settings.s)[K]);
@@ -112,7 +113,7 @@
         flash("Sound added");
       }
     } catch (e) {
-      alert(`Upload failed: ${e}`);
+      await showMessage(`Upload failed: ${e}`);
     }
   }
 

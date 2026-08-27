@@ -10,6 +10,7 @@
   import { account } from "$lib/account-store.svelte";
   import { fleet } from "$lib/fleet-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
+  import { showMessage } from "$lib/dialogs";
 
   let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
   let search = $state("");
@@ -175,7 +176,7 @@
     try {
       await api.revealFolder("audio");
     } catch (e) {
-      alert(`Could not open folder: ${e}`);
+      await showMessage(`Could not open folder: ${e}`);
     }
   }
 </script>

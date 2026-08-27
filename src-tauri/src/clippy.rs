@@ -24,6 +24,32 @@ pub struct CleanedTranscript {
 /// a button and is watching a spinner — so we trade latency for actually
 /// getting an answer, and give even a slow reasoning model room to finish.
 pub const ON_DEMAND_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Upper bound for [`on_demand_timeout_for`]. Long enough for a 40-minute
+/// meeting, short enough that a genuinely wedged request still surfaces.
+const ON_DEMAND_TIMEOUT_MAX: Duration = Duration::from_secs(6 * 60);
+
+/// Characters of input per extra 30s of deadline.
+const TIMEOUT_SCALE_CHARS: usize = 8_000;
+
+/// Deadline scaled to the size of the transcript.
+///
+/// A flat 90s is fine for a dictation clip and far too short for a meeting:
+/// a 40-minute call transcribes to tens of thousands of characters, and
+/// summarising that reliably runs past 90s. When it does, [`clean_with_timeout`]
+/// hands back the RAW TRANSCRIPT — so the user sees the feature "return the
+/// input unchanged" rather than an error, which is precisely how the
+/// meeting-notes bug was reported.
+///
+/// Scaling on input length keeps short dictations snappy (they still fail fast
+/// at 90s, which matters because a paste may be waiting) while giving long
+/// transcripts the room they actually need.
+pub fn on_demand_timeout_for(text: &str) -> Duration {
+    let extra = (text.len() / TIMEOUT_SCALE_CHARS) as u64;
+    ON_DEMAND_TIMEOUT
+        .saturating_add(Duration::from_secs(extra * 30))
+        .min(ON_DEMAND_TIMEOUT_MAX)
+}
 // Light's drift threshold: an output longer or shorter than this fraction
 // of the input is treated as prompt-injection or hallucination, and we
 // fall back to the raw transcript. The new "cleaned raw" prompt adds
@@ -158,6 +184,26 @@ fn http_status_note(status: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::{on_demand_timeout_for, ON_DEMAND_TIMEOUT, ON_DEMAND_TIMEOUT_MAX};
+
+    #[test]
+    fn short_input_keeps_the_fast_deadline() {
+        assert_eq!(on_demand_timeout_for("hello there"), ON_DEMAND_TIMEOUT);
+    }
+
+    #[test]
+    fn long_transcript_gets_more_room() {
+        // ~40k chars is a plausible 40-minute meeting.
+        let long = "x".repeat(40_000);
+        assert!(on_demand_timeout_for(&long) > ON_DEMAND_TIMEOUT);
+    }
+
+    #[test]
+    fn deadline_is_capped() {
+        let huge = "x".repeat(5_000_000);
+        assert_eq!(on_demand_timeout_for(&huge), ON_DEMAND_TIMEOUT_MAX);
+    }
+
     use super::length_drift;
 
     #[test]

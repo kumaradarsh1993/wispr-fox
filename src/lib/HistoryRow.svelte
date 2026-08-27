@@ -12,6 +12,7 @@
   import { applySpeakerNames, namedSpeaker, speakerNames, speakerTurns } from "./meeting-text";
   import { fleet } from "./fleet-store.svelte";
   import { deviceGlyph, deviceDisplayName } from "./device-icons";
+  import { askConfirm, showMessage } from "./dialogs";
 
   let { rec } = $props<{ rec: Recording }>();
 
@@ -57,6 +58,31 @@
   let copyableText = $derived(applySpeakerNames(displayedText, names));
   let readableBlocks = $derived(copyableText.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean));
   let isError = $derived(rec.status === "error");
+  // An AI version that fell back to the raw transcript. clippy.rs returns the
+  // INPUT unchanged whenever the model times out or errors, recording why in
+  // clippy_note — so without this the tab shows the raw transcript and looks
+  // like the feature simply does nothing. That is exactly how "meeting notes
+  // gives back raw text" presents. The note was only visible in the expanded
+  // row and the (i) inspector, i.e. nowhere near the text it explains.
+  let fellBackToRaw = $derived(
+    activeTab !== "raw" && rec.clippy_used === false && !!rec.clippy_note,
+  );
+  let fallbackReason = $derived.by(() => {
+    switch (rec.clippy_note) {
+      case "clippy_timeout":
+        return "the model took too long to answer";
+      case "clippy_rate_limited":
+        return "the provider rate-limited the request";
+      case "clippy_auth":
+        return "the provider rejected the API key";
+      case "clippy_upstream":
+        return "the provider had a server error";
+      case "light_length_drift":
+        return "the result differed too much from what you said, so it was discarded";
+      default:
+        return "the request to the model failed";
+    }
+  });
   // Retry must be available at ALL statuses — including 'transcribing'
   // and 'cleaning'. The whole reason this exists is to recover from
   // recordings that got stranded mid-flow (the flow crashed before
@@ -280,7 +306,7 @@
     if (kind === "drafted" && rec.drafted_text) { tabOverride = "drafted"; return; }
     if (kind === "meeting_notes" && rec.meeting_notes_text) { tabOverride = "meeting_notes"; return; }
     if (!rec.transcript) {
-      alert("No raw transcript yet — retry the recording first.");
+      await showMessage("No raw transcript yet — retry the recording first.");
       return;
     }
     await runAlt(kind);
@@ -299,7 +325,7 @@
       await history.refresh();
       tabOverride = kind;
     } catch (e) {
-      alert(`Could not generate ${kind} version: ${e}`);
+      await showMessage(`Could not generate ${kind} version: ${e}`);
     } finally {
       generating = null;
     }
@@ -316,13 +342,13 @@
   /// for the same reason retry() does: it's a one-click way to lose output.
   async function rerunAlt(kind: "cleaned" | "drafted") {
     if (!rec.transcript) {
-      alert("No raw transcript yet — re-run transcription first.");
+      await showMessage("No raw transcript yet — re-run transcription first.");
       return;
     }
     const existing = kind === "cleaned" ? rec.cleaned_text : rec.drafted_text;
     const what = kind === "cleaned" ? "cleanup" : "draft";
     if (existing) {
-      const ok = confirm(
+      const ok = await askConfirm(
         `Re-run ${what} with ${llmLabel}? The current ${what} will be replaced.`,
       );
       if (!ok) return;
@@ -346,7 +372,7 @@
     // Done rows are the easy mis-click target — "I'll just check this
     // recording" → accidentally re-burn an STT call.
     if (!isError) {
-      const ok = confirm(
+      const ok = await askConfirm(
         "Re-run transcription on this recording? The current transcript and cleaned text will be replaced.",
       );
       if (!ok) return;
@@ -356,7 +382,7 @@
       await api.retryRecording(rec.id);
       await history.refresh();
     } catch (e) {
-      alert(`Retry failed: ${e}`);
+      await showMessage(`Retry failed: ${e}`);
     } finally {
       busy = false;
     }
@@ -675,6 +701,12 @@
           {/if}
         {/each}
       </div>
+    {/if}
+    {#if fellBackToRaw}
+      <p class="fallback-warn">
+        This is the raw transcript, not a generated version — {fallbackReason}.
+        Try Rerun, or pick a different model in Settings.
+      </p>
     {/if}
     {#if expanded && rec.clippy_note}
       <p class="note">Clippy note: {rec.clippy_note}</p>
@@ -1666,6 +1698,16 @@
     color: var(--warning, #c47a30);
   }
 
+  .fallback-warn {
+    margin: 6px 0 0;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, #b3261e 30%, transparent);
+    background: color-mix(in srgb, #b3261e 8%, transparent);
+    color: #8c1d18;
+    font-size: 12px;
+    line-height: 1.45;
+  }
   .note {
     color: #ff9f0a;
     font-size: 11px;
