@@ -1561,6 +1561,15 @@
       // Leaving auto: cancel any pending hide; the main window now owns the
       // window state via applyVisibilityWindow.
       cancelPendingAutoHide();
+      // "always" mode never hides the window, so nothing in this file used to
+      // touch it once a dictation began — which left the macOS Space pin
+      // resting on whatever the 30s watchdog last did. Re-pin when a dictation
+      // starts so the avatar is on the desktop the user is on RIGHT NOW, not
+      // the one the app launched on. show_floater is idempotent on an
+      // already-visible window.
+      if (vis === "always" && st !== "idle") {
+        invoke("show_floater").catch(() => {});
+      }
       return;
     }
     if (st !== "idle") {

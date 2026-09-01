@@ -375,6 +375,8 @@ pub fn run() {
             commands::recover_clippy_window,
             commands::resize_floater,
             commands::show_floater,
+            commands::platform_diagnostic,
+            commands::repair_accessibility,
             commands::accessibility_ok,
             commands::floater_trigger,
             commands::open_accessibility_settings,
@@ -506,9 +508,13 @@ pub fn run() {
 ///     that lets a window sit over *another app's* fullscreen Space at all.
 ///     Without the second flag the floater is still hidden the moment anything
 ///     goes fullscreen, no matter how high its level is.
-///     `Stationary` (1 << 4) keeps it out of the Mission Control / Exposé
-///     shuffle (it is an overlay, not a document window), and `IgnoresCycle`
-///     (1 << 6) keeps it out of Cmd-\` window cycling.
+///     Deliberately NOTHING else. `Stationary` and `IgnoresCycle` were added
+///     in nightly.7 as tidiness — keeping an overlay out of Mission Control
+///     and Cmd-` cycling — and removed again in nightly.8. They are in the
+///     same "at most one of" groups AppKit documents, they were never tested
+///     on a Mac, and adding untested bits to a feature that is already failing
+///     makes the failure harder to attribute, not easier. This is now exactly
+///     the two-bit recipe every macOS overlay uses, and nothing more.
 ///
 /// ⚠️ **NEVER call `set_always_on_top()` on the floater on macOS.** tao
 /// implements it as a bare `setLevel: NSFloatingWindowLevel`, which silently
@@ -527,12 +533,9 @@ pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow
 
     const NS_STATUS_WINDOW_LEVEL: isize = 25;
     const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-    const STATIONARY: usize = 1 << 4;
-    const IGNORES_CYCLE: usize = 1 << 6;
     const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
 
-    const BEHAVIOR: usize =
-        CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
+    const BEHAVIOR: usize = CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY;
 
     // setLevel:/setCollectionBehavior: are main-thread-only, and one caller is
     // a spawned tokio task (the post-show compositing kick). Marshal rather
@@ -568,6 +571,38 @@ pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow
                 wanted_behavior = BEHAVIOR,
                 "pinned floater (all Spaces + over fullscreen)"
             );
+        }
+    });
+}
+
+/// Order the floater onto the Space the user is looking at, right now,
+/// without activating the app.
+///
+/// `CanJoinAllSpaces` should make this unnecessary — a window with that bit set
+/// exists on every Space at once. This is here because that bit is what the
+/// avatar-on-the-wrong-desktop bug is about, and if it is somehow not taking
+/// effect, `orderFrontRegardless` still puts the window in front on the current
+/// Space. `orderFrontRegardless` rather than `makeKeyAndOrderFront` (which is
+/// what Tauri's `show()` calls) precisely because it does NOT make the window
+/// key: the user is mid-sentence in another app and must keep their caret.
+///
+/// Only call this on a window that is meant to be visible — it shows one that
+/// is not.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_order_front<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(ptr) = w.ns_window() else { return };
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: main thread, live NSWindow.
+        unsafe {
+            let ns_window = ptr as *mut AnyObject;
+            let _: () = msg_send![ns_window, orderFrontRegardless];
         }
     });
 }

@@ -96,6 +96,75 @@ fn make_source() -> Result<CGEventSource> {
         .map_err(|_| anyhow!("CGEventSource::new(HIDSystemState) failed"))
 }
 
+/// Bundle identifier. Must match `identifier` in `tauri.conf.json` — it is the
+/// key macOS files this app's privacy grants under, and `tccutil` takes it as
+/// the argument that says which app to forget.
+pub const BUNDLE_ID: &str = "com.wispr-fox.app";
+
+/// Ask macOS to prompt for Accessibility, registering the CURRENT binary.
+///
+/// `AXIsProcessTrusted` only reports; this variant, with the prompt option on,
+/// makes macOS surface its own "wants to control this computer" dialog and add
+/// the running executable to the Accessibility list. That matters because the
+/// list is keyed to a code-signing identity, not to a name: after an update
+/// changes the app's hash, the old entry stays visible and switched on while
+/// referring to a binary that no longer exists.
+///
+/// Returns the trust state as macOS sees it right now. A freshly granted
+/// permission usually does not take effect in this process until it restarts,
+/// so a `false` here immediately after granting is expected, not a failure.
+pub fn prompt_for_accessibility() -> bool {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+
+    type Boolean = std::os::raw::c_uchar;
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> Boolean;
+    }
+
+    // The literal value of `kAXTrustedCheckOptionPrompt`. Using the string
+    // rather than linking the exported global keeps this to one FFI symbol;
+    // the constant is part of the public API and has not changed.
+    let key = CFString::from_static_string("AXTrustedCheckOptionPrompt");
+    let options = CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value())]);
+
+    // SAFETY: `options` outlives the call, and the dictionary is exactly the
+    // shape AXIsProcessTrustedWithOptions documents.
+    unsafe {
+        AXIsProcessTrustedWithOptions(
+            options.as_concrete_TypeRef() as *const std::ffi::c_void
+        ) != 0
+    }
+}
+
+/// Make macOS forget this app's Accessibility grant.
+///
+/// The repair half of [`prompt_for_accessibility`]. When an update changes the
+/// app's signature, the existing entry is stale: System Settings shows
+/// wispr-fox switched **on** while `AXIsProcessTrusted` says false, and
+/// toggling the switch off and on does not rebind it — the entry still points
+/// at the old binary. Removing the entry outright is what clears that, and
+/// `tccutil reset` is the scriptable form of the `−` button.
+///
+/// Runs as the user against the user's own TCC store, so it needs no
+/// privileges. Returns the command's stderr on a non-zero exit.
+pub fn reset_accessibility_grant() -> Result<()> {
+    let out = std::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", BUNDLE_ID])
+        .output()
+        .map_err(|e| anyhow!("could not run tccutil: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "tccutil reset Accessibility {BUNDLE_ID} failed: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
 /// Whether the app currently holds macOS **Accessibility** permission.
 ///
 /// Our CGEvent keystroke injection — and the Cmd+V clipboard fallback, which

@@ -114,6 +114,58 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.4.0-nightly.8` (2026-09-02) — macOS auto-paste was discarding text
+  silently; Spaces still open.** Two reports from the M-series MacBook Air.
+  - **`CGEventPost` succeeds without Accessibility permission and delivers
+    nothing.** `inject::inject`'s macOS arm called `macos::send`, got `Ok(())`,
+    and reported `Channel::SendInput` — a success — while the transcript
+    reached no app, no clipboard and no error. The module doc claimed a
+    "falls back to clipboard + Cmd+V if Accessibility hasn't been granted"
+    path that **had never been written**, and could not have worked: ⌘V is
+    also a CGEvent and is dropped by the same rule. Fixed by checking
+    `is_accessibility_trusted()` BEFORE choosing a channel; without it the text
+    goes to the clipboard as `Channel::ClipboardNoPaste` and the floater says
+    so. **Generalises: an API that cannot fail is not the same as an API that
+    worked. Where the OS silently drops the operation, the precondition is the
+    only observable — check it, don't infer from the return.**
+  - **"Accessibility is enabled and it still doesn't work" is expected, not a
+    corruption.** TCC files the grant against the code-signing identity; ad-hoc
+    signatures change hash every build; the old entry survives, still switched
+    on, bound to a binary that is gone. **Toggling the switch does not rebind
+    it** — the entry has to be removed. New `repair_accessibility` command runs
+    `tccutil reset Accessibility com.wispr-fox.app` then
+    `AXIsProcessTrustedWithOptions(prompt: true)`, surfaced as a **Repair
+    permission** button. The banner said the right thing already — inside a
+    `title` tooltip nobody hovers. It is body text now.
+  - ⚠️ **The real fix is `docs/MACOS_SIGNING.md`** — one stable self-signed
+    cert, three GitHub secrets, and the commented block in `release.yml`. Until
+    then this recurs on every single update. **Open question for the owner: he
+    can do it on the Mac per the doc, or an agent can generate the cert with
+    OpenSSL here and set the secrets with `gh secret set`.** Not done either
+    way — creating a signing credential on his behalf is his call.
+  - **Spaces: NOT fixed, and nightly.7's fix has not been disproved either.**
+    The level-clobber it found was real (`set_always_on_top` → bare
+    `setLevel: 3`) and is still fixed. What is unknown is whether the pin is
+    now taking effect at all on his Mac, or whether he was even running
+    nightly.7. Two changes rather than a third theory: `show_floater` now pins
+    **before** `show()` (collection behavior is what decides which Space a
+    window is placed on, so setting it afterwards is a frame late) and adds
+    `orderFrontRegardless`; and the clippy `$effect` calls it on every
+    dictation start in **`always`** mode too, which previously touched the
+    window only at launch and every 30 s.
+  - **Reverted my own nightly.7 addition:** `Stationary` (1 << 4) and
+    `IgnoresCycle` (1 << 6) are gone. They were tidiness, never ran on a Mac,
+    and sit in the "at most one of" groups AppKit documents. **Adding untested
+    flags to a feature that is already failing makes the failure harder to
+    attribute, not easier.** Back to the canonical two-bit overlay recipe.
+  - **New `platform_diagnostic` command + Settings → About → Run diagnostic.**
+    Version, exe path, `.app` bundle path, `AXIsProcessTrusted`, and the
+    floater's live `NSWindow.level` / `collectionBehavior` read back off the
+    real window, with Copy. **This is the point:** two macOS bugs in a row have
+    been diagnosed by reasoning from Windows, and one of those diagnoses was
+    wrong. It also settles the cheapest hypothesis nobody could check — whether
+    the Mac is even running the build being debugged.
+
 - **`v3.4.0-nightly.7` (2026-09-02) — the macOS floater was pinned to the wrong
   desktop, because a 30 s watchdog kept un-pinning it.** User report (M-series
   MacBook Air): with several full-screen apps open, pressing the dictate key

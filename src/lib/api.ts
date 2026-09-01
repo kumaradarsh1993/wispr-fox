@@ -475,6 +475,26 @@ export const api = {
   accessibilityOk: () => invoke<boolean>("accessibility_ok"),
   openAccessibilitySettings: () =>
     invoke<void>("open_accessibility_settings"),
+  /** Remove a stale macOS Accessibility entry and re-prompt, so the grant
+   *  binds to the binary that is actually running. Resolves to the trust state
+   *  straight after — normally still false, because the grant reaches a running
+   *  process only when it restarts. */
+  repairAccessibility: () => invoke<boolean>("repair_accessibility"),
+  /** What this build is and what the OS thinks of it — read back live, not
+   *  inferred. The floater numbers are the NSWindow's own. */
+  platformDiagnostic: () => invoke<PlatformDiagnostic>("platform_diagnostic"),
+};
+
+export type PlatformDiagnostic = {
+  version: string;
+  os: string;
+  exe_path: string;
+  bundle_path: string | null;
+  accessibility_trusted: boolean;
+  floater_visible: boolean;
+  floater_level: number | null;
+  floater_collection_behavior: number | null;
+  floater_pinned: boolean;
 };
 
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */

@@ -58,6 +58,27 @@
       accessibilityOk = true; // fail open — never nag if the check itself errors
     }
   }
+  // The repair path. Toggling the System Settings switch does not rebind a
+  // grant whose entry points at a previous build's signature — the entry has to
+  // be removed. `repair_accessibility` does that and re-prompts, and the answer
+  // is almost always "still not trusted", because macOS hands a fresh grant to
+  // the process only when it next starts. So the honest thing to report is
+  // "granted — now relaunch", not a failure.
+  let a11yRepairNote = $state("");
+  async function repairAccessibility() {
+    a11yRepairNote = "Asking macOS…";
+    try {
+      const trusted = await api.repairAccessibility();
+      accessibilityOk = trusted;
+      a11yRepairNote = trusted
+        ? "Granted."
+        : "Approve wispr-fox in the macOS dialog (or in the list that just opened), then quit and reopen wispr-fox — the permission only reaches a running app when it restarts.";
+    } catch (e) {
+      console.warn("accessibility repair failed", e);
+      a11yRepairNote =
+        "Couldn't repair automatically. In System Settings → Privacy & Security → Accessibility, select wispr-fox, press −, then add it again with +.";
+    }
+  }
   async function grantAccessibility() {
     try {
       await api.openAccessibilitySettings();
@@ -622,11 +643,21 @@
     <main class="main-content">
       {#if showA11yBanner}
         <div class="a11y-banner" role="alert">
-          <span class="a11y-text" title="macOS ties Accessibility to the exact app binary, so it resets after every update. If wispr-fox is already listed, remove it with – then re-add it.">
-            Auto-paste needs <strong>Accessibility</strong> permission — macOS resets it after every update.
+          <span class="a11y-text">
+            Auto-paste needs <strong>Accessibility</strong> permission — macOS drops it on every update.
             Until you grant it, dictated text lands on the clipboard but won't paste itself.
+            {#if a11yRepairNote}
+              <strong class="a11y-note">{a11yRepairNote}</strong>
+            {:else}
+              <span class="a11y-note">
+                If wispr-fox already looks <em>enabled</em> in System Settings, that switch is
+                pointing at the previous build — turning it off and on again won't help.
+                <strong>Repair permission</strong> removes the stale entry and asks macOS afresh.
+              </span>
+            {/if}
           </span>
-          <button class="a11y-btn" onclick={grantAccessibility}>Open Settings</button>
+          <button class="a11y-btn" onclick={repairAccessibility}>Repair permission</button>
+          <button class="a11y-btn ghost" onclick={grantAccessibility}>Open Settings</button>
           <button class="a11y-btn ghost" onclick={() => checkAccessibility()}>Re-check</button>
           <button class="a11y-x" onclick={() => (a11yDismissed = true)} aria-label="Dismiss">✕</button>
         </div>
@@ -1275,6 +1306,12 @@
     transition: background 200ms ease, color 200ms ease;
   }
 
+  .a11y-note {
+    display: block;
+    margin-top: 4px;
+    opacity: 0.85;
+    font-size: 0.94em;
+  }
   /* macOS Accessibility nudge — floats over content (position: fixed) so it
      never disrupts page layout/scroll. Only rendered when the backend
      reports the permission is missing (i.e. macOS, not yet granted). */

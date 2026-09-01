@@ -1865,6 +1865,16 @@ impl Flow {
                         keep_in_clipboard = inj_settings.keep_in_clipboard,
                         "injected"
                     );
+                    // Delivered, but not where the user was looking. Say so —
+                    // this used to be indistinguishable from a normal paste,
+                    // which is how "it transcribed and then nothing happened"
+                    // came to look like a transcription bug.
+                    if matches!(channel, inject::Channel::ClipboardNoPaste) {
+                        let _ = app.emit(
+                            "wispr:clippy_warning",
+                            "Your text is on the clipboard — press ⌘V to paste it. Auto-paste needs Accessibility permission, which macOS drops on every update. Settings → About → Repair permission fixes it.",
+                        );
+                    }
                     self.history.update_status(&record_id, Status::Done)?;
                     crate::sync::engine::notify_recording_done(app);
                 }

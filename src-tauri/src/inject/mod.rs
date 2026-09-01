@@ -8,10 +8,18 @@
 //!   SendInput is rejected (e.g. UIPI on elevated targets), or if text
 //!   is long enough that per-codepoint injection would be slow.
 //!
-//! - **macOS**: try `CGEvent` unicode keystrokes first — same idea.
-//!   Falls back to clipboard + Cmd+V if Accessibility permission hasn't
-//!   been granted yet (the event silently doesn't reach the focused
-//!   app) or for very long text.
+//! - **macOS**: try `CGEvent` unicode keystrokes first — same idea. Falls
+//!   back to clipboard for very long text, and to clipboard-WITHOUT-paste
+//!   when Accessibility permission is missing.
+//!
+//!   That last case needs the permission checked up front, because macOS
+//!   gives no error for it. `CGEventPost` accepts the events from an
+//!   untrusted process and simply never delivers them, so `macos::send`
+//!   returns `Ok(())` having typed nothing — the dispatcher's `Err` arm can
+//!   never fire for a permission problem, and the dictated text vanishes with
+//!   nothing logged anywhere. Synthesising ⌘V is no escape either: that is
+//!   also a CGEvent and is dropped by the same rule. The only delivery left is
+//!   to put the text on the clipboard and tell the user to paste it.
 //!
 //! Other targets get stubs that error.
 
@@ -29,6 +37,11 @@ use anyhow::Result;
 pub enum Channel {
     SendInput,
     Clipboard,
+    /// macOS with no Accessibility permission: the text is on the clipboard
+    /// and nothing was pasted, because nothing *could* be. Distinct from
+    /// `Clipboard` (which did paste) so the UI can say so rather than
+    /// reporting a success the user cannot see.
+    ClipboardNoPaste,
 }
 
 const CLIPBOARD_PASTE_THRESHOLD: usize = 500;
@@ -78,6 +91,20 @@ pub fn inject(text: &str, keep_in_clipboard: bool) -> Result<Channel> {
     }
 
     let restore_prior = !keep_in_clipboard;
+
+    // Permission first. Every delivery path below this point is a CGEvent —
+    // the unicode keystrokes AND the ⌘V of the clipboard fallback — and an
+    // untrusted process has all of them accepted and silently discarded. So
+    // "did the send succeed" cannot distinguish typed-into-the-app from
+    // thrown-away; only asking about the permission can.
+    if !macos::is_accessibility_trusted() {
+        clipboard::set_only(text)?;
+        tracing::warn!(
+            chars = text.chars().count(),
+            "no Accessibility permission — text left on the clipboard, nothing pasted"
+        );
+        return Ok(Channel::ClipboardNoPaste);
+    }
 
     if text.chars().count() > CLIPBOARD_PASTE_THRESHOLD {
         clipboard::paste(text, restore_prior)?;

@@ -104,8 +104,15 @@ pub fn show_floater(app: AppHandle) {
     let Some(w) = app.get_webview_window("clippy") else {
         return;
     };
-    let _ = w.show();
+    // Pin BEFORE showing. The collection behavior is what decides which Space
+    // a window is ordered onto, so setting it afterwards is a frame too late:
+    // the window has already been placed, and on macOS a background app's
+    // window is placed on the Space it belongs to, not the one in front of the
+    // user. All three calls queue onto the main thread in this order.
     crate::pin_floater(&w);
+    let _ = w.show();
+    #[cfg(target_os = "macos")]
+    crate::macos_order_front(&w);
 }
 
 /// Resize the floater window from Rust, optionally keeping its visual centre
@@ -273,6 +280,156 @@ pub fn accessibility_ok() -> bool {
     {
         true
     }
+}
+
+/// Repair a macOS Accessibility grant that System Settings shows as enabled
+/// but that the app does not actually hold.
+///
+/// This state is normal after an update, not a corruption: macOS files the
+/// grant against the app's code-signing identity, our builds are ad-hoc signed,
+/// and an ad-hoc signature changes hash on every build. The entry survives,
+/// pointing at the binary that no longer exists — which is why the switch reads
+/// ON while `AXIsProcessTrusted` reads false, and why toggling the switch does
+/// not help. Removing the entry and re-granting is what rebinds it.
+///
+/// Returns whether the app is trusted immediately afterwards. Expect `false`:
+/// the grant normally does not reach a running process until it restarts, so
+/// the caller should ask the user to relaunch rather than treat this as failure.
+#[tauri::command]
+pub fn repair_accessibility() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = crate::inject::macos::reset_accessibility_grant() {
+            // Worth continuing rather than bailing: the prompt below can still
+            // register the current binary if no stale entry was in the way.
+            tracing::warn!("accessibility reset failed, prompting anyway: {e:#}");
+        }
+        let trusted = crate::inject::macos::prompt_for_accessibility();
+        tracing::info!(trusted, "accessibility repair requested");
+        Ok(trusted)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+/// What this build actually is and what the OS actually thinks of it.
+///
+/// Exists because the two hardest bugs in this app are both invisible from the
+/// machine most of its code is written on: a macOS window's Space pinning, and
+/// whether the running binary holds Accessibility. Both were diagnosed by
+/// reasoning rather than measurement, and one of those diagnoses was wrong. The
+/// numbers here are read back from the live NSWindow and from macOS itself, so
+/// a user can copy them into a bug report and end the argument.
+#[derive(Serialize)]
+pub struct PlatformDiagnostic {
+    /// `CARGO_PKG_VERSION` — the string the updater compares, and the one that
+    /// settles "did the update actually install".
+    pub version: String,
+    pub os: String,
+    /// The running executable, and the `.app` bundle containing it. A grant
+    /// filed against a *different* copy of the app looks exactly like a grant
+    /// that does not work, so the path is part of the evidence.
+    pub exe_path: String,
+    pub bundle_path: Option<String>,
+    pub accessibility_trusted: bool,
+    pub floater_visible: bool,
+    /// macOS `NSWindow.level`. 25 (`NSStatusWindowLevel`) is the pinned value;
+    /// 3 (`NSFloatingWindowLevel`) means something reset it and the floater
+    /// cannot paint over a full-screen Space.
+    pub floater_level: Option<i64>,
+    /// macOS `NSWindow.collectionBehavior`. Bit 0 (`CanJoinAllSpaces`) is the
+    /// one that makes the avatar follow the user between desktops; bit 8
+    /// (`FullScreenAuxiliary`) is what lets it sit over a full-screen app.
+    pub floater_collection_behavior: Option<u64>,
+    /// Both of the above are what we asked for.
+    pub floater_pinned: bool,
+}
+
+#[tauri::command]
+pub fn platform_diagnostic(app: AppHandle) -> PlatformDiagnostic {
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|e| format!("<unavailable: {e}>"));
+
+    // Walk up to the enclosing `.app`, if there is one. A build run straight
+    // from `target/` has none, which is itself worth seeing.
+    let bundle_path = std::env::current_exe().ok().and_then(|p| {
+        p.ancestors()
+            .find(|a| a.extension().map(|e| e == "app").unwrap_or(false))
+            .map(|a| a.display().to_string())
+    });
+
+    let clippy = app.get_webview_window("clippy");
+    let floater_visible = clippy
+        .as_ref()
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+
+    #[cfg(target_os = "macos")]
+    let (floater_level, floater_collection_behavior) = clippy
+        .as_ref()
+        .and_then(read_floater_pin)
+        .map(|(l, b)| (Some(l), Some(b)))
+        .unwrap_or((None, None));
+    #[cfg(not(target_os = "macos"))]
+    let (floater_level, floater_collection_behavior) = (None, None);
+
+    // 25 and the CanJoinAllSpaces | FullScreenAuxiliary bits — see
+    // `crate::macos_pin_floater`, which is where these values come from.
+    let floater_pinned = floater_level == Some(25)
+        && floater_collection_behavior
+            .map(|b| b & 1 != 0 && b & (1 << 8) != 0)
+            .unwrap_or(false);
+
+    PlatformDiagnostic {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        exe_path: exe,
+        bundle_path,
+        accessibility_trusted: accessibility_ok(),
+        floater_visible,
+        floater_level,
+        floater_collection_behavior,
+        floater_pinned,
+    }
+}
+
+/// Read the floater's live `level` and `collectionBehavior` off the NSWindow.
+///
+/// Both are main-thread-only reads, and this command runs on a worker thread,
+/// so the value comes back over a channel. The timeout is the point: a missed
+/// main-thread hop must degrade to "unknown" rather than hanging a settings
+/// page forever.
+#[cfg(target_os = "macos")]
+fn read_floater_pin<R: tauri::Runtime>(w: &tauri::WebviewWindow<R>) -> Option<(i64, u64)> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let (tx, rx) = std::sync::mpsc::channel::<Option<(i64, u64)>>();
+    let win = w.clone();
+    if w.run_on_main_thread(move || {
+        let read = (|| {
+            let ptr = win.ns_window().ok()?;
+            if ptr.is_null() {
+                return None;
+            }
+            // SAFETY: on the main thread, against the live NSWindow.
+            unsafe {
+                let ns_window = ptr as *mut AnyObject;
+                let level: isize = msg_send![ns_window, level];
+                let behavior: usize = msg_send![ns_window, collectionBehavior];
+                Some((level as i64, behavior as u64))
+            }
+        })();
+        let _ = tx.send(read);
+    })
+    .is_err()
+    {
+        return None;
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(2)).ok().flatten()
 }
 
 /// Open the OS pane where the user grants the permission auto-paste needs.
