@@ -124,14 +124,17 @@ export const avatarVisibility = new AvatarVisibilityStore();
 export async function applyVisibilityWindow(v: AvatarVisibility) {
   if (v === "auto") return;
   try {
+    if (v === "always") {
+      // Rust command rather than w.show(): it also re-pins the floater to
+      // every macOS Space. See commands.rs::show_floater.
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("show_floater");
+      return;
+    }
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const w = await WebviewWindow.getByLabel("clippy");
     if (!w) return;
-    if (v === "always") {
-      await w.show();
-    } else {
-      await w.hide();
-    }
+    await w.hide();
   } catch (e) {
     console.warn("applyVisibilityWindow failed", e);
   }

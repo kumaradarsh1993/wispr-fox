@@ -114,6 +114,50 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.4.0-nightly.7` (2026-09-02) — the macOS floater was pinned to the wrong
+  desktop, because a 30 s watchdog kept un-pinning it.** User report (M-series
+  MacBook Air): with several full-screen apps open, pressing the dictate key
+  showed the avatar on the desktop wispr-fox was first opened on, never on the
+  one being dictated into — so there was no visible sign a recording was live.
+  - **nightly.5's fix was real and it worked for 30 seconds.**
+    `macos_pin_floater` sets `NSStatusWindowLevel` (25) plus a collection
+    behavior of `CanJoinAllSpaces | FullScreenAuxiliary`. The Layer-2 watchdog
+    in `lib.rs` then re-asserted `set_always_on_top(true)` every 30 s — and
+    **tao implements that as a bare `setLevel: NSFloatingWindowLevel`**
+    (`tao-0.35.2/src/platform_impl/macos/window.rs:1391`), which resets the
+    level to 3. Level 3 cannot paint over another app's full-screen Space, so
+    from t+30 s onward the floater was stuck on its birth Space for the rest of
+    the session. Nothing logged, nothing failed — the call reads as harmless.
+  - **Generalises past this repo: a setter named for an intent can be
+    implemented as an assignment.** `set_always_on_top` sounds additive and is
+    destructive. Any place we reach past a framework API with raw platform
+    calls, the framework's own API can silently stomp them — so the raw state
+    needs one owner, and every other caller has to go through it.
+  - Fix: `pin_floater()` is now the single entry point (macOS → the objc2 pin;
+    elsewhere → `set_always_on_top`). The watchdog, the resume recovery
+    (`power.rs`), `force_repaint`, the Reopen handler and startup all call it.
+  - **The pin is also re-applied at show time**, via a new `show_floater`
+    command that the floater's JS calls instead of `getCurrentWindow().show()`.
+    In `auto` visibility the window is hidden between dictations, so the Space
+    it was pinned to at launch is not the Space the user is on when they next
+    press the key. `avatar-visibility.svelte.ts` and `skin-store.svelte.ts` use
+    it too.
+  - Collection behavior gained `Stationary` (1 << 4) and `IgnoresCycle`
+    (1 << 6) — it is an overlay, not a document window, so it should be out of
+    Mission Control and Cmd-` cycling. The pin now **reads back** the level and
+    behavior AppKit actually kept and logs both; that is the only evidence a
+    Windows dev box can get about a Mac-only call.
+  - **Guarded, not just fixed:** `floater_pin_guard` in `lib.rs` asserts on the
+    source text that `set_always_on_top` appears exactly once in the crate
+    (inside `pin_floater`) and that `show_floater` re-pins. It runs in the
+    `cargo test --lib` CI step on Linux, so it protects the Mac from a
+    Windows-authored change even though the code it guards is `cfg`'d out here.
+  - ⚠️ **Unverified on hardware from this machine.** The changed code is all
+    `#[cfg(target_os = "macos")]`, so `cargo check` on Windows never compiles
+    it; `cargo check --all-targets` and `npm run check` are clean, and the
+    macOS CI job on the tag is the first real compile. Ask the user to confirm
+    on the MacBook before this line is promoted to stable.
+
 - **`v3.3.0-nightly.5` (2026-08-19) — the capture-gap alarm was measuring the
   wrong thing, and error bubbles were unreadable.** User report: a red box said
   "only 336s of 339s captured, record again", rendered ~3 words per line over

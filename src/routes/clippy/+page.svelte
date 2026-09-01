@@ -1512,7 +1512,12 @@
     }
     _autoShown = true;
     try {
-      await getCurrentWindow().show(); // NO setFocus — never steal focus.
+      // show_floater, not getCurrentWindow().show(): on macOS a bare show()
+      // leaves the window on whatever Space it was last pinned to, so the
+      // avatar would appear on desktop 1 while the user dictates into a
+      // fullscreen app on desktop 3. The Rust command shows AND re-pins to
+      // all Spaces. NO setFocus anywhere — never steal focus.
+      await invoke("show_floater");
     } catch (e) {
       console.warn("[clippy] auto show failed", e);
     }

@@ -149,14 +149,17 @@ export const skinStore = new SkinStore();
  */
 export async function setClippyWindowVisible(visible: boolean) {
   try {
+    if (visible) {
+      // Rust command rather than w.show(): it also re-pins the floater to
+      // every macOS Space. See commands.rs::show_floater.
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("show_floater");
+      return;
+    }
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const w = await WebviewWindow.getByLabel("clippy");
     if (!w) return;
-    if (visible) {
-      await w.show();
-    } else {
-      await w.hide();
-    }
+    await w.hide();
   } catch (e) {
     console.warn("setClippyWindowVisible failed", e);
   }

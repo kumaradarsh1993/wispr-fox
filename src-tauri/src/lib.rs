@@ -307,14 +307,11 @@ pub fn run() {
                         let _ = c.hide();
                         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                         let _ = c.show();
-                        let _ = c.set_always_on_top(true);
-                        // always_on_top only floats the window WITHIN its own
-                        // Space on macOS. Without this the floater vanishes
-                        // behind a fullscreen app or on a different desktop —
-                        // it is still "on top", just not of anything you are
-                        // looking at. No Windows equivalent is needed.
-                        let _ = c.set_visible_on_all_workspaces(true);
-                        macos_pin_floater(&c);
+                        // NOT set_always_on_top — on macOS that only floats the
+                        // window WITHIN its own Space, and worse, it resets the
+                        // level pin_floater installs. pin_floater is the whole
+                        // job: level 25 + join-all-Spaces + over-fullscreen.
+                        pin_floater(&c);
                     });
                 }
             }
@@ -351,7 +348,12 @@ pub fn run() {
                     interval.tick().await;
                     if let Some(w) = watchdog_handle.get_webview_window("clippy") {
                         if w.is_visible().unwrap_or(false) {
-                            let _ = w.set_always_on_top(true);
+                            // pin_floater, NOT set_always_on_top: on macOS the
+                            // latter resets the window level to 3 and was
+                            // un-pinning the floater on every tick — 30 s after
+                            // launch the avatar could no longer appear over a
+                            // fullscreen Space, which is the whole point of it.
+                            pin_floater(&w);
                             if let Some(ps) = watchdog_handle.try_state::<power::JsPingState>() {
                                 if ps.ms_since_last_ping() > 45_000 {
                                     tracing::info!("watchdog: JS heartbeat stale, forcing repaint");
@@ -372,6 +374,7 @@ pub fn run() {
             commands::set_clickthrough,
             commands::recover_clippy_window,
             commands::resize_floater,
+            commands::show_floater,
             commands::accessibility_ok,
             commands::floater_trigger,
             commands::open_accessibility_settings,
@@ -472,9 +475,7 @@ pub fn run() {
                 if let Some(c) = _app_handle.get_webview_window("clippy") {
                     let _ = c.hide();
                     let _ = c.show();
-                    let _ = c.set_always_on_top(true);
-                    let _ = c.set_visible_on_all_workspaces(true);
-                    macos_pin_floater(&c);
+                    pin_floater(&c);
                 }
                 macos_activate_app();
             }
@@ -505,6 +506,18 @@ pub fn run() {
 ///     that lets a window sit over *another app's* fullscreen Space at all.
 ///     Without the second flag the floater is still hidden the moment anything
 ///     goes fullscreen, no matter how high its level is.
+///     `Stationary` (1 << 4) keeps it out of the Mission Control / Exposé
+///     shuffle (it is an overlay, not a document window), and `IgnoresCycle`
+///     (1 << 6) keeps it out of Cmd-\` window cycling.
+///
+/// ⚠️ **NEVER call `set_always_on_top()` on the floater on macOS.** tao
+/// implements it as a bare `setLevel: NSFloatingWindowLevel`, which silently
+/// resets the level set here back to 3 and un-pins the window. That is exactly
+/// the bug this function was written to fix, re-introduced from a distance:
+/// the 30 s watchdog re-asserted `always_on_top` and undid the pin on every
+/// tick, so the floater was correctly pinned for the first 30 s of a launch and
+/// stuck on its birth Space forever after. Use [`pin_floater`] instead — it is
+/// the only supported way to re-assert "stay on top" for this window.
 ///
 /// Windows and Linux keep their existing `always_on_top` behaviour untouched.
 #[cfg(target_os = "macos")]
@@ -514,7 +527,12 @@ pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow
 
     const NS_STATUS_WINDOW_LEVEL: isize = 25;
     const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const STATIONARY: usize = 1 << 4;
+    const IGNORES_CYCLE: usize = 1 << 6;
     const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+
+    const BEHAVIOR: usize =
+        CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
 
     // setLevel:/setCollectionBehavior: are main-thread-only, and one caller is
     // a spawned tokio task (the post-show compositing kick). Marshal rather
@@ -522,8 +540,12 @@ pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow
     // why they were safe to call from there and raw msg_send would not be.
     let w = window.clone();
     let _ = window.run_on_main_thread(move || {
-        let Ok(ptr) = w.ns_window() else { return };
+        let Ok(ptr) = w.ns_window() else {
+            tracing::warn!("pin_floater: ns_window() unavailable, floater stays unpinned");
+            return;
+        };
         if ptr.is_null() {
+            tracing::warn!("pin_floater: ns_window() was null, floater stays unpinned");
             return;
         }
         // SAFETY: ns_window() hands back the live NSWindow for this webview
@@ -531,12 +553,45 @@ pub(crate) fn macos_pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow
         unsafe {
             let ns_window = ptr as *mut AnyObject;
             let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
-            let _: () = msg_send![
-                ns_window,
-                setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULL_SCREEN_AUXILIARY
-            ];
+            let _: () = msg_send![ns_window, setCollectionBehavior: BEHAVIOR];
+
+            // Read back what AppKit actually kept. Some collection-behavior
+            // bits are silently dropped when they conflict, and this is the
+            // only evidence a Windows dev box can get about a Mac-only pin —
+            // "level=25 behavior=337" in the log is proof it took.
+            let level: isize = msg_send![ns_window, level];
+            let behavior: usize = msg_send![ns_window, collectionBehavior];
+            tracing::info!(
+                level,
+                behavior,
+                wanted_level = NS_STATUS_WINDOW_LEVEL,
+                wanted_behavior = BEHAVIOR,
+                "pinned floater (all Spaces + over fullscreen)"
+            );
         }
     });
+}
+
+/// Re-assert "this window floats above everything, on every Space".
+///
+/// The one entry point every caller must use. On macOS it delegates to
+/// [`macos_pin_floater`] and deliberately does **not** touch
+/// `set_always_on_top`, because tao's implementation of that would clobber the
+/// window level (see the warning above). Everywhere else it is the plain
+/// `always_on_top` call it has always been.
+pub(crate) fn pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    #[cfg(target_os = "macos")]
+    {
+        // `set_visible_on_all_workspaces` only ORs in CanJoinAllSpaces, so it
+        // is harmless alongside the explicit pin — keep it so Tauri's own
+        // bookkeeping agrees with the NSWindow.
+        let _ = window.set_visible_on_all_workspaces(true);
+        macos_pin_floater(window);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_always_on_top(true);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -553,5 +608,78 @@ pub(crate) fn macos_activate_app() {
         let ns_app: *mut AnyObject =
             msg_send![NSApplication::class(), sharedApplication];
         let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+    }
+}
+
+/// Guard for the "pin at a distance" bug class.
+///
+/// The floater's macOS Space pin is installed by `pin_floater` and destroyed by
+/// any bare `set_always_on_top` call, because tao implements that as a plain
+/// `setLevel: NSFloatingWindowLevel`. Nothing about the offending call looks
+/// wrong — it reads as harmless belt-and-braces — and the damage shows up on a
+/// machine most of this repo's work never touches, 30 seconds after launch, as
+/// "the avatar is on the wrong desktop". So the rule is enforced on the source
+/// text: the call may appear exactly once in the crate, inside `pin_floater`,
+/// where the non-macOS branch legitimately needs it.
+///
+/// Runs on Linux CI (`cargo test --lib`), so it protects the Mac from a
+/// Windows-authored change even though the code it guards is cfg'd out here.
+#[cfg(test)]
+mod floater_pin_guard {
+    /// Split so this module's own source does not match the scan below.
+    const NEEDLE: &str = concat!("set_always", "_on_top");
+
+    /// Every file that has ever touched the floater's on-top state.
+    const SOURCES: &[(&str, &str)] = &[
+        ("lib.rs", include_str!("lib.rs")),
+        ("commands.rs", include_str!("commands.rs")),
+        ("power.rs", include_str!("power.rs")),
+        ("tray.rs", include_str!("tray.rs")),
+    ];
+
+    /// Real calls only — not the prose warning people off them. A line counts
+    /// only if it is neither a `//` comment nor a `///` doc line.
+    fn call_lines(name: &str, src: &str) -> Vec<String> {
+        src.lines()
+            .filter(|l| l.contains(NEEDLE))
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .map(|l| format!("{name}: {}", l.trim()))
+            .collect()
+    }
+
+    #[test]
+    fn on_top_call_is_confined_to_pin_floater() {
+        let found: Vec<String> = SOURCES
+            .iter()
+            .flat_map(|(name, src)| call_lines(name, src))
+            .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "{NEEDLE} must be called exactly once — the non-macOS branch of              pin_floater. On macOS it resets the window level and un-pins the              floater from all Spaces, so call pin_floater instead. Found: {found:#?}"
+        );
+        assert!(
+            found[0].starts_with("lib.rs:"),
+            "the one permitted call must live in lib.rs's pin_floater; found              it in {}",
+            found[0]
+        );
+    }
+
+    /// The pin is worthless unless it is re-applied when the floater is shown:
+    /// in "auto" mode the window is hidden between dictations, and the Space it
+    /// was pinned to at launch is not the Space the user is on when they next
+    /// press the key.
+    #[test]
+    fn show_floater_re_pins() {
+        let commands = include_str!("commands.rs");
+        let body = commands
+            .split("pub fn show_floater")
+            .nth(1)
+            .expect("the show_floater command must exist — it is what the                      floater's JS calls instead of a bare window.show()");
+        let body = &body[..body.len().min(600)];
+        assert!(
+            body.contains("pin_floater"),
+            "show_floater must call pin_floater, or the avatar keeps appearing              on the Space it was born on"
+        );
     }
 }

@@ -50,18 +50,16 @@ pub(crate) fn force_repaint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>)
     {
         let _ = window.hide();
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
-        // Re-assert Space visibility too: a recovered window that only floats
-        // on the Space it was created in is still invisible to a user who has
-        // moved to a fullscreen app.
-        let _ = window.set_visible_on_all_workspaces(true);
-        crate::macos_pin_floater(window);
+        // Re-assert the Space pin too: a recovered window that only floats on
+        // the Space it was created in is still invisible to a user who has
+        // moved to a fullscreen app. NOT set_always_on_top — see pin_floater.
+        crate::pin_floater(window);
         return;
     }
     #[allow(unreachable_code)]
     {
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        crate::pin_floater(window);
         // Windows-only: WebView2 loses its DirectComposition surface after
         // sleep and only a resize forces it to rebuild.
         #[cfg(windows)]
@@ -88,6 +86,26 @@ pub fn recover_clippy_window(app: AppHandle) {
     }
     tracing::info!("recovering Clippy floater (resume / surface-loss repaint)");
     force_repaint(&w);
+}
+
+/// Show the floater and pin it to the Space the user is looking at RIGHT NOW.
+///
+/// Every JS caller that used to do `getCurrentWindow().show()` on the floater
+/// goes through this instead. A bare `show()` is not enough on macOS: the
+/// NSWindow keeps whatever level and collection behavior it last had, and
+/// anything that touched `always_on_top` in between (the watchdog, a resume
+/// recovery) will have knocked it back down to `NSFloatingWindowLevel` on its
+/// birth Space. Re-pinning at the moment of showing means the avatar appears
+/// wherever the user actually is, even if every other safeguard has lapsed.
+///
+/// No-op-safe: showing an already-visible window just re-asserts the pin.
+#[tauri::command]
+pub fn show_floater(app: AppHandle) {
+    let Some(w) = app.get_webview_window("clippy") else {
+        return;
+    };
+    let _ = w.show();
+    crate::pin_floater(&w);
 }
 
 /// Resize the floater window from Rust, optionally keeping its visual centre

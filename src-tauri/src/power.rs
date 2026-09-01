@@ -100,6 +100,8 @@ fn recover_floater(app: &AppHandle) {
     let _ = w.hide();
     std::thread::sleep(Duration::from_millis(500));
     let _ = w.show();
-    let _ = w.set_always_on_top(true);
+    // pin_floater, NOT set_always_on_top — the latter resets the macOS window
+    // level and would strand the recovered floater on its birth Space.
+    crate::pin_floater(&w);
     crate::commands::force_repaint(&w);
 }
