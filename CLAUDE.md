@@ -476,18 +476,28 @@ explicit user permission:
   own focus management that overrides Win32 `SetFocus` from outside.
   We don't fight it — clipboard fallback (default on) is the answer.
 - **macOS platform notes** (audited nightly.8):
-  - **Floater is OPAQUE on macOS as of nightly.11** — `transparent + macOSPrivateApi`
-    rendered as a zero-alpha ghost surface on macOS Sequoia / M4 Pro (the avatar
-    SVG painted, but the WindowServer never composited the window). Tactical
-    retreat: `tauri.macos.conf.json` overrides set `macOSPrivateApi: false` +
-    clippy `transparent: false` + `shadow: true`. CSS in `/clippy` adds a
-    Mac-detected `data-platform="macos"` attribute and paints the warm cream
-    `--bg-card` background + 14px border-radius so the floater visually matches
-    the rest of the app. Windows keeps the gorgeous transparent floater
-    untouched — only Mac is affected by the override. Re-enable transparency
-    once we land a proven Sequoia ghost-window workaround (candidates: explicit
-    `setOpaque:NO` via objc2, `NSBackingStoreBuffered` reconfig, defer-window-
-    creation pattern).
+  - **Floater is TRANSPARENT on macOS again as of v3.4.0-nightly.5.** This entry
+    used to say the opposite and was two months stale — read the config, not
+    this line: `tauri.macos.conf.json` now sets `macOSPrivateApi: true` and
+    clippy `transparent: true`. The Sequoia zero-alpha ghost-surface bug that
+    forced the opaque retreat no longer reproduces on current macOS. What
+    remains from that era is the compositing kick in `lib.rs` setup (a
+    `hide()`→`show()` sequence ~120 ms after launch) — keep it; `show()` alone
+    on a transparent + macOSPrivateApi window can still leave the WindowServer
+    with nothing composited.
+  - **The floater is pinned above every Space via `pin_floater()` — never call
+    `set_always_on_top` on it.** tao implements that as a bare
+    `setLevel: NSFloatingWindowLevel`, which silently discards the level-25 +
+    `CanJoinAllSpaces | FullScreenAuxiliary` pin. A 30 s watchdog doing exactly
+    that is what stranded the avatar on its birth desktop for four releases. A
+    `floater_pin_guard` test fails the build if the call reappears anywhere
+    outside `pin_floater`.
+  - **`CGEventPost` succeeds without Accessibility permission and delivers
+    nothing** — no error, no exception. `inject::inject` MUST check
+    `is_accessibility_trusted()` before choosing a channel; inferring success
+    from the return meant dictated text vanished silently for macOS users
+    without the grant. ⌘V is also a CGEvent, so the clipboard *paste* fallback
+    is no escape either — `set_only` + tell the user.
   - **Floater positioning is in PHYSICAL pixels everywhere** (since nightly.12).
     `availableMonitors()` / `primaryMonitor()` / `outerPosition()` all return
     PHYSICAL px. Earlier code passed those values into `setPosition(new
@@ -594,7 +604,9 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ---
 
-*Last touched: 2026-07-18 — updated the stable line to v3.0.0 (accounts + sync,*
+*Last touched: 2026-09-02 — macOS signing enabled (open thread #1 closed), the*
+*auto-paste silent-drop bug fixed, and the stale "floater is opaque on macOS"*
+*note corrected. Prior: 2026-07-18 — updated the stable line to v3.0.0 (accounts + sync,*
 *audio upload, ownership-scoped delete, Purge) during the cross-repo doc lint.*
 *Prior: 2026-07-06 doc cleanup — pruned stale/superseded docs, added*
 *`HANDOVER.md` as the current-state entry point. Update this file when*
@@ -603,16 +615,33 @@ D:\Claude Code Projects\wispr-fox\            ← source tree
 
 ## Open threads (post-v2.0.0, for the next session)
 
-1. **Enable macOS signing** — user to add 3 GitHub secrets + uncomment the env
-   block in `release.yml` per `docs/MACOS_SIGNING.md`. Until then mac builds are
-   unsigned and the Accessibility grant resets each update (known/expected).
-2. **macOS auto-paste** — was reported not working even with Accessibility
-   granted; root cause is the unsigned-update grant reset (item 1 fixes it).
-   Re-verify after signing is on. Mac inject code is `inject/macos.rs`
-   (cfg-gated, can't cargo-check on the Windows dev box — change blind + lean on
-   CI, or test on the user's Mac).
-3. **Avatar plugin loader / SDK v2** — parked (ROADMAP "Next up").
-4. **Touch Bar** — code exists (`touchbar.rs`); auto-detect + toggle polish low
+1. ~~**Enable macOS signing**~~ — **DONE 2026-09-02 (v3.4.0-nightly.10).** It
+   never needed a Mac: the certificate was generated with OpenSSL on the Windows
+   box, the three secrets are set, and the `release.yml` block is live. CI fails
+   the macOS job unless the built app reports the expected `Authority=`. See
+   `docs/MACOS_SIGNING.md` (now a record, not a to-do) and
+   `D:/android-dev/keystores/README-wispr-fox.txt`. ⚠️ The certificate's CN must
+   start with one of tauri-macos-sign's seven hard-coded Apple prefixes AND its
+   subject must carry an OU, or the bundler cannot see it and says only "failed
+   to resolve signing identity".
+2. ~~**macOS auto-paste**~~ — **root cause found and fixed 2026-09-02
+   (v3.4.0-nightly.8), and it was NOT only the grant reset.** `CGEventPost`
+   succeeds without Accessibility and delivers nothing, so the app reported a
+   successful paste on every dictation while the text reached nowhere at all.
+   Fixed by checking the permission first. The grant reset (item 1) was the
+   second half. **Still owed: one confirmation on the user's Mac** that
+   auto-paste works after granting on a signed build.
+3. **The avatar does not follow the user across macOS Spaces — OPEN.** Reported
+   on an M-series Air; three fixes shipped (nightly.7/.8/.10) and none confirmed.
+   Do NOT ship a fourth theory blind: `platform_diagnostic` (Settings → About →
+   Run diagnostic) reports the floater's live `NSWindow.level` and
+   `collectionBehavior`, the version, and the `.app` path. Get that readout
+   first. Level should be 25 with bits 0 and 8 set; if it is, the pinning is not
+   the cause and the search should move elsewhere. Mac inject/window code is all
+   cfg-gated — it cannot be `cargo check`ed on the Windows dev box, so CI is the
+   first compile and the user's Mac is the first run.
+4. **Avatar plugin loader / SDK v2** — parked (ROADMAP "Next up").
+5. **Touch Bar** — code exists (`touchbar.rs`); auto-detect + toggle polish low
    priority.
 
 ## Multi-machine / multi-agent workflow (READ if the tree looks unexpected)
