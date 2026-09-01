@@ -114,7 +114,7 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
-- **`v3.4.0-nightly.9` (2026-09-02) — macOS builds are signed with a STABLE
+- **`v3.4.0-nightly.10` (2026-09-02) — macOS builds are signed with a STABLE
   identity; the Accessibility grant stops resetting on every update.** This was
   open thread #1 for months and was written up as work the owner owed on his
   Mac. It did not need a Mac.
@@ -138,7 +138,26 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
   - **CI now asserts the identity**, not just the seal. `codesign --verify`
     passes for an ad-hoc signature too, so a silent fallback would restore the
     every-update reset invisibly. The macOS job fails unless the built app
-    reports `Authority=wispr-fox self-signed`.
+    reports `Authority=Developer ID Application: wispr-fox self-signed`.
+  - ⚠️ **nightly.9 FAILED the macOS build and the error named the wrong thing.**
+    `failed to resolve signing identity`, two lines after `1 identity imported`
+    — so the p12, password and private key were all correct. The cause is that
+    **`tauri-macos-sign::identity::list()` finds a certificate by running
+    `security find-certificate -c <prefix>` for seven hard-coded Apple
+    prefixes**, and **`Team::from_x509` then requires an
+    organizationalUnitName** and silently drops any certificate without one. A
+    self-signed cert called `wispr-fox self-signed` is invisible to it. That
+    one message covers a missing cert, a wrong password, a keyless p12 AND a
+    misnamed subject, so it cannot be used for diagnosis — read
+    `crates/tauri-macos-sign/src/keychain/identity.rs`. Regenerated as
+    `CN=Developer ID Application: wispr-fox self-signed, OU=wispr-fox,
+    O=wispr-fox`; `APPLE_SIGNING_IDENTITY` must be a SUBSTRING of that CN.
+  - **Trust was the obvious first guess and it was wrong.** Signing runs
+    `codesign -s "<CN>" --keychain <path>`, which resolves by name and does not
+    apply the codesigning trust policy — `security find-identity -v -p
+    codesigning` is not in the path at all. A trust step is in CI anyway
+    (public cert committed at `.github/wispr-fox-signing-cert.pem`, no private
+    key) because a CI round trip costs 15 minutes and it removes the unknown.
   - **`docs/MACOS_SIGNING.md` rewritten from a to-do into a record.** It read
     as five manual steps owed by the owner; it is done, and the Keychain
     walkthrough is retained only for replacing the cert.

@@ -212,6 +212,19 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
+      # Trust the self-signed root. Signing does not strictly need this -- the
+      # bundler runs `codesign -s "<CN>" --keychain <path>`, which resolves the
+      # identity by name rather than through the codesigning trust policy -- but
+      # it is one command against a public certificate, and it removes the only
+      # remaining way this can fail for a reason that is hard to read from a log.
+      - name: Trust the wispr-fox signing certificate
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          openssl x509 -in .github/wispr-fox-signing-cert.pem -outform der -out /tmp/wispr-fox-cert.der
+          sudo security add-trusted-cert -d -r trustRoot             -k /Library/Keychains/System.keychain /tmp/wispr-fox-cert.der
+          echo "Trusted: $(openssl x509 -in .github/wispr-fox-signing-cert.pem -noout -subject)"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -234,6 +247,13 @@ jobs:
           # LIVE since 2026-09-02. The three secrets are set on this repo; the
           # certificate and its password are archived on the build machine at
           # D:/android-dev/keystores/ (see README-wispr-fox.txt there).
+          #
+          # The certificate's Common Name MUST start with one of the seven
+          # prefixes tauri-macos-sign hard-codes ("Developer ID Application:"
+          # here) and its subject MUST carry an OU, or the bundler cannot see
+          # it at all and reports "failed to resolve signing identity" -- the
+          # same message it gives for a missing certificate or a wrong
+          # password. APPLE_SIGNING_IDENTITY must be a substring of that CN.
           #
           # Do NOT comment these back out one at a time, and do NOT leave one
           # set to an empty value: tauri-action treats even an EMPTY
@@ -282,8 +302,9 @@ jobs:
           # re-grants it after every single update. Fail loudly instead.
           AUTHORITY=$(codesign -dv --verbose=4 "$APP" 2>&1 | grep '^Authority=' | head -1 || true)
           echo "Signed by: ${AUTHORITY:-<none>}"
-          if [ "$AUTHORITY" != "Authority=wispr-fox self-signed" ]; then
-            echo "::error::Expected 'Authority=wispr-fox self-signed', got '${AUTHORITY:-<none>}'. The macOS Accessibility grant will reset on every update until this is fixed - check the APPLE_CERTIFICATE secrets."
+          EXPECTED="Authority=Developer ID Application: wispr-fox self-signed"
+          if [ "$AUTHORITY" != "$EXPECTED" ]; then
+            echo "::error::Expected '$EXPECTED', got '${AUTHORITY:-<none>}'. The macOS Accessibility grant will reset on every update until this is fixed - check the APPLE_CERTIFICATE secrets."
             exit 1
           fi
           echo "Bundle signature verified, with the stable identity."

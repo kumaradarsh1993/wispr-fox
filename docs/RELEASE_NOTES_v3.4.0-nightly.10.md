@@ -1,4 +1,4 @@
-# wispr-fox v3.4.0-nightly.9
+# wispr-fox v3.4.0-nightly.10
 
 **Grant Accessibility once. It stops resetting after this.**
 
