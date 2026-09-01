@@ -1,15 +1,22 @@
-# macOS code signing — making the Accessibility grant stick
+# macOS code signing - making the Accessibility grant stick
 
-> **Update (v3.4.0):** CI now **ad-hoc signs** the app bundle by default
-> (`bundle.macOS.signingIdentity: "-"` in `tauri.conf.json`). That was a
-> separate, more severe bug: the bundle had no `_CodeSignature`, so macOS
-> called the app **"damaged"** and refused to open it at all, with no
-> "Open Anyway" option. That is fixed with no secrets required.
+> **DONE as of 2026-09-02 (v3.4.0-nightly.9). Nothing below is owed.**
+> The certificate was generated with OpenSSL on the Windows build machine
+> rather than in Keychain Access, the three repository secrets are set, and
+> the signing block in `.github/workflows/release.yml` is uncommented and
+> live. CI now fails the macOS job if a build comes out signed by anything
+> other than `wispr-fox self-signed`, so a silent regression to ad-hoc
+> signing cannot ship.
 >
-> The self-signed certificate below is still worth doing — ad-hoc signatures
-> change hash on every build, so the **Accessibility grant still resets on
-> every update** until you set up a stable identity. Setting the three
-> secrets overrides the ad-hoc default automatically.
+> The certificate, its password, and recovery instructions are archived at
+> `D:/android-dev/keystores/` - see `README-wispr-fox.txt` there. GitHub
+> secrets are write-only, so that folder holds the only readable copy.
+>
+> **You have to grant Accessibility one more time**, on the first signed
+> build, because the identity changed. After that it survives updates.
+>
+> The manual Keychain Access walkthrough below is kept for the day the
+> certificate has to be replaced. It expires 2046-08-27.
 
 **Problem this solves:** on macOS, the Accessibility permission (the one that
 lets wispr-fox auto-paste) is tied to the app's *code-signing identity*. Our

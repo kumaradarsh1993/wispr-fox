@@ -114,6 +114,45 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.4.0-nightly.9` (2026-09-02) — macOS builds are signed with a STABLE
+  identity; the Accessibility grant stops resetting on every update.** This was
+  open thread #1 for months and was written up as work the owner owed on his
+  Mac. It did not need a Mac.
+  - **Certificate generated with OpenSSL on this Windows box**, not Keychain
+    Access: `CN=wispr-fox self-signed`, RSA 2048, `extendedKeyUsage=codeSigning`
+    critical, `basicConstraints=CA:true` (matching what Certificate Assistant's
+    "Self Signed Root" + "Code Signing" produces, deliberately — that is the
+    shape known to work). Valid to **2046-08-27**.
+  - ⚠️ **The PKCS#12 must not use OpenSSL 3's default encryption.** macOS
+    `security import` cannot read AES-256/PBKDF2 p12 files, and the failure
+    surfaces inside tauri-action as an opaque import error. Exported with
+    `-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`; verified the
+    readback says `pbeWithSHA1And3-KeyTripleDES-CBC`, and that the enclosed key
+    and cert share a modulus (a p12 without a matching private key is not an
+    identity and `codesign -s` will not find it).
+  - Secrets set via `gh secret set` (they are write-only afterwards). The
+    **only readable copy** of the cert + password is
+    `D:/android-dev/keystores/` alongside the Fox MD Android keystore, with
+    `README-wispr-fox.txt` explaining what breaks if it is lost — same
+    convention, same folder, so there is one place to look.
+  - **CI now asserts the identity**, not just the seal. `codesign --verify`
+    passes for an ad-hoc signature too, so a silent fallback would restore the
+    every-update reset invisibly. The macOS job fails unless the built app
+    reports `Authority=wispr-fox self-signed`.
+  - **`docs/MACOS_SIGNING.md` rewritten from a to-do into a record.** It read
+    as five manual steps owed by the owner; it is done, and the Keychain
+    walkthrough is retained only for replacing the cert.
+  - **The identity change resets the grant ONE more time** — expected, and
+    called out in the release notes. From the next update it persists.
+  - ⚠️ **The Bash-heredoc backslash trap bit twice in one session**, both times
+    in content I had just been warned about by this repo's own docs: `\n` in a
+    Python heredoc became a real newline inside a JS string literal (caught by
+    `npm run check`), and `D:\android-dev` became `D:<BEL>ndroid-dev` inside
+    `release.yml` — which would have shipped a workflow containing a control
+    character. **`grep -nP for a BEL byte` after any heredoc write, and parse the YAML,
+    is the cheap guard.** A workflow with a BEL in it fails in a way that looks
+    nothing like the cause.
+
 - **`v3.4.0-nightly.8` (2026-09-02) — macOS auto-paste was discarding text
   silently; Spaces still open.** Two reports from the M-series MacBook Air.
   - **`CGEventPost` succeeds without Accessibility permission and delivers

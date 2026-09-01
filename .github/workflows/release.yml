@@ -231,14 +231,19 @@ jobs:
           # generate a self-signed Code Signing cert, export the .p12, and add
           # these three repo secrets.
           #
-          # IMPORTANT — keep these COMMENTED until the secrets exist. tauri-action
-          # treats even an EMPTY APPLE_SIGNING_IDENTITY as "please sign", then
-          # fails at `security import` with no cert (this broke the v1.3.0 macOS
-          # build). So the FINAL step of docs/MACOS_SIGNING.md is: add the three
-          # secrets, THEN uncomment these three lines.
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # LIVE since 2026-09-02. The three secrets are set on this repo; the
+          # certificate and its password are archived on the build machine at
+          # D:/android-dev/keystores/ (see README-wispr-fox.txt there).
+          #
+          # Do NOT comment these back out one at a time, and do NOT leave one
+          # set to an empty value: tauri-action treats even an EMPTY
+          # APPLE_SIGNING_IDENTITY as "please sign", then fails at
+          # `security import` with no certificate to import. That is what broke
+          # the v1.3.0 macOS build. Either all three are present, or all three
+          # are gone.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           # Notarization (optional, needs a paid Apple Developer account) stays
           # off — leave these commented until/unless we enroll:
           # APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -269,7 +274,19 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$APP"
-          echo "Bundle signature verified."
+
+          # Signed, but by whom? An ad-hoc signature also passes the check
+          # above, and silently reverting to one would reinstate the bug this
+          # certificate exists to kill: macOS keys the Accessibility grant to
+          # the signing identity, so a per-build identity means the user
+          # re-grants it after every single update. Fail loudly instead.
+          AUTHORITY=$(codesign -dv --verbose=4 "$APP" 2>&1 | grep '^Authority=' | head -1 || true)
+          echo "Signed by: ${AUTHORITY:-<none>}"
+          if [ "$AUTHORITY" != "Authority=wispr-fox self-signed" ]; then
+            echo "::error::Expected 'Authority=wispr-fox self-signed', got '${AUTHORITY:-<none>}'. The macOS Accessibility grant will reset on every update until this is fixed - check the APPLE_CERTIFICATE secrets."
+            exit 1
+          fi
+          echo "Bundle signature verified, with the stable identity."
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
