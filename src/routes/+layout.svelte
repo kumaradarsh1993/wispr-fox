@@ -53,6 +53,12 @@
   async function checkAccessibility() {
     try {
       accessibilityOk = await api.accessibilityOk();
+      if (accessibilityOk) rememberGranted();
+      else {
+        try {
+          a11yHadItBefore = localStorage.getItem(A11Y_GRANTED_BEFORE) === "1";
+        } catch {}
+      }
     } catch (e) {
       console.warn("accessibility check failed", e);
       accessibilityOk = true; // fail open — never nag if the check itself errors
@@ -65,18 +71,43 @@
   // the process only when it next starts. So the honest thing to report is
   // "granted — now relaunch", not a failure.
   let a11yRepairNote = $state("");
+  let a11yWhy = $state(false);
+
+  // Fresh install or an update that dropped the grant? The two need different
+  // words: "wispr-fox needs permission" is confusing to someone who granted it
+  // last week, and "macOS dropped it during the update" is meaningless to
+  // someone who just installed. One marker distinguishes them — set the first
+  // time we ever see the permission held, and never cleared.
+  const A11Y_GRANTED_BEFORE = "wispr.a11y.grantedBefore";
+  let a11yHadItBefore = $state(false);
+  let a11yHeadline = $derived(
+    a11yHadItBefore
+      ? "macOS dropped the Accessibility permission during the update."
+      : "wispr-fox needs Accessibility permission to paste into other apps.",
+  );
+  let a11yAction = $derived(a11yHadItBefore ? "Repair" : "Grant");
+
+  function rememberGranted() {
+    try {
+      localStorage.setItem(A11Y_GRANTED_BEFORE, "1");
+    } catch {}
+  }
+
   async function repairAccessibility() {
     a11yRepairNote = "Asking macOS…";
     try {
       const trusted = await api.repairAccessibility();
       accessibilityOk = trusted;
-      a11yRepairNote = trusted
-        ? "Granted."
-        : "Approve wispr-fox in the macOS dialog (or in the list that just opened), then quit and reopen wispr-fox — the permission only reaches a running app when it restarts.";
+      if (trusted) {
+        rememberGranted();
+        a11yRepairNote = "Done.";
+      } else {
+        a11yRepairNote = "Approve it in the macOS dialog, then quit and reopen wispr-fox.";
+      }
     } catch (e) {
       console.warn("accessibility repair failed", e);
       a11yRepairNote =
-        "Couldn't repair automatically. In System Settings → Privacy & Security → Accessibility, select wispr-fox, press −, then add it again with +.";
+        "Couldn't do it automatically — in Accessibility, select wispr-fox, press −, then add it with +.";
     }
   }
   async function grantAccessibility() {
@@ -643,23 +674,27 @@
     <main class="main-content">
       {#if showA11yBanner}
         <div class="a11y-banner" role="alert">
-          <span class="a11y-text">
-            Auto-paste needs <strong>Accessibility</strong> permission — macOS drops it on every update.
-            Until you grant it, dictated text lands on the clipboard but won't paste itself.
-            {#if a11yRepairNote}
-              <strong class="a11y-note">{a11yRepairNote}</strong>
-            {:else}
-              <span class="a11y-note">
-                If wispr-fox already looks <em>enabled</em> in System Settings, that switch is
-                pointing at the previous build — turning it off and on again won't help.
-                <strong>Repair permission</strong> removes the stale entry and asks macOS afresh.
-              </span>
-            {/if}
-          </span>
-          <button class="a11y-btn" onclick={repairAccessibility}>Repair permission</button>
-          <button class="a11y-btn ghost" onclick={grantAccessibility}>Open Settings</button>
-          <button class="a11y-btn ghost" onclick={() => checkAccessibility()}>Re-check</button>
-          <button class="a11y-x" onclick={() => (a11yDismissed = true)} aria-label="Dismiss">✕</button>
+          <div class="a11y-row">
+            <span class="a11y-text">{a11yHeadline}</span>
+            <button class="a11y-btn" onclick={repairAccessibility}>{a11yAction}</button>
+            <button
+              class="a11y-link"
+              onclick={() => (a11yWhy = !a11yWhy)}
+              aria-expanded={a11yWhy}>Why?</button>
+            <button class="a11y-x" onclick={() => (a11yDismissed = true)} aria-label="Dismiss">✕</button>
+          </div>
+          {#if a11yRepairNote}
+            <p class="a11y-status">{a11yRepairNote}</p>
+          {/if}
+          {#if a11yWhy}
+            <p class="a11y-why">
+              macOS ties this permission to the app's signature, so it can look switched on in
+              System Settings while pointing at an older build. {a11yAction} clears that and asks
+              again. Until then your words go to the clipboard — press ⌘V.
+              <button class="a11y-link" onclick={grantAccessibility}>Open System Settings</button>
+              <button class="a11y-link" onclick={() => checkAccessibility()}>Re-check</button>
+            </p>
+          {/if}
         </div>
       {/if}
       {@render children?.()}
@@ -1306,37 +1341,51 @@
     transition: background 200ms ease, color 200ms ease;
   }
 
-  .a11y-note {
-    display: block;
-    margin-top: 4px;
-    opacity: 0.85;
-    font-size: 0.94em;
+  /* In FLOW, not fixed. The old banner was `position: fixed; top: 10px;
+     left: 50%` — it sat on top of whatever page was underneath and covered
+     controls. A permission notice is not a toast: it stays until acted on, so
+     it has to take up its own space rather than borrow someone else's. */
+  .a11y-banner {
+    margin: 0 0 14px;
+    padding: 9px 12px;
+    background: color-mix(in srgb, var(--warning) 9%, var(--bg-card));
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .a11y-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .a11y-status,
+  .a11y-why {
+    margin: 7px 0 0;
+    font-size: 12.5px;
+    opacity: 0.9;
+  }
+  .a11y-link {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .a11y-why .a11y-link {
+    margin-left: 8px;
   }
   /* macOS Accessibility nudge — floats over content (position: fixed) so it
      never disrupts page layout/scroll. Only rendered when the backend
      reports the permission is missing (i.e. macOS, not yet granted). */
-  .a11y-banner {
-    position: fixed;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    max-width: min(680px, calc(100vw - 80px));
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: var(--bg-elev);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--warning);
-    border-radius: 8px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
-    font-size: 12px;
-    line-height: 1.35;
-  }
   .a11y-text {
     flex: 1 1 auto;
+    min-width: 220px;
   }
   .a11y-btn {
     flex: 0 0 auto;

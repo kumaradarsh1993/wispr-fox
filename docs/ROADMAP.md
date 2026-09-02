@@ -7,6 +7,27 @@ maintainer project, scope can shift.
 
 These are queued, scoped, and likely to land in the next 1–2 releases.
 
+- **Sign in first, set up second** (requested 2026-09-02). A fresh install
+  currently drops you straight into onboarding with no way to say "I already
+  have wispr-fox". The first screen should ask instead: **New here** →
+  the existing onboarding, or **Already using wispr-fox** → sign in (Google or
+  email) → straight into the app with devices, history, usage and **API keys**
+  already synced. The sync engine and the account system for this already
+  exist — the missing piece is the fork at first launch, so a second machine
+  never has to be configured by hand. This is the difference between "install
+  and go" and "install and spend ten minutes pasting keys".
+- **Tell people about the traps we already work around** (requested
+  2026-09-02). Several known failure modes are handled silently in code, so a
+  user hitting one has no idea what happened or that it is expected: macOS
+  Accessibility dropping after an update (text goes to the clipboard instead of
+  pasting), sync not connecting, the mic taking seconds to come up on Bluetooth
+  and clipping the start of a sentence, a noisy room hurting the transcript,
+  and how to change or hide the avatar. Wanted as **contextual hints shown near
+  where the problem shows up**, surfacing once and then getting out of the way —
+  NOT a help page nobody opens, and not another wall of banner text. The
+  Accessibility banner rewritten in v3.4.0-nightly.11 is the shape to copy: one
+  short line, one button, everything else behind a "Why?".
+
 - **v2.1.0 stable** — promote the current nightly line (wave/siri minimal
   avatars, Codex pixel pets, auto-titled history, reimagined onboarding) once
   it's user-tested and gets a ship signal.
