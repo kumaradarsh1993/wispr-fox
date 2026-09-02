@@ -46,6 +46,10 @@
       `floater level: ${d.floater_level ?? "unknown"} (want 25)`,
       `floater collectionBehavior: ${hex(d.floater_collection_behavior)} (want bits 0 and 8)`,
       `floater pinned to all Spaces: ${d.floater_pinned}`,
+      `floater on active desktop now: ${d.floater_on_active_space ?? "n/a"}`,
+      `desktop history (2s apart, oldest first; 1=on, 0=off, ·=hidden):`,
+      `  ${d.floater_space_timeline || "(none yet)"}`,
+      `  on=${d.floater_space_on} off=${d.floater_space_off}`,
     ].join("\n");
   }
 
@@ -81,6 +85,13 @@
     What this build actually is, and what the operating system thinks of it.
     Useful when something works on one machine and not another — paste it into
     a bug report rather than describing the symptom.
+  </p>
+  <p class="diag-lede">
+    <strong>Chasing the avatar not following you between desktops?</strong>
+    Swipe to another desktop, start and stop a dictation there, then come back
+    and run this. The <em>desktop history</em> line covers the last two minutes
+    and says whether macOS thought the avatar was on the desktop you were
+    looking at.
   </p>
   <div class="link-row">
     <button class="btn ghost" onclick={runDiagnostic}>Run diagnostic</button>

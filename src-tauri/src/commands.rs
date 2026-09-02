@@ -110,6 +110,19 @@ pub fn show_floater(app: AppHandle) {
     // window is placed on the Space it belongs to, not the one in front of the
     // user. All three calls queue onto the main thread in this order.
     crate::pin_floater(&w);
+
+    // On macOS, `show()` on an ALREADY-visible window does nothing at the
+    // WindowServer level, so a floater that has been on screen since launch is
+    // never re-registered and stays wherever it was first composited. That is
+    // one of the two candidate explanations for the avatar being stuck on the
+    // desktop the app started on. hide() → show() is this app's established
+    // remedy for a stale surface (the same cycle runs at startup); it is
+    // imperceptible and costs nothing when the window was hidden anyway.
+    #[cfg(target_os = "macos")]
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+    }
+
     let _ = w.show();
     #[cfg(target_os = "macos")]
     crate::macos_order_front(&w);
@@ -345,6 +358,19 @@ pub struct PlatformDiagnostic {
     pub floater_collection_behavior: Option<u64>,
     /// Both of the above are what we asked for.
     pub floater_pinned: bool,
+    /// macOS `NSWindow.isOnActiveSpace` right now — does the OS consider the
+    /// floater present on the desktop in front of the user?
+    pub floater_on_active_space: Option<bool>,
+    /// The last two minutes of that answer, oldest → newest, sampled every 2s.
+    /// `1` on the active Space, `0` not, `·` hidden. Swipe to another desktop,
+    /// wait, swipe back, and read it: a run of `0`s means macOS is not honouring
+    /// the window's collection behavior and the fix is at the application
+    /// level; a solid run of `1`s means it IS there and simply is not being
+    /// drawn, which is a compositing bug and has nothing to do with Spaces.
+    pub floater_space_timeline: String,
+    /// Visible samples counted (on-active, off-active).
+    pub floater_space_on: usize,
+    pub floater_space_off: usize,
 }
 
 #[tauri::command]
@@ -383,7 +409,17 @@ pub fn platform_diagnostic(app: AppHandle) -> PlatformDiagnostic {
             .map(|b| b & 1 != 0 && b & (1 << 8) != 0)
             .unwrap_or(false);
 
+    let probe = app.try_state::<crate::space_probe::SpaceProbe>();
+    let (on_count, off_count) = probe.as_ref().map(|p| p.counts()).unwrap_or((0, 0));
+
     PlatformDiagnostic {
+        floater_on_active_space: crate::space_probe::sample_once(&app).map(|s| s.on_active_space),
+        floater_space_timeline: probe
+            .as_ref()
+            .map(|p| p.timeline())
+            .unwrap_or_default(),
+        floater_space_on: on_count,
+        floater_space_off: off_count,
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
         exe_path: exe,

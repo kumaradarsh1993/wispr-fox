@@ -114,6 +114,53 @@ Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
 
 ## Current state
 
+- **`v3.4.0-nightly.12` (2026-09-02) — the Spaces diagnosis was WRONG, proved by
+  the user's own diagnostic, and the investigation restarts from a measurement.**
+  His readout on nightly.8: `floater level: 25`, `collectionBehavior: 257
+  (0x101)`, `pinned to all Spaces: true` — **exactly what nightly.7/.8 set out to
+  achieve** — and the avatar still only ever appears on the desktop the app
+  launched on. **The window configuration was never the problem.** Three
+  releases went into fixing it. The one real defect found along the way (tao's
+  `set_always_on_top` clobbering the level) stays fixed; it simply was not this.
+  - **New `space_probe.rs` samples `NSWindow.isOnActiveSpace` every 2 s** and
+    keeps two minutes of history, surfaced in the diagnostic as a
+    `1`/`0`/`·` timeline. This splits the two failures that produce an identical
+    user report and that NO amount of reading the window's configuration can
+    tell apart: **(a)** macOS is not placing the window on the active Space →
+    something at the *application* level is overriding the collection behavior;
+    **(b)** macOS IS placing it there and nothing is drawn → the transparent +
+    `macOSPrivateApi` compositing failure this app already has history with,
+    which has nothing to do with Spaces. **Do not ship another fix until this
+    timeline has been read.**
+  - **`show_floater` now forces hide()→show() when the window is already
+    visible** (macOS only). Candidate fix for (b): `show()` on an
+    already-visible window is a no-op at the WindowServer level, so a floater
+    that has been on screen since launch is never re-registered and stays where
+    it was first composited. Same cycle the startup path already uses.
+  - ⚠️ **Two more user-reported bugs, both unfixed, both likely related — do not
+    treat them as cosmetic.**
+    1. **The floater is visible from launch and stays there, with visibility set
+       to `auto`.** Windows behaves correctly; only macOS is wrong. It hides
+       only after the first dictation completes. This matters beyond the
+       annoyance: a permanently-visible window is what makes every `show()` a
+       no-op, which is the mechanism behind candidate (b). The startup show in
+       `lib.rs` is unconditional because Rust cannot read the localStorage the
+       visibility tri-state lives in — **the real fix is to move avatar
+       visibility into the Rust settings store** so startup knows the mode.
+       That also kills the launch-flash papercut CLAUDE.md already records.
+    2. **The whole app stops responding to clicks, twice, recoverable only by
+       force-quitting.** Hover highlights still worked; clicks did not register;
+       no crash, no error. The suspect is the floater at `NSStatusWindowLevel`
+       (25) taking key-window status — Tauri's `show()` is
+       `makeKeyAndOrderFront:`, so every show makes the floater key and the
+       main window cannot take input. If confirmed, the fix is to stop the
+       floater ever becoming key (non-activating panel / `canBecomeKeyWindow`
+       false); mouse events do not need key status, only the keyboard does.
+       **Not shipped — it is a guess, and this session has already shipped
+       three of those.**
+  - Also reported: a brief flash of the window border as the avatar exits (not
+    the retired opaque-era `.mac` CSS — that only styles the wave skin).
+
 - **`v3.4.0-nightly.10` (2026-09-02) — macOS builds are signed with a STABLE
   identity; the Accessibility grant stops resetting on every update.** This was
   open thread #1 for months and was written up as work the owner owed on his

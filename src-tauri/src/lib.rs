@@ -12,6 +12,7 @@ mod llm;
 mod power;
 mod secrets;
 mod settings;
+mod space_probe;
 mod stt;
 mod sync;
 mod tray;
@@ -233,6 +234,11 @@ pub fn run() {
             app.manage(flow);
             app.manage(usage);
             app.manage(power::JsPingState::new());
+            app.manage(space_probe::SpaceProbe::new());
+            // Samples whether macOS puts the floater on the desktop the
+            // user is actually looking at. macOS-only; see space_probe.rs
+            // for why a window-configuration read could not settle this.
+            space_probe::spawn(app.handle().clone());
 
             // Intercept main-window close: hide instead of quit. The app keeps
             // running as a tray-resident service. Real quit goes through the

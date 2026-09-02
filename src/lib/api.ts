@@ -495,6 +495,10 @@ export type PlatformDiagnostic = {
   floater_level: number | null;
   floater_collection_behavior: number | null;
   floater_pinned: boolean;
+  floater_on_active_space: boolean | null;
+  floater_space_timeline: string;
+  floater_space_on: number;
+  floater_space_off: number;
 };
 
 /** Subscribe to flow state transitions emitted by Rust flow.rs. */
