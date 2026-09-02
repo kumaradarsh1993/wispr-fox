@@ -838,6 +838,7 @@
     let unlistenWarn: (() => void) | undefined;
     let unlistenLevel: (() => void) | undefined;
     let unlistenFarewell: (() => void) | undefined;
+    let unlistenSpaceChanged: (() => void) | undefined;
 
     // Subscribe first, then rehydrate. If an event wins the race, revision
     // filtering makes the older command response a harmless no-op.
@@ -887,6 +888,13 @@
       void playExit();
     }).then((u) => (unlistenFarewell = u));
 
+    // The user swiped to another Space and Rust has just moved the floater
+    // onto it. Play the gentle "landed here" settle so the hop reads as
+    // deliberate — the avatar following you — rather than a silent teleport.
+    listen("wispr:space_changed", () => {
+      playLand();
+    }).then((u) => (unlistenSpaceChanged = u));
+
     // Blinks during idle AND listening so Clippy feels alive while attentive.
     // Uses displayState (the visible state) so blinks follow what's drawn.
     const blinkTimer = setInterval(() => {
@@ -920,10 +928,18 @@
       lastBeat = now;
       if (gap > 4000) recoverFloater(`resume detected (gap ${gap}ms)`);
     }, 1000);
-    // Also self-heal the instant the floater regains visibility/focus —
-    // covers the case where the surface is dead and the 1s tick hasn't fired
-    // yet. These are cheap; the backend only nudges when the window is
-    // actually meant to be on-screen.
+    // Resync state the instant the floater regains visibility/focus.
+    //
+    // Platform split for the repaint: on WINDOWS, visibilitychange fires on
+    // minimize/restore and resume — a WebView2 surface that died in sleep
+    // needs the force_repaint nudge here, and the window was hidden anyway so
+    // the nudge is invisible. On MACOS the floater now rides along on every
+    // Space switch, so "became visible" fires on every arrival — and
+    // force_repaint is a hide()→show() cycle, which made the fox visibly
+    // blink out and back on each swipe (user-reported, twice). macOS keeps
+    // its dead-surface cover from the clock-gap watcher above, the Rust
+    // resume detector, and the 30s watchdog's stale-heartbeat repaint.
+    const IS_MAC = navigator.userAgent.includes("Macintosh");
     const resyncFlow = () => {
       void api.getFlowSnapshot()
         .then(applyFlowSnapshot)
@@ -931,12 +947,12 @@
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        recoverFloater("became visible");
+        if (!IS_MAC) recoverFloater("became visible");
         resyncFlow();
       }
     };
     const onFocus = () => {
-      recoverFloater("regained focus");
+      if (!IS_MAC) recoverFloater("regained focus");
       resyncFlow();
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -1078,6 +1094,7 @@
       unlistenWarn?.();
       unlistenLevel?.();
       unlistenFarewell?.();
+      unlistenSpaceChanged?.();
       if (waveRaf != null) cancelAnimationFrame(waveRaf);
       cancelPendingAutoHide();
       if (_enterTimer) clearTimeout(_enterTimer);
@@ -1462,11 +1479,16 @@
   // first mount so the avatar pops in rather than blinking into existence.
   const ENTER_MS = 380;
   const EXIT_MS = 240;
+  // "Landing" on a new Space: the window is ALREADY visible (Rust just moved
+  // it to the Space the user swiped to), so this is a gentle settle — a small
+  // scale/lift bounce — NOT the from-nothing "enter". Kept short so it reads as
+  // "it hopped over here", not a full re-entrance.
+  const LAND_MS = 460;
   // After the flow returns to idle, wait this long (letting the success/status
   // bubble finish) before playing the exit + hiding in `auto` mode.
   const AUTO_HIDE_GRACE_MS = 1800;
 
-  let arriveClass = $state<"enter" | "exit" | "">("");
+  let arriveClass = $state<"enter" | "exit" | "land" | "">("");
   let _enterTimer: ReturnType<typeof setTimeout> | null = null;
   function playEnter() {
     if (_enterTimer) clearTimeout(_enterTimer);
@@ -1475,6 +1497,17 @@
       arriveClass = "";
       _enterTimer = null;
     }, ENTER_MS);
+  }
+  // Play the "landed on a new Space" settle. Skipped if we're mid enter/exit
+  // (those own the avatar and shouldn't be interrupted by a Space hop).
+  function playLand() {
+    if (arriveClass === "enter" || arriveClass === "exit") return;
+    if (_enterTimer) clearTimeout(_enterTimer);
+    arriveClass = "land";
+    _enterTimer = setTimeout(() => {
+      arriveClass = "";
+      _enterTimer = null;
+    }, LAND_MS);
   }
   function playExit(): Promise<void> {
     if (_enterTimer) {
@@ -1608,6 +1641,7 @@
   class:mic-waiting={micWaiting && displayState === "listening"}
   class:arrive-enter={arriveClass === "enter"}
   class:arrive-exit={arriveClass === "exit"}
+  class:arrive-land={arriveClass === "land"}
   data-arrive-origin={isMinimalSkin(skin) ? "center" : "bottom"}
   data-arrive-skin={skin === "wave" ? "wave" : skin === "siri" ? "siri" : "character"}
   style="--fscale:{fscale}; --bubble-scale:{bubbleScale}; --bubble-bottom:{bubbleBottom}px;"
@@ -2556,6 +2590,26 @@
   }
   .clippy-stage[data-arrive-skin="siri"].arrive-exit {
     animation: arrive-exit-siri 240ms ease-in both;
+  }
+  /* "Landed on a new Space" settle. The window is already visible, so NEVER
+     touch opacity here — a fade-in on an already-visible fox reads as a blink
+     or rendering glitch (user-reported). A pure hop: quick lift with a slight
+     stretch, then settle. */
+  .clippy-stage.arrive-land {
+    animation: arrive-land 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes arrive-land {
+    0%   { transform: translateY(0) scale(1); }
+    35%  { transform: translateY(-8px) scale(1.05); }
+    70%  { transform: translateY(1px) scale(0.99); }
+    100% { transform: translateY(0) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Respect the OS "reduce motion" setting: no hop at all — the fox simply
+       is there, which is the calmest possible arrival. */
+    .clippy-stage.arrive-land {
+      animation: none;
+    }
   }
   @keyframes arrive-enter {
     0%   { opacity: 0; transform: scale(0.6); }

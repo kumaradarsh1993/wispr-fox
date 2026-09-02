@@ -12,6 +12,7 @@ mod llm;
 mod power;
 mod secrets;
 mod settings;
+mod space_follow;
 mod space_probe;
 mod stt;
 mod sync;
@@ -53,6 +54,14 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }));
+    }
+
+    // NSPanel support — the floater must be a non-activating NSPanel to be
+    // allowed onto other apps' fullscreen Spaces at all (see the conversion in
+    // setup below for the full story).
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
     }
 
     let result = builder
@@ -240,6 +249,34 @@ pub fn run() {
             // for why a window-configuration read could not settle this.
             space_probe::spawn(app.handle().clone());
 
+            // Follow the user across Spaces the INSTANT they switch, rather than
+            // waiting up to 30s for the watchdog to re-pin. Observes
+            // NSWorkspaceActiveSpaceDidChangeNotification and re-pins +
+            // orders-front the floater on each change. macOS-only; no-op elsewhere.
+            space_follow::spawn(app.handle().clone());
+
+            // THE fix for "the floater never appears over another app's
+            // FULLSCREEN Space". A *Regular* macOS app (one with a Dock icon
+            // that can become frontmost) cannot show any window — however it is
+            // pinned — over a different app's fullscreen Space; macOS reserves
+            // that for Accessory/agent apps. `CanJoinAllSpaces |
+            // FullScreenAuxiliary` at level 25 is necessary but NOT sufficient
+            // on its own, which is why re-pinning on every Space change still
+            // left the avatar stuck on its launch Space.
+            //
+            // Switching to Accessory drops the Dock icon (the app is already
+            // tray-resident and hides-on-close, so this fits), and in return the
+            // floater rides over every Space including fullscreen apps — the
+            // behaviour every menu-bar overlay utility relies on. The main
+            // settings/history window still opens via the tray and the hotkey;
+            // it simply no longer bounces a Dock icon.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::ActivationPolicy;
+                app.set_activation_policy(ActivationPolicy::Accessory);
+                tracing::info!("activation policy = Accessory (overlay rides fullscreen Spaces)");
+            }
+
             // Intercept main-window close: hide instead of quit. The app keeps
             // running as a tray-resident service. Real quit goes through the
             // tray menu's "Quit" item which calls app.exit().
@@ -256,6 +293,53 @@ pub fn run() {
             // Same for the Clippy floating window — close = hide so it can be
             // brought back via the tray menu without restarting the app.
             if let Some(clippy) = app.get_webview_window("clippy") {
+                // THE actual fix for "the floater never appears over another
+                // app's fullscreen Space". Empirically proven on this machine
+                // (M-series, macOS 26): a plain NSWindow with level 25 +
+                // CanJoinAllSpaces|FullScreenAuxiliary + Accessory policy still
+                // reads isOnActiveSpace == false after every Space switch — the
+                // WindowServer silently refuses the placement for regular
+                // windows. Converting the window's class to NSPanel with the
+                // non-activating style is what every working overlay does, and
+                // is the form the WindowServer accepts.
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri_nspanel::WebviewWindowExt as _;
+                    match clippy.to_panel() {
+                        Ok(panel) => {
+                            // NSNonactivatingPanelMask (1 << 7): clicking the
+                            // fox never activates the app or steals the caret
+                            // from whatever the user is dictating into.
+                            panel.set_style_mask(1 << 7);
+                            // NSPanel hides itself whenever its app deactivates
+                            // BY DEFAULT — fatal for an overlay owned by an
+                            // Accessory app that is almost never active.
+                            panel.set_hides_on_deactivate(false);
+                            panel.set_becomes_key_only_if_needed(true);
+                            // tauri-nspanel's RawNSPanel answers
+                            // canBecomeKeyWindow = YES (it is built for
+                            // Spotlight-style launchers that TYPE into their
+                            // panel). For this floater that is a focus-theft
+                            // bug: show_floater() runs at every recording start
+                            // and show() = makeKeyAndOrderFront, so the fox
+                            // yanked the caret out of the box the user was
+                            // about to dictate into (reported as "paste goes to
+                            // the wrong Space"). Swap in a subclass that
+                            // refuses key status — same panel powers, no theft.
+                            macos_floater_refuse_key(&clippy);
+                            tracing::info!(
+                                "clippy floater converted to non-activating NSPanel"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(?e, "floater NSPanel conversion FAILED — fullscreen-Space following will not work");
+                        }
+                    }
+                    // Re-assert level 25 + join-all-Spaces + fullscreen-auxiliary
+                    // on the (now panel-classed) window.
+                    pin_floater(&clippy);
+                }
+
                 let clippy_for_handler = clippy.clone();
                 clippy.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
@@ -633,6 +717,75 @@ pub(crate) fn pin_floater<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     {
         let _ = window.set_always_on_top(true);
     }
+}
+
+/// Make the floater panel REFUSE keyboard focus, permanently.
+///
+/// tauri-nspanel converts the window's class to its `RawNSPanel`, which
+/// overrides `canBecomeKeyWindow` to YES — right for a Spotlight-style
+/// launcher, wrong for this overlay: `show()` (= `makeKeyAndOrderFront`) runs
+/// at every recording start via `show_floater`, and a key-capable panel then
+/// steals the caret from the app the user is dictating into. The text later
+/// pastes into whatever got focus instead — the "paste goes to the app on
+/// Space 1" bug.
+///
+/// This registers (once) a `RawNSPanel` subclass whose `canBecomeKeyWindow`
+/// answers NO and swaps the floater onto it. Everything else about the panel —
+/// the class the WindowServer sees, the collection behavior, the level — is
+/// inherited unchanged, so fullscreen-Space riding keeps working.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_floater_refuse_key<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use objc2::declare::ClassBuilder;
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
+
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        static REGISTER: std::sync::Once = std::sync::Once::new();
+        static mut CLASS: *const AnyClass = std::ptr::null();
+
+        REGISTER.call_once(|| {
+            // RawNSPanel is registered by tauri-nspanel the first time a
+            // window is converted; this helper is only called right after a
+            // successful to_panel(), so the class exists.
+            let Some(superclass) = AnyClass::get(c"RawNSPanel") else {
+                tracing::warn!("RawNSPanel class missing; floater may steal focus");
+                return;
+            };
+            let Some(mut builder) = ClassBuilder::new(c"WisprNonKeyPanel", superclass) else {
+                tracing::warn!("WisprNonKeyPanel already registered elsewhere?");
+                return;
+            };
+            extern "C" fn no(_this: *mut AnyObject, _cmd: Sel) -> Bool {
+                Bool::NO
+            }
+            unsafe {
+                builder.add_method(
+                    objc2::sel!(canBecomeKeyWindow),
+                    no as extern "C" fn(*mut AnyObject, Sel) -> Bool,
+                );
+                CLASS = builder.register();
+            }
+        });
+
+        // SAFETY: main thread; CLASS set by the Once above (or null on the
+        // warn paths, guarded below).
+        unsafe {
+            let cls_ptr = std::ptr::addr_of!(CLASS).read();
+            if cls_ptr.is_null() {
+                return;
+            }
+            let Ok(ptr) = w.ns_window() else { return };
+            if ptr.is_null() {
+                return;
+            }
+            let ns_window = ptr as *mut AnyObject;
+            // object_setClass via the runtime: swap the instance's class in
+            // place, exactly how tauri-nspanel performed its own conversion.
+            let _: *mut AnyObject = msg_send![ns_window, class]; // touch to ensure realized
+            objc2::runtime::AnyObject::set_class(&*ns_window, &*cls_ptr);
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]

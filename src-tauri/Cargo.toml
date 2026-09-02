@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "3.4.0-nightly.12"
+version = "3.4.0-nightly.13"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -94,6 +94,13 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.23"
 core-foundation = "0.10"
+# Converts the floater WebviewWindow into a non-activating NSPanel. A plain
+# NSWindow — whatever its level / collectionBehavior — is refused placement on
+# other apps' fullscreen Spaces by the WindowServer (verified empirically:
+# isOnActiveSpace stayed false across Space switches with level 25 +
+# CanJoinAllSpaces|FullScreenAuxiliary + Accessory policy). NSPanel with
+# NonactivatingPanel is what every working Tauri overlay uses for this.
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 # Touch Bar support â€” objc2 + objc2-foundation are already transitive deps
 # from Tauri; adding them as direct deps pins the version and enables the
 # features we need (NSTouchBar, NSButton, etc.).  Zero added weight on

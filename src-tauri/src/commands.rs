@@ -111,19 +111,16 @@ pub fn show_floater(app: AppHandle) {
     // user. All three calls queue onto the main thread in this order.
     crate::pin_floater(&w);
 
-    // On macOS, `show()` on an ALREADY-visible window does nothing at the
-    // WindowServer level, so a floater that has been on screen since launch is
-    // never re-registered and stays wherever it was first composited. That is
-    // one of the two candidate explanations for the avatar being stuck on the
-    // desktop the app started on. hide() → show() is this app's established
-    // remedy for a stale surface (the same cycle runs at startup); it is
-    // imperceptible and costs nothing when the window was hidden anyway.
-    #[cfg(target_os = "macos")]
-    if w.is_visible().unwrap_or(false) {
-        let _ = w.hide();
+    // Historical note: this used to hide()→show() an already-visible floater
+    // to force the WindowServer to re-register the surface on the current
+    // Space — the era when the floater was a plain NSWindow that macOS refused
+    // to carry across Spaces. It is now a non-activating NSPanel that
+    // genuinely exists on every Space, so the cycle would only produce a
+    // visible blink at every recording start. An already-visible floater needs
+    // nothing beyond the re-pin above; a hidden one just needs show().
+    if !w.is_visible().unwrap_or(false) {
+        let _ = w.show();
     }
-
-    let _ = w.show();
     #[cfg(target_os = "macos")]
     crate::macos_order_front(&w);
 }
