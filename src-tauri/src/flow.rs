@@ -1502,6 +1502,35 @@ impl Flow {
             }
         }
 
+        // Shrink the upload to 16 kHz mono — the rate every STT provider
+        // resamples to server-side anyway, so the transcript is unaffected.
+        // On 48 kHz mics (every Mac) this cuts the upload 3x and keeps long
+        // dictations under the 20 MB chunk threshold (chunks upload
+        // sequentially, each paying its own round-trip — the measured cause
+        // of "the Mac takes 15-50 s where other machines take 2"). Side file
+        // only: history keeps the full-rate original. Fail-open like the
+        // denoise and gain stages above.
+        let (stt_input, _shrink_guard) = {
+            let src = stt_input.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::audio::wavio::shrink_for_stt(&src)
+            })
+            .await
+            .map_err(anyhow::Error::new)
+            .and_then(|r| r)
+            {
+                Ok(Some(small)) => {
+                    let guard = TempFileGuard(small.clone());
+                    (small, Some(guard))
+                }
+                Ok(None) => (stt_input, None),
+                Err(e) => {
+                    tracing::warn!("stt downsample failed (non-fatal, sending original): {e:#}");
+                    (stt_input, None)
+                }
+            }
+        };
+
         let wav_size = tokio::fs::metadata(&stt_input)
             .await
             .map(|m| m.len())

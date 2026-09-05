@@ -154,6 +154,41 @@ pub fn tagged_path(src: &Path, tag: &str) -> PathBuf {
 /// and skip out on the first check. Rewriting in place (via a temp sibling +
 /// rename) keeps a single audio file per history row, so playback, the (i)
 /// inspector, and the retention sweeper all keep working unchanged.
+/// Downsample a recording to a 16 kHz mono 16-bit SIDE FILE for the STT
+/// upload, leaving the original untouched for playback and re-diagnosis.
+///
+/// Why this exists: live dictations upload the mic's NATIVE rate. On Macs
+/// that is 48 kHz — 96 KB per second of speech — so the upload is 3x the
+/// bytes the provider needs (every Whisper endpoint resamples to 16 kHz
+/// server-side; this is also what `canonicalize_in_place` relies on for
+/// dragged-in files, where the ~9x shrink comment was measured). Worse,
+/// past ~3.5 minutes the 48 kHz file crosses `TARGET_CHUNK_BYTES` and gets
+/// split into chunks that upload SEQUENTIALLY, each paying its own
+/// round-trip. Measured on an M-series MacBook on a 171 Mbps uplink, STT
+/// wall-time tracked upload size almost perfectly (~49 s for a 21-minute
+/// dictation). Shrinking to 16 kHz cuts the bytes 3x and keeps recordings
+/// under the chunk threshold up to ~10.5 minutes.
+///
+/// Returns `None` when the file is already at or below 16 kHz (nothing to
+/// gain — e.g. Windows array mics that capture at 16 kHz). Fail-open by
+/// design: callers treat any error as "send the original".
+pub fn shrink_for_stt(path: &Path) -> Result<Option<PathBuf>> {
+    let spec = hound::WavReader::open(path)
+        .with_context(|| format!("opening WAV {path:?}"))?
+        .spec();
+    if spec.sample_rate <= STT_SAMPLE_RATE {
+        return Ok(None);
+    }
+
+    let decoded = read_mono_f32(path)?;
+    anyhow::ensure!(!decoded.samples.is_empty(), "WAV contains no audio");
+    let samples = resample_linear(&decoded.samples, decoded.sample_rate, STT_SAMPLE_RATE);
+
+    let out = tagged_path(path, "stt16k");
+    write_mono_i16(&out, &samples, STT_SAMPLE_RATE)?;
+    Ok(Some(out))
+}
+
 pub fn canonicalize_in_place(path: &Path) -> Result<bool> {
     // Cheap pre-check: read only the header before committing to a full decode.
     let spec = hound::WavReader::open(path)
@@ -201,6 +236,56 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("wispr-wavio-{name}"))
+    }
+
+    /// A 48 kHz recording (every Mac mic) must shrink to a 16 kHz side file
+    /// roughly a third the size, with the original left byte-identical.
+    #[test]
+    fn shrink_for_stt_downsamples_48k() {
+        let path = tmp("shrink48k.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: WavSampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..48_000 {
+            w.write_sample(((i % 100) as i16) * 50).unwrap();
+        }
+        w.finalize().unwrap();
+        let orig_bytes = std::fs::metadata(&path).unwrap().len();
+
+        let out = shrink_for_stt(&path).unwrap().expect("48k must shrink");
+        let out_spec = hound::WavReader::open(&out).unwrap().spec();
+        assert_eq!(out_spec.sample_rate, STT_SAMPLE_RATE);
+        assert_eq!(out_spec.channels, 1);
+        let out_bytes = std::fs::metadata(&out).unwrap().len();
+        assert!(out_bytes < orig_bytes / 2, "expected ~3x shrink, got {orig_bytes} -> {out_bytes}");
+        // Original untouched.
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), orig_bytes);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Audio already at 16 kHz (Windows array mics) has nothing to gain —
+    /// no side file, the caller sends the original.
+    #[test]
+    fn shrink_for_stt_skips_16k() {
+        let path = tmp("shrink16k.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: WavSampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for _ in 0..16_000 {
+            w.write_sample(1000i16).unwrap();
+        }
+        w.finalize().unwrap();
+        assert!(shrink_for_stt(&path).unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The regression that motivated this module: a 24-bit file must decode to
