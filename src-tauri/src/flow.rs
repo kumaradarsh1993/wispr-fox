@@ -2144,6 +2144,17 @@ impl Flow {
             if diarize { " · diarized" } else { "" }
         ));
 
+        // Live stage feed for the Upload dialog. Without it the dialog can
+        // only say "Working…" for the whole multi-minute pipeline; with it
+        // the user sees transcribe → clean → draft → notes progress.
+        let stage = |s: &str| {
+            let _ = app.emit(
+                "wispr:job_stage",
+                serde_json::json!({ "id": record_id, "stage": s }),
+            );
+        };
+        stage(if diarize { "Transcribing + labelling speakers…" } else { "Transcribing…" });
+
         // Uploaded files can be long (a whole voice memo), so give STT a wider
         // 180s ceiling than the 120s live-dictation cap.
         let stt_t0 = std::time::Instant::now();
@@ -2256,6 +2267,7 @@ impl Flow {
             self.history.update_status(record_id, Status::Cleaning)?;
 
             if do_cleanup {
+                stage("Cleaning up…");
                 let llm = build_llm_provider(&provider_id, model.clone())?;
                 let custom = custom_prompt_for(&base_settings, Mode::Light);
                 tl.mark(format!("cleanup → {} ({})", llm.name(), model));
@@ -2282,6 +2294,7 @@ impl Flow {
             }
 
             if do_draft || do_meeting_notes {
+                stage(if do_meeting_notes { "Writing meeting notes…" } else { "Drafting…" });
                 let draft_provider_id = draft_llm_provider
                     .clone()
                     .unwrap_or_else(|| base_settings.draft_llm_provider.clone());
@@ -2344,6 +2357,7 @@ impl Flow {
             // above prioritises Meeting Notes when both were selected, so run
             // the normal drafting prompt as a second pass and keep both tabs.
             if do_draft && do_meeting_notes {
+                stage("Drafting…");
                 let draft_provider_id = draft_llm_provider
                     .clone()
                     .unwrap_or_else(|| base_settings.draft_llm_provider.clone());
@@ -2559,7 +2573,30 @@ impl Flow {
             language: stt_settings.language_hint.clone(),
             diarize,
         };
-        let stt_res = stt.transcribe(&rec.audio_path, &retry_opts).await;
+        // Same 180s ceiling as the upload path. This path had NO timeout: a
+        // request that never came back left the Rerun dialog saying
+        // "Working…" forever, with no way to close it.
+        let stt_res = match tokio::time::timeout(
+            std::time::Duration::from_secs(180),
+            stt.transcribe(&rec.audio_path, &retry_opts),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
+                tl.mark(format!("retry STT TIMED OUT after {stt_elapsed}ms (180s cap)"));
+                self.persist_timeline(record_id, &tl);
+                let _ = self
+                    .history
+                    .set_error(record_id, "transcription timed out after 180s");
+                let _ = app.emit("wispr:state", "idle");
+                let _ = app.emit("wispr:history_changed", ());
+                return Err(anyhow!(
+                    "Transcription timed out after 180s — try again, or pick a faster engine"
+                ));
+            }
+        };
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
         tl.stt_ms = Some(stt_elapsed);
         let transcript = match stt_res {
@@ -2576,6 +2613,11 @@ impl Flow {
                     e.to_string().lines().next().unwrap_or("error")
                 ));
                 self.persist_timeline(record_id, &tl);
+                // Without these the row stays frozen on "Transcribing" and the
+                // floater stays in the transcribing pose after a failed rerun.
+                let _ = self.history.set_error(record_id, &e.to_string());
+                let _ = app.emit("wispr:state", "idle");
+                let _ = app.emit("wispr:history_changed", ());
                 return Err(anyhow::Error::new(e)).with_context(|| {
                     format!(
                         "{provider} transcription retry",

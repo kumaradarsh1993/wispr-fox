@@ -3,7 +3,6 @@
   import { history } from "./history-store.svelte";
   import { settings } from "./settings-store.svelte";
   import { LLM_PROVIDERS, STT_PROVIDERS, llmModelsFor, llmReady, sttModelsFor, sttReady } from "./provider-options";
-  import { askConfirm } from "./dialogs";
 
   let { open = $bindable(false), rec } = $props<{ open?: boolean; rec: Recording }>();
   let transcribe = $state(false), diarize = $state(false), cleanup = $state(false), draft = $state(false), meeting = $state(false);
@@ -11,6 +10,12 @@
   let cleanupProvider = $state("groq"), cleanupModel = $state("openai/gpt-oss-20b");
   let draftProvider = $state("groq"), draftModel = $state("openai/gpt-oss-120b");
   let switchNote = $state(""), running = $state(false), stage = $state(""), error = $state("");
+  // In-dialog replace-transcript confirmation. This used to be a NATIVE OS
+  // confirm dialog — but since the app became an Accessory (no Dock icon)
+  // app on macOS, native dialogs can open BEHIND other windows where the
+  // user never sees them, so "Run" appeared to do nothing while the app
+  // waited forever on an invisible dialog. Never use native dialogs here.
+  let confirmReplace = $state(false);
   let secrets = $state<SecretCheck | null>(null);
   let sttModels = $derived(sttModelsFor(sttProvider));
   let cleanupModels = $derived(llmModelsFor(cleanupProvider));
@@ -23,6 +28,7 @@
     transcribe = rec.status === "error" && !rec.remote;
     diarize = rec.diarization_enabled;
     cleanup = false; draft = false; meeting = false; error = ""; stage = ""; switchNote = "";
+    confirmReplace = false;
     sttProvider = settings.s.stt_provider; sttModel = settings.s.stt_model;
     cleanupProvider = settings.s.llm_provider; cleanupModel = settings.s.llm_model;
     draftProvider = settings.s.draft_llm_provider; draftModel = settings.s.draft_llm_model;
@@ -32,7 +38,24 @@
   $effect(() => { if (!sttModels.some((m) => m.id === sttModel)) sttModel = sttModels[0].id; });
   $effect(() => { if (!cleanupModels.some((m) => m.id === cleanupModel)) cleanupModel = cleanupModels[0].id; });
   $effect(() => { if (!draftModels.some((m) => m.id === draftModel)) draftModel = draftModels[0].id; });
-  $effect(() => { if (diarize && !canDiarize) enableDiarize(true); });
+  // If the user picks an engine with no speaker model while "Label speakers"
+  // is on, respect the ENGINE choice and turn the labels off. The previous
+  // version did the opposite — it forced the provider back to Deepgram —
+  // which made it impossible to rerun a previously-diarized recording
+  // through Whisper: every attempt to select Groq snapped straight back to
+  // Nova models.
+  $effect(() => {
+    if (diarize && !canDiarize) {
+      diarize = false;
+      switchNote = "Speaker labels turned off — this engine has no speaker model. Re-tick it to switch back to a diarizing engine.";
+    }
+  });
+  // Changing any option disarms a pending "click again to replace" confirm,
+  // so the warning always refers to the choices actually on screen.
+  $effect(() => {
+    void [transcribe, diarize, cleanup, draft, meeting, sttProvider, sttModel];
+    confirmReplace = false;
+  });
 
   function enableDiarize(on: boolean) {
     diarize = on; switchNote = "";
@@ -51,7 +74,13 @@
 
   async function run() {
     if (!ready || !(transcribe || cleanup || draft || meeting)) return;
-    if (transcribe && rec.transcript && !(await askConfirm("Replace the current transcript and run the selected follow-up steps?"))) return;
+    // Replacing an existing transcript needs a deliberate second click,
+    // handled INSIDE this dialog (see confirmReplace note above).
+    if (transcribe && rec.transcript && !confirmReplace) {
+      confirmReplace = true;
+      return;
+    }
+    confirmReplace = false;
     running = true; error = "";
     try {
       if (transcribe) { stage = "Transcribing..."; await api.rerunTranscription(rec.id, sttProvider, sttModel, diarize); }
@@ -86,7 +115,8 @@
       {#if draft || meeting}<div class="selects"><select bind:value={draftProvider} disabled={running}>{#each LLM_PROVIDERS as p}<option value={p.id}>{p.label}</option>{/each}</select><select bind:value={draftModel} disabled={running}>{#each draftModels as m}<option value={m.id}>{m.label}</option>{/each}</select></div>{/if}
     </div>
     {#if !ready}<p class="warn">Add the selected provider key in Settings first.</p>{/if}{#if error}<p class="warn">{error}</p>{/if}
-    <footer><span>{stage}</span><div><button class="ghost" onclick={() => (open = false)} disabled={running}>Cancel</button><button class="primary" onclick={run} disabled={running || !ready || !(transcribe || cleanup || draft || meeting)}>{running ? "Working..." : "Run selected"}</button></div></footer>
+    {#if confirmReplace}<p class="warn">This will replace the current transcript (AI versions are kept until regenerated). Click again to continue.</p>{/if}
+    <footer><span>{stage}</span><div><button class="ghost" onclick={() => (open = false)} disabled={running}>Cancel</button><button class="primary" onclick={run} disabled={running || !ready || !(transcribe || cleanup || draft || meeting)}>{running ? stage || "Working..." : confirmReplace ? "Yes, replace & run" : "Run selected"}</button></div></footer>
   </div>
 {/if}
 

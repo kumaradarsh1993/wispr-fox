@@ -492,23 +492,33 @@ pub struct SecretCheck {
     pub any_stt: bool,
 }
 
+/// Async on purpose: this runs 7 OS-keychain lookups, and on macOS each one
+/// is an IPC round-trip to securityd that can stall for hundreds of ms (or
+/// seconds right after login). A synchronous Tauri command executes on the
+/// app's MAIN thread, so the old sync version froze the entire UI — window
+/// drags, hotkeys, everything — every time a dialog opened and asked "which
+/// keys exist?". spawn_blocking moves the keychain wait onto a worker thread.
 #[tauri::command]
-pub fn check_secrets() -> SecretCheck {
-    let stt = secrets::has(SecretKey::GroqStt);
-    let openai_stt = secrets::has(SecretKey::OpenAiStt);
-    let openai_llm = secrets::has(SecretKey::OpenAiLlm);
-    let deepgram_stt = secrets::has(SecretKey::DeepgramStt);
-    let elevenlabs_stt = secrets::has(SecretKey::ElevenLabsStt);
-    SecretCheck {
-        stt,
-        llm: secrets::has(SecretKey::GroqLlm),
-        gemini: secrets::has(SecretKey::GeminiLlm),
-        openai_stt,
-        openai_llm,
-        deepgram_stt,
-        elevenlabs_stt,
-        any_stt: stt || openai_stt || openai_llm || deepgram_stt || elevenlabs_stt,
-    }
+pub async fn check_secrets() -> Result<SecretCheck, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let stt = secrets::has(SecretKey::GroqStt);
+        let openai_stt = secrets::has(SecretKey::OpenAiStt);
+        let openai_llm = secrets::has(SecretKey::OpenAiLlm);
+        let deepgram_stt = secrets::has(SecretKey::DeepgramStt);
+        let elevenlabs_stt = secrets::has(SecretKey::ElevenLabsStt);
+        SecretCheck {
+            stt,
+            llm: secrets::has(SecretKey::GroqLlm),
+            gemini: secrets::has(SecretKey::GeminiLlm),
+            openai_stt,
+            openai_llm,
+            deepgram_stt,
+            elevenlabs_stt,
+            any_stt: stt || openai_stt || openai_llm || deepgram_stt || elevenlabs_stt,
+        }
+    })
+    .await
+    .map_err(|e| format!("secret check failed: {e}"))
 }
 
 /// Where each saved secret currently lives (keyring / file / none) plus

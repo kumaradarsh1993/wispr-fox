@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { listen } from "@tauri-apps/api/event";
   import { api, type SecretCheck } from "$lib/api";
   import { history } from "$lib/history-store.svelte";
   import { settings } from "$lib/settings-store.svelte";
@@ -63,16 +64,35 @@
   let running = $state(false);
   let finished = $state(false);
 
-  // Re-seed engine + reset progress every time the dialog opens.
+  // Re-seed engine + reset progress when the dialog OPENS (closed → open
+  // transition only). The old version re-ran whenever `running` changed,
+  // because Svelte 5 tracks every value read inside — so the moment a batch
+  // finished (running flips false) it wiped statuses and `finished`, and the
+  // "N transcribed ✓ / Close" completion state never appeared. The dialog
+  // looked permanently stuck on "Working".
+  let wasOpen = false;
   $effect(() => {
-    if (open) {
+    if (open && !wasOpen) {
       api.checkSecrets().then((s) => (secrets = s)).catch(() => {});
-      if (!running) {
-        statuses = {};
-        errors = {};
-        finished = false;
-      }
+      statuses = {};
+      errors = {};
+      finished = false;
+      stageText = "";
     }
+    wasOpen = open;
+  });
+
+  // Live pipeline stage from the backend (transcribing → cleaning → drafting
+  // → meeting notes), shown on the in-flight file row. Files run one at a
+  // time, so a single latest-stage string is unambiguous.
+  let stageText = $state("");
+  $effect(() => {
+    const un = listen<{ id: string; stage: string }>("wispr:job_stage", (e) => {
+      stageText = e.payload.stage;
+    });
+    return () => {
+      un.then((f) => f());
+    };
   });
 
   const sttModels = $derived(sttModelsFor(sttProvider));
@@ -159,6 +179,7 @@
     for (const p of queue) {
       statuses[p] = "working";
       statuses = { ...statuses };
+      stageText = "Starting…";
       try {
         await api.transcribeUpload(p, {
           sttProvider,
@@ -184,6 +205,7 @@
 
     running = false;
     finished = true;
+    stageText = "";
   }
 
   const doneCount = $derived(Object.values(statuses).filter((s) => s === "done").length);
@@ -232,7 +254,7 @@
               </svg>
               <span class="file-name" title={p}>{baseName(p)}</span>
               {#if statuses[p] === "working"}
-                <span class="fstate working">Transcribing…</span>
+                <span class="fstate working">{stageText || "Working…"}</span>
               {:else if statuses[p] === "queued"}
                 <span class="fstate queued">Queued</span>
               {:else if statuses[p] === "done"}
@@ -359,6 +381,8 @@
         <span class="result-msg">
           {doneCount} transcribed{#if errCount > 0}, {errCount} failed{/if}. Added to your history.
         </span>
+      {:else if running}
+        <span class="hint-msg">{stageText || "Working…"} ({doneCount + errCount}/{paths.length} done)</span>
       {:else}
         <span class="hint-msg">
           {paths.length === 0 ? "Add at least one audio file." : `${paths.length} file${paths.length === 1 ? "" : "s"} ready.`}
