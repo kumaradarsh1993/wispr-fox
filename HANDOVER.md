@@ -5,9 +5,82 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-08-25** (**`v3.3.0` is stable and Latest**; the current
-> desktop candidate is `v3.4.0-nightly.1`. **`v3.3.0-nightly.2` is burned — it
-> froze on the first hotkey press; do not install or test it.**)
+> **Last updated: 2026-09-14** (**`v3.4.0` is stable and Latest** — the roll-up
+> of nightlies 1–15, promoted on the user's signal after two days on nightly.15.
+> Next line of work is the **design revamp** (see the 2026-09-14 section).
+> **`v3.3.0-nightly.2` is burned — it froze on the first hotkey press; do not
+> install or test it.**)
+
+## 2026-09-14 — v3.4.0 stable; what the fourteen nightlies since this file was last touched actually did
+
+This file went stale between nightly.1 (2026-08-25) and nightly.15 (2026-09-12).
+Catch-up, grouped by theme rather than by nightly. Per-nightly detail is in
+`docs/RELEASE_NOTES_v3.4.0-nightly.N.md`; the stable roll-up is
+`docs/RELEASE_NOTES_v3.4.0.md`.
+
+**macOS became a first-class platform (nightlies 4–13, all Mac-only):**
+- **Signing.** Every build is ad-hoc signed with one *stable* identity
+  (`docs/MACOS_SIGNING.md`, CI step in `release.yml`). Two consequences: no
+  more "damaged" dialog, and the Accessibility grant survives updates. Before
+  this each nightly had a fresh cdhash and macOS silently revoked the grant.
+- **Activation policy is Accessory** (no Dock icon, menu-bar only) since
+  nightly.13. This is what lets the floater follow the user across Spaces and
+  fullscreen apps. It has a cost that bit us in nightly.15: **native OS
+  dialogs (plugin-dialog confirm/alert) can open behind every window** on an
+  Accessory app. Rule: no native dialogs in flows the user must complete —
+  confirm inside the Svelte dialog. `src/lib/dialogs.ts` still exists for the
+  window.confirm-deadlock reason documented in its header, but nothing in the
+  Rerun/Upload path calls it any more.
+- **Floater on Spaces.** nightly.7 pinned it to all Spaces; nightly.12 replaced
+  the guesswork with an `isOnActiveSpace` measurement; nightly.13 finished it.
+  Do not re-add a 30-second re-pin timer — that was the nightly.7 bug.
+- **Auto-paste** targeted the frontmost app at paste time, which on Accessory
+  apps could be the floater's own process; text was discarded silently. Fixed
+  in nightly.8 with a diagnostic readout in Settings; nightly.10/11 made the
+  Accessibility notice a dismissible notice rather than a page-covering banner.
+- Mac hotkey defaults are Option+Space / Option+Enter (F-keys are media keys).
+
+**Update module (nightlies 2–3):** shared `updates.rs` + `UpdatePanel.svelte`
+across the four Fox apps — see the 2026-08-27 section below and `docs/UPDATES.md`.
+
+**Performance (nightly.14):** live dictations are downsampled to 16 kHz before
+upload (`flow.rs`, same helper the upload path already used). 3x smaller on
+48 kHz Mac mics; no chunking until ~10.5 min. Saved recording stays full-rate.
+
+**Dialog reliability (nightlies 6 and 15):**
+- `check_secrets` was a *sync* Tauri command doing 7 keychain reads on the main
+  thread on every dialog open → whole-app freeze on both macOS Keychain and
+  Windows Credential Manager. Now `async` + `spawn_blocking`. **Rule: any
+  command touching keychain, disk or network is `async`.**
+- Rerun: 180 s STT timeout added (`retry_recording_with`); failures now
+  `set_error` + emit idle + `history_changed` rather than leaving the row on
+  "Transcribing". The `diarize && !canDiarize → force Deepgram` effect in
+  `RerunDialog.svelte` is inverted: engine choice wins, labels switch off.
+- Upload: the open-effect tracked `running` and wiped `finished` on completion
+  (Svelte 5 tracks every read inside an `$effect`); now guarded with a plain
+  `wasOpen`. Backend emits `wispr:job_stage {id, stage}` from
+  `run_upload_pipeline`; `UploadDialog.svelte` listens and shows it per file.
+
+**Repo hygiene learned the hard way:** the agent cannot push `main` (policy);
+the user pushes it. `main` on GitHub sat a commit behind for a week after
+nightly.14 because the reminder was missed. **Every release turn ends with an
+explicit "run `git push origin main`" line** until that is automated.
+
+### Owed / next
+
+- **Design revamp** (user brief, 2026-09-14): professional refinement of the
+  main window — History as the home surface, Settings restructured for
+  beginner *and* advanced users, Insights de-emphasised but with real
+  highlights; onboarding reimagined end-to-end (fresh vs returning user,
+  sign-in, language, illustrations); and a **menu-bar dropdown** (mini
+  popover: last 3–4 recordings with copy, avatar picker, model switch,
+  enable/disable) before the full window. Floater is **out of scope** — it
+  works. Ships as the `v3.5.0-nightly.*` line.
+- **Groq cleanup fails on some models** (user report, 2026-09-14) — under
+  investigation alongside a full provider model audit (Groq/Gemini/OpenAI/
+  Deepgram/ElevenLabs: what is live, deprecated, free vs paid as of today).
+  `docs/MODEL_MATRIX.md` and `src/lib/provider-options.ts` are the surfaces.
+- Live multi-device test of the fleet merge — still owed from 2026-08-25.
 
 ## 2026-08-27 — one update module, shared across all four Fox desktop apps
 

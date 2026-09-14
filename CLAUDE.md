@@ -13,7 +13,16 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current stable: `v3.3.0`** (Latest, 2026-08-25) — promotes the five v3.3.0
+**Current stable: `v3.4.0`** (Latest, 2026-09-14) — the Mac release: signed
+builds with one stable identity (no "damaged" dialog; Accessibility grant
+survives updates), Accessory activation policy (menu-bar app, floater follows
+the user across Spaces + fullscreen), auto-paste targets the user's real focus,
+16 kHz downsample before upload (3–6x faster on Mac mics), the shared in-app
+update module (Settings → About, one-click Install on Windows), cross-device
+Insights merge, and the nightly.15 dialog fixes (async `check_secrets`,
+in-dialog confirm instead of native, rerun timeout, live upload stages).
+Full story in `HANDOVER.md` (2026-09-14 section) and `docs/RELEASE_NOTES_v3.4.0.md`.
+The prior `v3.3.0` (2026-08-25) promoted the five v3.3.0
 nightlies on the user's explicit stable signal: meetings (speaker turns, speaker
 naming, Meeting Notes as its own version, one Rerun dialog), adaptive
 tap-or-hold dictation on a serialized coordinator, the nightly.2 first-keypress
@@ -456,6 +465,17 @@ explicit user permission:
    change to the avatar contract bumps `manifestVersion` to 2 with a
    migration guide. Until the loader/manager UI ships, built-in
    skins remain hardcoded in `src/routes/clippy/+page.svelte`.
+7. **Any Tauri command that touches keychain, disk or network is
+   `async`** (with `spawn_blocking` for sync APIs). A sync command runs
+   on the main thread; `check_secrets` froze the whole app for the
+   duration of 7 keychain reads on every dialog open until nightly.15.
+8. **No native OS dialogs in flows the user must complete.** The app is
+   an Accessory (no Dock icon) on macOS since nightly.13, and native
+   confirm/alert can open *behind* every window — Rerun looked dead for
+   a week because of this. Confirm inside the Svelte dialog instead.
+9. **Agents cannot push `main`; the user does.** Every release turn
+   ends with an explicit "run `git push origin main`" line. (Decided
+   2026-09-12 after `main` sat a commit behind for a week.)
 
 ## Known constraints / gotchas
 
