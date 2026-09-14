@@ -120,7 +120,7 @@
     const models = llmModelsFor(provider);
     const draft_llm_model = models.some((m) => m.id === settings.s.draft_llm_model)
       ? settings.s.draft_llm_model
-      : models.find((m) => m.id.includes("120b") || m.id.includes("3.6-flash") || m.id === "gpt-5.5")?.id ?? models[0].id;
+      : models.find((m) => m.id.includes("120b") || m.id.includes("3.6-flash") || m.id === "gpt-5.6-sol")?.id ?? models[0].id;
     await settings.setMany({ draft_llm_provider: provider, draft_llm_model } as any);
     flash(`Draft / Meeting provider: ${providerLabel(provider)}`);
   }

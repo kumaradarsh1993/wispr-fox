@@ -95,7 +95,7 @@ pay-as-you-go. That makes **all 8 OpenAI ids we ship paid-only**:
 
 - STT: `gpt-transcribe`, `gpt-4o-transcribe-diarize`, `gpt-4o-transcribe`,
   `gpt-4o-mini-transcribe`, `whisper-1`
-- LLM: `gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`
+- LLM: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.6-luna` (checked 2026-09-14; the previously listed gpt-5.4/5.5 ids never existed)
 
 This is not a reason to remove them — a BYO-key app should let someone spend
 their own money if they want to. It *is* a reason not to let anyone land on one

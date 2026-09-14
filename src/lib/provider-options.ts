@@ -71,9 +71,9 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
     // "llama-4-maverick" removed 2026-07 — never a valid Groq id.
   ],
   openai: [
-    { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
-    { id: "gpt-5.4", label: "GPT-5.4", quality: "Higher quality" },
-    { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", quality: "Fast OpenAI cleanup default" },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", quality: "Highest quality, slower/costlier" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", quality: "Cheapest and fastest" },
   ],
   gemini: [
     { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", quality: "Latest stable Flash" },
@@ -193,9 +193,9 @@ export function shortModel(name: string | undefined): string {
   if (name === "qwen/qwen3.8-27b") return "Qwen 3.8 27B";
   if (name.startsWith("llama-3.3-70b")) return "Llama 70B";
   if (name.startsWith("llama-3.1-8b")) return "Llama 8B";
-  if (name.startsWith("gpt-5.4-mini")) return "GPT-5.4 mini";
-  if (name.startsWith("gpt-5.4")) return "GPT-5.4";
-  if (name.startsWith("gpt-5.5")) return "GPT-5.5";
+  if (name.startsWith("gpt-5.6-terra")) return "GPT-5.6 Terra";
+  if (name.startsWith("gpt-5.6-sol")) return "GPT-5.6 Sol";
+  if (name.startsWith("gpt-5.6-luna")) return "GPT-5.6 Luna";
   if (name.startsWith("gemini-3.8-flash")) return "Gemini 3.8 Flash";
   if (name.startsWith("gemini-3.7-flash")) return "Gemini 3.7 Flash";
   if (name.startsWith("gemini-3.6-flash")) return "Gemini 3.6 Flash";

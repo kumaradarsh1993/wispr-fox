@@ -13,7 +13,7 @@ const ENDPOINT: &str = "https://api.openai.com/v1/responses";
 // spurious cleanup timeouts. 30s covers a long draft, still bails if wedged.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-pub const DEFAULT_MODEL: &str = "gpt-5.4-mini";
+pub const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 
 pub struct OpenAiLlm {
     client: reqwest::Client,
