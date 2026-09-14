@@ -50,11 +50,45 @@ impl GroqLlm {
     }
 }
 
+/// Groq's default `max_completion_tokens` is 1024 — and on its reasoning
+/// models the *thinking* counts against that budget. A long dictation could
+/// spend the whole cap reasoning and return `content: null`, which the old
+/// `content: String` parser rejected as a decode error → "Cleanup failed".
+/// 16k comfortably covers a full Draft rewrite of a 20-minute recording.
+const MAX_COMPLETION_TOKENS: u32 = 16_384;
+
+/// Every Groq model we offer is a reasoning model today (GPT-OSS 20B/120B,
+/// Qwen 3.x). GPT-OSS ignores `reasoning_format` and only takes
+/// `reasoning_effort: low|medium|high`; Qwen takes `reasoning_format` and
+/// `reasoning_effort: none|default` (3.8 also low/medium/high). Groq returns
+/// 400 for a parameter a model does not support, so these are per-family.
+fn is_gpt_oss(model: &str) -> bool {
+    model.starts_with("openai/gpt-oss")
+}
+
+fn is_qwen(model: &str) -> bool {
+    model.starts_with("qwen/")
+}
+
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
     temperature: f32,
+    max_completion_tokens: u32,
+    /// Qwen only. `hidden` = final answer only. Without this Qwen defaults to
+    /// `raw` and dumps its chain of thought INSIDE `content` as `<think>…</think>`
+    /// — which then fails the Light-mode length-drift guard and gets pasted raw.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_format: Option<&'static str>,
+    /// GPT-OSS: `low` — cleanup is a rewrite, not a proof; low effort is
+    /// faster and leaves the token budget for the answer. Qwen: `none`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'static str>,
+    /// GPT-OSS only (mutually exclusive with `reasoning_format`). Drops the
+    /// `reasoning` field from the reply so we don't pay to download it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_reasoning: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -79,11 +113,29 @@ struct ChatUsage {
 #[derive(Deserialize)]
 struct ChatChoice {
     message: ChatChoiceMessage,
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ChatChoiceMessage {
-    content: String,
+    /// `null` when a reasoning model exhausts its budget before answering,
+    /// or when a model returns only tool calls. Must not be a hard `String`.
+    content: Option<String>,
+}
+
+/// Strip a leading `<think>…</think>` block if a model returned one anyway
+/// (older Qwen builds, or a future model that ignores `reasoning_format`).
+/// An unterminated `<think>` means the whole reply is thinking — return empty
+/// so the caller reports a failure instead of pasting a monologue.
+fn strip_think_block(s: &str) -> String {
+    let t = s.trim_start();
+    if !t.starts_with("<think>") {
+        return s.to_owned();
+    }
+    match t.find("</think>") {
+        Some(end) => t[end + "</think>".len()..].to_owned(),
+        None => String::new(),
+    }
 }
 
 #[async_trait]
@@ -98,6 +150,14 @@ impl LlmProvider for GroqLlm {
         user: &str,
         temperature: f32,
     ) -> Result<LlmOutput, LlmError> {
+        let (reasoning_format, reasoning_effort, include_reasoning) =
+            if is_gpt_oss(&self.model) {
+                (None, Some("low"), Some(false))
+            } else if is_qwen(&self.model) {
+                (Some("hidden"), Some("none"), None)
+            } else {
+                (None, None, None)
+            };
         let body = ChatRequest {
             model: &self.model,
             messages: vec![
@@ -111,6 +171,10 @@ impl LlmProvider for GroqLlm {
                 },
             ],
             temperature,
+            max_completion_tokens: MAX_COMPLETION_TOKENS,
+            reasoning_format,
+            reasoning_effort,
+            include_reasoning,
         };
 
         let resp = self
@@ -136,12 +200,21 @@ impl LlmProvider for GroqLlm {
             .await
             .map_err(|e| LlmError::Decode(e.to_string()))?;
 
-        let text = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
+        let first = parsed.choices.into_iter().next();
+        let finish = first
+            .as_ref()
+            .and_then(|c| c.finish_reason.clone())
             .unwrap_or_default();
+        let text = first
+            .and_then(|c| c.message.content)
+            .map(|c| strip_think_block(&c))
+            .unwrap_or_default();
+        if text.trim().is_empty() {
+            return Err(LlmError::Decode(format!(
+                "Groq returned no answer text (finish_reason={finish:?}, model={})",
+                self.model
+            )));
+        }
 
         let usage = parsed.usage.map(|u| {
             let input_tokens = u.prompt_tokens.unwrap_or(0);
@@ -155,5 +228,62 @@ impl LlmProvider for GroqLlm {
         });
 
         Ok(LlmOutput { text, usage })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn null_content_parses_instead_of_failing_decode() {
+        // What Groq returns when a reasoning model spends the whole budget
+        // thinking. Before the fix this was a serde error → "Cleanup failed".
+        let raw = r#"{"choices":[{"message":{"role":"assistant","content":null,"reasoning":"..."},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":1024,"total_tokens":1034}}"#;
+        let parsed: ChatResponse = serde_json::from_str(raw).expect("must parse");
+        assert!(parsed.choices[0].message.content.is_none());
+        assert_eq!(parsed.choices[0].finish_reason.as_deref(), Some("length"));
+    }
+
+    #[test]
+    fn think_block_is_stripped() {
+        assert_eq!(
+            strip_think_block("<think>hmm, punctuation</think>Hello, world."),
+            "Hello, world."
+        );
+        assert_eq!(strip_think_block("  <think>x</think>\nBody"), "\nBody");
+        assert_eq!(strip_think_block("Plain reply"), "Plain reply");
+        // Unterminated = the whole reply was thinking; must not be pasted.
+        assert_eq!(strip_think_block("<think>still going"), "");
+    }
+
+    #[test]
+    fn reasoning_params_are_per_model_family() {
+        assert!(is_gpt_oss("openai/gpt-oss-20b"));
+        assert!(is_gpt_oss("openai/gpt-oss-120b"));
+        assert!(!is_gpt_oss("qwen/qwen3.6-27b"));
+        assert!(is_qwen("qwen/qwen3.6-27b"));
+        assert!(is_qwen("qwen/qwen3.8-27b"));
+        assert!(!is_qwen("openai/gpt-oss-20b"));
+    }
+
+    #[test]
+    fn request_omits_unsupported_params() {
+        // GPT-OSS rejects reasoning_format; Qwen must not get include_reasoning
+        // alongside reasoning_format (Groq: mutually exclusive → 400).
+        let body = ChatRequest {
+            model: "openai/gpt-oss-20b",
+            messages: vec![],
+            temperature: 0.3,
+            max_completion_tokens: MAX_COMPLETION_TOKENS,
+            reasoning_format: None,
+            reasoning_effort: Some("low"),
+            include_reasoning: Some(false),
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("reasoning_format"));
+        assert!(json.contains("\"reasoning_effort\":\"low\""));
+        assert!(json.contains("\"include_reasoning\":false"));
+        assert!(json.contains("\"max_completion_tokens\":16384"));
     }
 }

@@ -58,14 +58,17 @@ export const STT_MODELS: Record<string, ProviderModel[]> = {
 
 export const LLM_MODELS: Record<string, ProviderModel[]> = {
   groq: [
-    { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", quality: "Fast cleanup and titles" },
-    { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", quality: "Stronger drafts and meeting notes" },
-    { id: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B", quality: "Strong multilingual alternative" },
-    // "llama-4-maverick" removed 2026-07 — it was never a valid Groq model
-    // id (live-verified, see wispr-fox-android/HANDOVER.md "Desktop parity
-    // ports"). No replacement added; Llama 3.3 70B stays the default. Saved
-    // selections coerce via settings-store.svelte.ts. Groq's August 2026
-    // Llama retirements are replaced above by its documented GPT-OSS/Qwen ids.
+    { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", quality: "Fast cleanup and titles — free tier" },
+    { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", quality: "Stronger drafts and meeting notes — free tier" },
+    { id: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B", quality: "Multilingual alternative (preview, ~5x the price)" },
+    { id: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", quality: "Newest Qwen (preview, ~7x the price)" },
+    // Catalog check 2026-09-14 against console.groq.com/docs/models:
+    // production = gpt-oss-20b/120b + Whisper; Llama 3.1/3.3 are now
+    // Enterprise-only ("Contact Sales") so they are not offered here — saved
+    // Llama selections coerce to GPT-OSS in settings-store.svelte.ts and
+    // flow.rs. Qwen 3.6/3.8 are PREVIEW (may be pulled at short notice) and
+    // reasoning models — groq.rs sends reasoning_format=hidden for them.
+    // "llama-4-maverick" removed 2026-07 — never a valid Groq id.
   ],
   openai: [
     { id: "gpt-5.4-mini", label: "GPT-5.4 mini", quality: "Fast OpenAI cleanup default" },
@@ -73,7 +76,9 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
     { id: "gpt-5.5", label: "GPT-5.5", quality: "Frontier quality, slower/costlier" },
   ],
   gemini: [
-    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", quality: "Latest stable balance model" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", quality: "Latest stable Flash" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", quality: "Previous stable Flash" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", quality: "Stable balance model" },
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Stable balance fallback" },
     { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", quality: "Fastest current stable model" },
     { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", quality: "Stable low-cost fallback" },
@@ -185,11 +190,14 @@ export function shortModel(name: string | undefined): string {
   if (name === "openai/gpt-oss-20b") return "GPT-OSS 20B";
   if (name === "openai/gpt-oss-120b") return "GPT-OSS 120B";
   if (name === "qwen/qwen3.6-27b") return "Qwen 3.6 27B";
+  if (name === "qwen/qwen3.8-27b") return "Qwen 3.8 27B";
   if (name.startsWith("llama-3.3-70b")) return "Llama 70B";
   if (name.startsWith("llama-3.1-8b")) return "Llama 8B";
   if (name.startsWith("gpt-5.4-mini")) return "GPT-5.4 mini";
   if (name.startsWith("gpt-5.4")) return "GPT-5.4";
   if (name.startsWith("gpt-5.5")) return "GPT-5.5";
+  if (name.startsWith("gemini-3.8-flash")) return "Gemini 3.8 Flash";
+  if (name.startsWith("gemini-3.7-flash")) return "Gemini 3.7 Flash";
   if (name.startsWith("gemini-3.6-flash")) return "Gemini 3.6 Flash";
   if (name.startsWith("gemini-3.5-flash-lite")) return "Gemini 3.5 Flash-Lite";
   if (name.startsWith("gemini-3.5-flash")) return "Gemini 3.5 Flash";
