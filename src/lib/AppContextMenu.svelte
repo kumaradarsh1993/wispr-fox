@@ -16,6 +16,7 @@
   // one event would fight.
 
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { avatarVisibility, applyVisibilityWindow } from "./avatar-visibility.svelte";
 
   type Item = {
     label: string;
@@ -121,10 +122,17 @@
     e.preventDefault();
 
     const next = buildItems(e.target as Element | null);
-    if (next.length === 0) {
-      open = false;
-      return;
-    }
+    // Always offer the avatar toggle — it is the one app-level action people
+    // reach for a right-click to find, and it works from any surface.
+    const hidden = avatarVisibility.current === "hidden";
+    next.push({
+      label: hidden ? "Show avatar" : "Hide avatar",
+      action: async () => {
+        const v = hidden ? "always" : "hidden";
+        await avatarVisibility.set(v);
+        await applyVisibilityWindow(v);
+      },
+    });
 
     // Flip rather than overflow. A menu opened near the right or bottom edge
     // must not push the page into scrolling.

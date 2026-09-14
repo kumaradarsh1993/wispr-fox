@@ -116,7 +116,7 @@ Either way, most users pay **$0**. There's no wispr-fox subscription — your us
 ## 🤫 Privacy
 
 - 🔐 **API keys** live in your OS keychain — Windows Credential Manager / macOS Keychain. If you explicitly sign in, selected provider keys are also synced through your Supabase account so your devices can share them.
-- 🎧 **Saved audio files** stay on your machine and are never synced to the wispr-fox account backend. Default: 7-day retention, 500 MB cap, both configurable.
+- 🎧 **Saved audio files** stay on your machine and are never synced to the wispr-fox account backend. Default: 3-day retention, 500 MB cap, both configurable.
 - ☁️ **Only the audio you choose to dictate** is sent to your chosen provider (Groq, Deepgram, OpenAI, or ElevenLabs for transcription; Groq, Gemini, or OpenAI for cleanup). Read their privacy policies — they're the parties that see your data.
 - 📡 **No analytics or crash reporting.** Signed-out mode has no wispr-fox account traffic. Optional sign-in syncs transcripts and selected API keys through Supabase; update checks use GitHub Releases.
 

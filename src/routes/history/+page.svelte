@@ -5,7 +5,6 @@
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
-  import StatusStrip from "$lib/StatusStrip.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Kbd from "$lib/ui/Kbd.svelte";
   import { settings } from "$lib/settings-store.svelte";
@@ -205,7 +204,6 @@
       </div>
     </div>
 
-    <StatusStrip />
 
     <div class="filter-pills" role="tablist" aria-label="Filter notes">
       {#each FILTERS as f (f.id)}

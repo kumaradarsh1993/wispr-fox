@@ -258,7 +258,7 @@ impl Default for AppSettings {
             light_provider: "groq".to_string(),
             advanced_provider: "groq".to_string(),
             drafting_provider: "groq".to_string(),
-            retention_days: 7,
+            retention_days: 3,
             retention_max_mb: 500,
             autostart: false,
             start_sound: String::new(),

@@ -18,7 +18,7 @@ pub fn install(app: &AppHandle) -> Result<()> {
     let history_item = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let toggle_clippy_item =
-        MenuItem::with_id(app, "toggle-clippy", "Toggle Clippy", true, None::<&str>)?;
+        MenuItem::with_id(app, "toggle-clippy", "Show / hide avatar", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit wispr-fox", true, None::<&str>)?;
 
