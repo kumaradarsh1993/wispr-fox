@@ -51,10 +51,47 @@
   --sun: #e5ad55;
 
   /* Shared shape, elevation, type, and motion contract. */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
+  --radius-sm: 8px;             /* controls: buttons, inputs, chips */
+  --radius-md: 12px;            /* inner cards, menus, popovers */
+  --radius-lg: 16px;            /* cards, dialogs */
+  --radius-xl: 24px;            /* legacy — prefer lg; kept so nothing breaks */
+  --radius-pill: 999px;
+
+  /* ── v3.5 foundations (docs/DESIGN_v3.5.md §3) ─────────────────────────
+     Type scale: six steps + display. Nothing in the app renders below
+     --fs-xs; the survey found 15 distinct sizes down to 8px. Use these.  */
+  --fs-xs: 11px;      /* meta: timestamps, kickers, badges */
+  --fs-sm: 12px;      /* secondary text, help lines, table cells */
+  --fs-base: 13px;    /* body */
+  --fs-md: 15px;      /* card titles, emphasised body */
+  --fs-lg: 18px;      /* section headings */
+  --fs-xl: 24px;      /* page headings */
+  --fs-display: clamp(24px, 3vw, 32px);
+  --lh-body: 1.45;
+  --lh-tight: 1.2;
+
+  /* Spacing scale (4px base). Cards pad --sp-4, sections gap --sp-6. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* Semantic mode colours — every "what kind of recording is this" tint
+     goes through these instead of one-off hex. */
+  --mode-transcribe: var(--accent);
+  --mode-transcribe-fade: var(--accent-fade);
+  --mode-draft: #8a5fc7;          /* plum — a draft is a different kind of thing */
+  --mode-draft-fade: rgba(138, 95, 199, 0.14);
+  --mode-meeting: #4f86b8;        /* slate blue — several voices */
+  --mode-meeting-fade: rgba(79, 134, 184, 0.14);
+  --mode-upload: var(--field);    /* meadow green — came from a file */
+  --mode-upload-fade: var(--field-fade);
+  --mode-error: var(--danger);
+  --mode-error-fade: var(--danger-fade);
   --shadow-xs: 0 1px 2px rgba(66, 42, 17, 0.05);
   --shadow-sm: 0 5px 18px rgba(66, 42, 17, 0.07);
   --shadow-md: 0 16px 42px rgba(66, 42, 17, 0.12);
@@ -94,6 +131,10 @@
   --danger-fade: rgba(214, 95, 71, 0.18);
   --info: #5c92c8;
   --info-fade: rgba(92, 146, 200, 0.18);
+  --mode-draft: #b48ae6;
+  --mode-draft-fade: rgba(180, 138, 230, 0.20);
+  --mode-meeting: #7fb0dc;
+  --mode-meeting-fade: rgba(127, 176, 220, 0.20);
   color-scheme: dark;
 }
 
@@ -152,6 +193,10 @@
     --danger-fade: rgba(214, 95, 71, 0.18);
     --info: #5c92c8;
     --info-fade: rgba(92, 146, 200, 0.18);
+    --mode-draft: #b48ae6;
+    --mode-draft-fade: rgba(180, 138, 230, 0.20);
+    --mode-meeting: #7fb0dc;
+    --mode-meeting-fade: rgba(127, 176, 220, 0.20);
     color-scheme: dark;
   }
 }
@@ -217,7 +262,7 @@ textarea:focus-visible {
 .wf-kicker {
   margin: 0 0 6px;
   color: var(--accent);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 750;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -226,7 +271,7 @@ textarea:focus-visible {
 .wf-page-title {
   margin: 0;
   color: var(--text-primary);
-  font-size: clamp(24px, 3vw, 34px);
+  font-size: var(--fs-display);
   font-weight: 720;
   letter-spacing: -0.035em;
   line-height: 1.08;
@@ -236,8 +281,8 @@ textarea:focus-visible {
   margin: 8px 0 0;
   max-width: 620px;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
 }
 
 @media (prefers-reduced-motion: reduce) {

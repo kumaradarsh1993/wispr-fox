@@ -36,6 +36,12 @@
   let resizingSidebar = $state(false);
   let appApiPromise: Promise<typeof import("@tauri-apps/api/app")> | null = null;
 
+  // macOS uses an overlay titlebar (tauri.macos.conf.json): the webview runs
+  // under the traffic lights, so the sidebar top needs a ~36px inset and a
+  // drag region. Windows/Linux keep native decorations and no inset.
+  const isMacShell =
+    typeof navigator !== "undefined" && /Mac/.test(navigator.platform ?? "");
+
   function loadAppApi() {
     appApiPromise ??= import("@tauri-apps/api/app");
     return appApiPromise;
@@ -449,8 +455,13 @@
 {#if hideChrome}
   {@render children?.()}
 {:else}
-  <div class="app-shell">
+  <div class="app-shell" data-mac={isMacShell || undefined}>
     <aside class="sidebar" class:collapsed class:resizing={resizingSidebar} style={sidebarStyle}>
+      {#if isMacShell}
+        <!-- Empty strip beside the traffic lights; lets the user drag the
+             window by its top edge like any native macOS app. -->
+        <div class="titlebar-drag" data-tauri-drag-region></div>
+      {/if}
       <div class="sidebar-top">
         <!-- Universal sidebar-toggle icon (à la Claude/ChatGPT) — clearer
              affordance than the paperclip emoji previously used. -->
@@ -735,6 +746,11 @@
   .sidebar.collapsed {
     width: 64px;
   }
+  /* Traffic lights span ~70px from the left edge; a 64px collapsed rail
+     would let page content slide under them. */
+  .app-shell[data-mac] .sidebar.collapsed {
+    width: 78px;
+  }
 
   .sidebar.resizing {
     user-select: none;
@@ -769,6 +785,17 @@
   .sidebar.resizing .sidebar-resizer::after {
     background: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-fade);
+  }
+
+  /* macOS overlay titlebar: the traffic lights sit at (12px, ~13px) and are
+     ~54px wide. A 36px strip keeps the brand row clear of them and doubles
+     as the window's drag handle. Not rendered on other platforms. */
+  .titlebar-drag {
+    flex: none;
+    height: 36px;
+  }
+  .app-shell[data-mac] .sidebar-top {
+    padding-top: 4px;
   }
 
   .sidebar-top {

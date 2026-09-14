@@ -1,7 +1,10 @@
 # wispr-fox v3.5 — design revamp brief
 
-> Status: **direction approved pending 4 decisions** (see §8). Written 2026-09-14
-> from three line-referenced code surveys of the current UI (shell + History,
+> Status: **direction approved 2026-09-14 — all four §9 decisions taken as
+> recommended** (overlay titlebar on macOS; tray left-click opens the popover;
+> key-first onboarding with Groq preselected and the demo as climax; "Clear
+> all" moves to Settings › App & data › Danger zone). Written from three
+> line-referenced code surveys of the current UI (shell + History,
 > Settings + Insights, onboarding). Ships as the `v3.5.0-nightly.*` line.
 > The floater/avatar overlay is **out of scope** — it works.
 
