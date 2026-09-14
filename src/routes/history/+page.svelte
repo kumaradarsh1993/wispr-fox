@@ -5,14 +5,35 @@
   import { api, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
-  import DeleteDialog from "$lib/DeleteDialog.svelte";
+  import StatusStrip from "$lib/StatusStrip.svelte";
+  import Button from "$lib/ui/Button.svelte";
+  import Kbd from "$lib/ui/Kbd.svelte";
   import { settings } from "$lib/settings-store.svelte";
   import { account } from "$lib/account-store.svelte";
   import { fleet } from "$lib/fleet-store.svelte";
   import { prettyHotkey } from "$lib/hotkey-display";
   import { showMessage } from "$lib/dialogs";
 
-  let filter = $state<"all" | "light" | "advanced" | "drafting" | "error">("all");
+  type FilterId = "all" | "light" | "drafting" | "meeting" | "upload" | "error";
+  let filter = $state<FilterId>("all");
+  // Filters name what the user thinks about, not the internal mode enum.
+  const FILTERS: { id: FilterId; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "light", label: "Dictations" },
+    { id: "drafting", label: "Drafts" },
+    { id: "meeting", label: "Meetings" },
+    { id: "upload", label: "Uploads" },
+    { id: "error", label: "Failed" },
+  ];
+  let searchEl = $state<HTMLInputElement | null>(null);
+  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform ?? "");
+  function onGlobalKey(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      searchEl?.focus();
+      searchEl?.select();
+    }
+  }
   let search = $state("");
 
   // Audio upload: staged file paths + modal state. `stagedPaths` is shared with
@@ -71,7 +92,15 @@
   let filtered = $derived.by(() => {
     let list = history.list;
     if (filter !== "all") {
-      list = list.filter((r) => (filter === "error" ? r.status === "error" : r.mode === filter));
+      list = list.filter((r) => {
+        switch (filter) {
+          case "error": return r.status === "error";
+          case "meeting": return r.is_meeting;
+          case "upload": return r.source === "upload";
+          case "light": return r.mode === "light" || r.mode === "advanced";
+          default: return r.mode === filter;
+        }
+      });
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -119,59 +148,6 @@
     return order.map((label) => ({ label, items: buckets[label] }));
   });
 
-  // Press-and-hold (~1.5s) to open the delete dialog. A visual fill sweeps
-  // while held; releasing early cancels and shows a "hold to delete" hint.
-  // The dialog (not the hold itself) is where the user picks what/where.
-  const HOLD_MS = 1500;
-  let holdActive = $state(false);
-  let holdProgress = $state(0); // 0..1
-  let clearedMsg = $state("");
-  let hintMsg = $state("");
-  let deleteOpen = $state(false);
-  let _holdStart = 0;
-  let _holdRAF: number | null = null;
-  let _reachedFull = false;
-
-  function holdTick() {
-    const t = Math.min(1, (Date.now() - _holdStart) / HOLD_MS);
-    holdProgress = t;
-    if (t >= 1) {
-      _holdRAF = null;
-      _reachedFull = true;
-      holdActive = false;
-      holdProgress = 0;
-      deleteOpen = true;
-      return;
-    }
-    _holdRAF = requestAnimationFrame(holdTick);
-  }
-  function startHold() {
-    holdActive = true;
-    clearedMsg = "";
-    hintMsg = "";
-    _reachedFull = false;
-    _holdStart = Date.now();
-    _holdRAF = requestAnimationFrame(holdTick);
-  }
-  function cancelHold() {
-    if (_holdRAF !== null) {
-      cancelAnimationFrame(_holdRAF);
-      _holdRAF = null;
-    }
-    // A quick click (released before the fill completed) = show the hint.
-    if (holdActive && !_reachedFull) {
-      hintMsg = "Hold to delete";
-      setTimeout(() => (hintMsg = ""), 2500);
-    }
-    holdActive = false;
-    holdProgress = 0;
-  }
-  function onDeleted() {
-    void history.refresh();
-    clearedMsg = "Done.";
-    setTimeout(() => (clearedMsg = ""), 3000);
-  }
-
   async function openRecordingsFolder() {
     try {
       await api.revealFolder("audio");
@@ -181,87 +157,62 @@
   }
 </script>
 
+<svelte:window onkeydown={onGlobalKey} />
+
 <section class="history">
   <header class="history-head">
-    <div class="history-intro">
-      <div>
-        <p class="wf-kicker">Your field notes</p>
-        <div class="title-row">
-          <h1 class="wf-page-title">History</h1>
-          <span class="count">{filtered.length} of {history.list.length}</span>
-        </div>
-        <p class="wf-page-subtitle">Everything you dictated, ready to copy, refine, replay, or turn into a draft.</p>
-      </div>
-      <div class="intro-actions">
-        <a class="insights-link" href="/stats">View insights</a>
-        <img src="/fox/fox-peeking.png" alt="" aria-hidden="true" />
-      </div>
-    </div>
+    <div class="head-row">
+      <h1 class="page-title">Home</h1>
 
-    <div class="search-row">
-      <svg class="search-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-        <path d="M 10.5 10.5 L 14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-      </svg>
-      <input
-        type="search"
-        class="search"
-        placeholder="Search transcripts…"
-        bind:value={search}
-      />
-      {#if search}
-        <button class="search-clear" onclick={() => (search = "")} aria-label="Clear search">×</button>
-      {/if}
-    </div>
-
-    <div class="controls">
-      <div class="filter-pills">
-        <button class="pill" class:active={filter === "all"} onclick={() => (filter = "all")}>All</button>
-        <button class="pill" class:active={filter === "light"} onclick={() => (filter = "light")}>Transcribe</button>
-        <button class="pill" class:active={filter === "drafting"} onclick={() => (filter = "drafting")}>Draft</button>
-        <button class="pill error-pill" class:active={filter === "error"} onclick={() => (filter = "error")}>Errors</button>
+      <div class="search-row">
+        <svg class="search-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M 10.5 10.5 L 14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+        <input
+          type="search"
+          class="search"
+          placeholder="Search your notes…"
+          bind:value={search}
+          bind:this={searchEl}
+        />
+        {#if search}
+          <button class="search-clear" onclick={() => (search = "")} aria-label="Clear search">×</button>
+        {:else}
+          <span class="search-kbd"><Kbd combo={isMac ? "Cmd+K" : "Ctrl+K"} /></span>
+        {/if}
       </div>
 
-      <div class="controls-right">
-        <button class="upload-btn" onclick={openUpload} title="Transcribe an audio file from your computer or phone">
+      <div class="head-actions">
+        <Button tone="secondary" onclick={openUpload} title="Transcribe an audio file from your computer or phone">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             <path d="M8 10V2M5 5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M3 10v2.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Upload
-        </button>
-        <button class="icon-btn" onclick={openRecordingsFolder} title="Open recordings folder in file manager">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        </Button>
+        <Button tone="ghost" iconOnly aria-label="Open recordings folder" title="Open recordings folder in file manager" onclick={openRecordingsFolder}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
             <path d="M 2 4 L 2 12 A 1 1 0 0 0 3 13 L 13 13 A 1 1 0 0 0 14 12 L 14 5 A 1 1 0 0 0 13 4 L 8 4 L 6.5 2.5 A 1 1 0 0 0 5.8 2.2 L 3 2.2 A 1 1 0 0 0 2 3.2 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           </svg>
-          Folder
-        </button>
-        <button class="icon-btn" onclick={() => history.refresh()} title="Reload the list from disk — does not re-transcribe anything">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        </Button>
+        <Button tone="ghost" iconOnly aria-label="Reload list" title="Reload the list from disk — does not re-transcribe anything" onclick={() => history.refresh()}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
             <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
-        </button>
-        <button
-          class="hold-clear"
-          class:armed={holdActive}
-          style="--hold:{holdProgress}"
-          onmousedown={startHold}
-          onmouseup={cancelHold}
-          onmouseleave={cancelHold}
-          title="Press and hold to delete recordings"
-        >
-          <span class="hold-fill"></span>
-          <span class="hold-text">
-            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-              <path d="M 3 4.5 H 13 M 6.5 4.5 V 3.2 A 0.7 0.7 0 0 1 7.2 2.5 H 8.8 A 0.7 0.7 0 0 1 9.5 3.2 V 4.5 M 4.5 4.5 L 5 12.5 A 1 1 0 0 0 6 13.4 H 10 A 1 1 0 0 0 11 12.5 L 11.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            {#if holdActive}Keep holding…{:else}Clear all{/if}
-          </span>
-        </button>
-        {#if hintMsg}<span class="cleared-msg">{hintMsg}</span>{/if}
-        {#if clearedMsg}<span class="cleared-msg">{clearedMsg}</span>{/if}
+        </Button>
       </div>
+    </div>
+
+    <StatusStrip />
+
+    <div class="filter-pills" role="tablist" aria-label="Filter notes">
+      {#each FILTERS as f (f.id)}
+        <button class="pill" class:active={filter === f.id} class:error-pill={f.id === "error"} role="tab" aria-selected={filter === f.id} onclick={() => (filter = f.id)}>
+          {f.label}{#if filter === f.id && search}<span class="pill-count">{filtered.length}</span>{/if}
+        </button>
+      {/each}
     </div>
   </header>
 
@@ -315,9 +266,6 @@
 
   <UploadDialog bind:open={uploadOpen} bind:paths={stagedPaths} />
 
-  <!-- Reworked delete (v3.0.0): released by the press-and-hold "Clear all"
-       control above. Targets everything (ids=null). -->
-  <DeleteDialog bind:open={deleteOpen} ids={null} label="all recordings" onDone={onDeleted} />
 
   <!-- Ambient pastoral meadow pinned to the bottom of the pane (design
        playbook: "the bottom sticky wave"). Sits BEHIND the row cards
@@ -352,70 +300,6 @@
     flex-shrink: 0;
     position: relative;
     z-index: 1;
-  }
-
-  .title-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: flex-start;
-    gap: 10px;
-    margin-bottom: 0;
-  }
-
-  .history-intro {
-    min-height: 86px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 24px;
-    padding: 0 2px;
-    position: relative;
-  }
-
-  .history-intro .wf-page-subtitle {
-    margin-top: 5px;
-  }
-
-  .intro-actions {
-    align-self: stretch;
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    padding-right: 6px;
-  }
-
-  .intro-actions img {
-    width: 78px;
-    height: 78px;
-    object-fit: contain;
-    object-position: bottom;
-    filter: drop-shadow(0 5px 10px rgba(84, 52, 20, 0.12));
-  }
-
-  .insights-link {
-    margin-bottom: 15px;
-    padding: 7px 11px;
-    color: var(--field);
-    background: var(--field-fade);
-    border: 1px solid color-mix(in srgb, var(--field) 20%, transparent);
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-
-  .insights-link:hover {
-    color: var(--text-primary);
-    background: color-mix(in srgb, var(--field-fade) 72%, var(--bg-card));
-  }
-
-  .count {
-    padding: 2px 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    background: var(--bg-subtle);
-    border-radius: 999px;
-    font-variant-numeric: tabular-nums;
   }
 
   .search-row {
@@ -475,14 +359,6 @@
     color: var(--bg-card);
   }
 
-  .controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
   /* Filter pills — v0.4.0 design playbook. Individual rounded pills with
      a soft cream fill by default and a vibrant orange fill when active.
      No segmented-control container — each pill is its own button. */
@@ -523,55 +399,6 @@
     box-shadow: 0 1px 2px rgba(168, 58, 42, 0.30);
   }
 
-  .controls-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    position: relative;
-  }
-
-  /* Upload — the prominent accent-filled action in this cluster; it's the
-     entry point for the whole file-upload feature, so it reads louder than the
-     neutral folder / refresh icon buttons. */
-  .upload-btn {
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: 7px 14px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: #fff;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: inherit;
-    box-shadow: 0 1px 2px rgba(184, 84, 18, 0.25);
-    transition: background 120ms ease, transform 120ms ease;
-  }
-  .upload-btn:hover {
-    background: var(--accent-hover, var(--accent));
-    transform: translateY(-1px);
-  }
-
-  .icon-btn {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 7px 12px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--text-primary);
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
-  }
-
-  .icon-btn:hover {
-    background: var(--bg-subtle);
-    border-color: var(--text-secondary);
-  }
 
   /* Drag-over hint — appears while an audio file is dragged onto the window. */
   .drag-overlay {
@@ -610,60 +437,6 @@
   /* Press-and-hold-to-clear button. Quiet ghost at rest (neutral secondary
      colour, transparent), turning danger-red only on hover / while holding.
      A danger fill sweeps left→right over 3s while held; releasing cancels. */
-  .hold-clear {
-    position: relative;
-    overflow: hidden;
-    isolation: isolate;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    padding: 7px 12px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--text-secondary);
-    user-select: none;
-    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-    width: 112px;
-  }
-  .hold-clear:hover {
-    border-color: var(--danger);
-    background: var(--danger-fade);
-    color: var(--danger);
-  }
-  .hold-clear:disabled {
-    opacity: 0.7;
-    cursor: default;
-  }
-  .hold-clear.armed {
-    border-color: var(--danger);
-    background: var(--danger-fade);
-    color: #fff;
-  }
-  .hold-fill {
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    transform-origin: left center;
-    transform: scaleX(var(--hold, 0));
-    background: var(--danger);
-    transition: transform 60ms linear;
-  }
-  .hold-text {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    justify-content: center;
-    width: 100%;
-  }
-  .cleared-msg {
-    font-size: 11px;
-    color: var(--text-secondary);
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-  }
 
   /* Date group headers — label + count chip, no rule line (the card gaps
      already separate groups visually, per the playbook mock). */
@@ -754,6 +527,7 @@
     opacity: 0.22;
   }
   @media (prefers-color-scheme: dark) {
+
     :global(body[data-theme="auto"]) .history-meadow {
       opacity: 0.22;
     }
@@ -804,30 +578,54 @@
   }
 
   @media (max-width: 780px) {
+
     .history-head {
       padding: 18px 18px 10px;
-    }
-
-    .intro-actions img {
-      display: none;
-    }
-
-    .insights-link {
-      margin-bottom: 10px;
-    }
-
-    .controls {
-      align-items: flex-start;
-    }
-
-    .controls-right {
-      width: 100%;
-      overflow-x: auto;
-      padding-bottom: 2px;
     }
 
     .rows {
       padding-inline: 18px;
     }
+  }
+
+  .head-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+  .page-title {
+    margin: 0;
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: var(--lh-tight);
+    color: var(--text-primary);
+  }
+  .head-row .search-row {
+    flex: 1;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .search-kbd {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  .head-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-left: auto;
+  }
+  .pill-count {
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: var(--radius-pill);
+    background: var(--bg-card);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
   }
 </style>

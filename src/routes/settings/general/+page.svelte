@@ -7,6 +7,11 @@
   import { settings } from "$lib/settings-store.svelte";
   import { flash } from "$lib/settings-toast.svelte";
   import { showMessage } from "$lib/dialogs";
+  import DeleteDialog from "$lib/DeleteDialog.svelte";
+  import Disclosure from "$lib/ui/Disclosure.svelte";
+  import Button from "$lib/ui/Button.svelte";
+
+  let deleteOpen = $state(false);
 
   async function setNumber<K extends keyof typeof settings.s>(key: K, value: number) {
     await settings.set(key, value as (typeof settings.s)[K]);
@@ -246,4 +251,24 @@
     </div>
   </div>
 
+  <!-- Moved here from the Home header in v3.5 (docs/DESIGN_v3.5.md §4):
+       destructive actions leave the everyday surface. -->
+  <Disclosure label="Danger zone" hint="delete everything">
+    <div class="settings-card danger-card">
+      <div class="field-block">
+        <label for="clear-all-btn">Clear all recordings</label>
+        <p class="hint">Deletes every recording and its audio on this device. Lifetime Insights are kept. Signed-in users can also choose to delete everywhere.</p>
+        <div>
+          <Button id="clear-all-btn" tone="danger" onclick={() => (deleteOpen = true)}>Clear all recordings…</Button>
+        </div>
+      </div>
+    </div>
+  </Disclosure>
+
+  <DeleteDialog bind:open={deleteOpen} ids={null} label="all recordings" onDone={() => flash("Recordings cleared")} />
+
 </section>
+
+<style>
+  .danger-card { border-color: var(--danger-fade); }
+</style>

@@ -3,6 +3,7 @@
   import { statsStore } from "$lib/stats-store.svelte";
   import { fleet, mergeSummaries } from "$lib/fleet-store.svelte";
   import { deviceGlyph, deviceDisplayName } from "$lib/device-icons";
+  import UsageMeter from "$lib/UsageMeter.svelte";
   import { deriveStats, TYPING_WPM, fmtDuration, fmtDurationLong, fmtNum, type DayPoint } from "$lib/stats";
 
   // Chart window + which metric the bars show.
@@ -146,6 +147,9 @@
       </p>
     {/if}
   </header>
+
+  <!-- Today's provider quota — moved here from the sidebar in v3.5. -->
+  <div class="quota-card"><UsageMeter /></div>
 
   {#if !d || d.totalSessions === 0}
     <div class="empty">
@@ -798,5 +802,12 @@
 
   @container stats (max-width: 560px) {
     .voice-grid { grid-template-columns: 1fr; }
+  }
+  .quota-card {
+    margin: 0 0 var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
   }
 </style>
