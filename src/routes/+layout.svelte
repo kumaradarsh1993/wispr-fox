@@ -355,9 +355,23 @@
   <div class="app-shell" data-mac={isMacShell || undefined}>
     <aside class="sidebar" class:collapsed class:resizing={resizingSidebar} style={sidebarStyle}>
       {#if isMacShell}
-        <!-- Empty strip beside the traffic lights; lets the user drag the
-             window by its top edge like any native macOS app. -->
-        <div class="titlebar-drag" data-tauri-drag-region></div>
+        <!-- Empty strip beside the traffic lights so the user can drag the
+             window by its top edge. Deliberately NOT `data-tauri-drag-region`:
+             Tauri maps a double-click on a drag region to MAXIMIZE, and with
+             the overlay titlebar (no visible title bar) an accidentally
+             maximized window reads as "the app opened full screen". Dragging
+             via startDragging() gives the move behaviour without the zoom. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="titlebar-drag"
+          onmousedown={async (e) => {
+            if (e.button !== 0) return;
+            try {
+              const { getCurrentWindow } = await import("@tauri-apps/api/window");
+              await getCurrentWindow().startDragging();
+            } catch {}
+          }}
+        ></div>
       {/if}
       <div class="sidebar-top">
         <!-- Universal sidebar-toggle icon (à la Claude/ChatGPT) — clearer

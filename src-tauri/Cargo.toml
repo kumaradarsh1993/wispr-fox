@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "3.5.0-nightly.3"
+version = "3.5.0-nightly.4"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -52,7 +52,13 @@ arboard = "3"
 rodio = { version = "0.20", default-features = false, features = ["wav", "mp3", "vorbis"] }
 
 # Windows Credential Manager for API keys (primary); encrypted fallback via dirs
-keyring = "3"
+# keyring: NO plain dependency on purpose. keyring 3.x makes every platform
+# credential store an OPT-IN FEATURE — a bare `keyring = "3"` compiles with no
+# backend at all and silently degrades to a process-local mock store. That is
+# what shipped up to v3.5.0-nightly.3: writes "succeeded", a readback inside
+# the same process passed, and the value was gone in the next launch. See the
+# per-target entries below ('apple-native' / 'windows-native' /
+# 'sync-secret-service'). Never add keyring here without a backend feature.
 dirs = "6"
 
 # History DB (bundled = ships SQLite, no system dep)
@@ -76,6 +82,8 @@ parking_lot = "0.12"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
+# Windows Credential Manager backend for keyring (see the note in [dependencies]).
+keyring = { version = "3", features = ["windows-native"] }
 windows = { version = "0.58", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
@@ -92,6 +100,8 @@ windows = { version = "0.58", features = [
 # events to reach focused apps (System Settings â†’ Privacy & Security â†’
 # Accessibility); without it the clipboard fallback kicks in.
 [target.'cfg(target_os = "macos")'.dependencies]
+# macOS Keychain backend for keyring (see the note in [dependencies]).
+keyring = { version = "3", features = ["apple-native"] }
 core-graphics = "0.23"
 core-foundation = "0.10"
 # Converts the floater WebviewWindow into a non-activating NSPanel. A plain
@@ -121,6 +131,11 @@ objc2-app-kit = { version = "0.3", features = [
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Secret Service (GNOME Keyring / KWallet) backend; crypto-rust avoids an
+# OpenSSL build dependency on the CI runner.
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]
 tempfile = "3"

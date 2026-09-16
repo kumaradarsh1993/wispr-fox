@@ -139,6 +139,14 @@ pub fn toggle_main(app: &AppHandle) {
         let visible = w.is_visible().unwrap_or(false);
         let minimized = w.is_minimized().unwrap_or(false);
         let focused = w.is_focused().unwrap_or(false);
+        // A window left MAXIMIZED by an accidental double-click on the macOS
+        // overlay-titlebar drag strip (nightly.1-.3) looks like "the app opens
+        // full screen" every time afterwards, because there is no title bar to
+        // show otherwise. Drop it back to its normal frame on the way in; the
+        // drag strip no longer maps double-click to zoom either.
+        if w.is_maximized().unwrap_or(false) {
+            let _ = w.unmaximize();
+        }
         // Only hide when the window is genuinely in front of the user. If it is
         // merely behind another app, "toggle" has to mean RAISE — hiding an
         // already-hidden-looking window is what makes a show/hide hotkey feel
