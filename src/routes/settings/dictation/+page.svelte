@@ -20,6 +20,7 @@
     | "light_hotkey"
     | "force_clean_hotkey"
     | "drafting_hotkey"
+    | "pause_hotkey"
     | "toggle_window_hotkey"
     | "advanced_hotkey";
 
@@ -27,6 +28,7 @@
     light_hotkey: "Transcribe",
     force_clean_hotkey: "Transcribe + force-clean",
     drafting_hotkey: "Draft",
+    pause_hotkey: "Pause / resume",
     toggle_window_hotkey: "Show / hide window",
     advanced_hotkey: "Advanced cleanup",
   };
@@ -383,6 +385,32 @@
       bind:value={settings.s.drafting_hotkey}
       oncommit={(c) => commitHotkey("drafting_hotkey", c)}
     />
+  </div>
+
+  <div class="hotkey-block">
+    <div class="hotkey-head">
+      <div>
+        <div class="hk-label">Pause / resume <span class="hk-tag">{isMac() ? "Ctrl+Option+Space" : "Ctrl+F8"} default</span></div>
+        <div class="hk-desc">
+          Pauses the recording you already started, and starts it again on the next
+          press — so you can read, think, and come back without the clock running.
+          Your earlier speech is kept: every stretch is joined into one recording and
+          sent as a single transcription, so pausing costs nothing extra. The fox stays
+          on screen while paused and tells you how many parts are saved. Finish the
+          whole thing with {isMac() ? "Option+Space" : "F8"} or Escape, from either
+          state. It is the dictation key plus Control, so there is one thing to
+          remember: <strong>add Control to pause</strong>.
+        </div>
+      </div>
+    </div>
+    <HotkeyCapture
+      label=""
+      bind:value={settings.s.pause_hotkey}
+      oncommit={(c) => commitHotkey("pause_hotkey", c)}
+    />
+    {#if settings.s.pause_hotkey}
+      <button class="btn-unbind" onclick={() => clearHotkey("pause_hotkey")}>Unbind</button>
+    {/if}
   </div>
 
   <div class="hotkey-block">

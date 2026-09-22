@@ -19,6 +19,9 @@ export type FlowPhase =
   | "idle"
   | "starting"
   | "recording"
+  /// Mid-dictation with the mic released, waiting for a resume. The session,
+  /// its history row and Escape-to-finish all stay alive.
+  | "paused"
   | "stopping"
   | "processing"
   | "succeeded"
@@ -44,6 +47,8 @@ export interface FlowSnapshot {
   input: InputDisposition | null;
   mic: MicPhase;
   mic_ready_ms: number | null;
+  /** Stretches of speech in this dictation — 1 normally, more after pauses. */
+  segments: number;
   notice: FlowNotice | null;
 }
 
@@ -124,6 +129,9 @@ export interface AppSettings {
   /** Global show/hide-the-window combo. Not a dictation binding — it never
    *  starts a recording. Empty string disables it. */
   toggle_window_hotkey: string;
+  /** Pause / resume the dictation already running. Not a dictation binding —
+   *  it never starts or ends a recording. Empty string disables it. */
+  pause_hotkey: string;
   adapt_to_app: boolean;
   device_name: string;
 }
@@ -359,6 +367,8 @@ export interface DefaultPrompts {
 export const api = {
   ping: () => invoke<string>("ping"),
   getFlowSnapshot: () => invoke<FlowSnapshot>("get_flow_snapshot"),
+  /** Pause or resume the running dictation. False when nothing was running. */
+  togglePause: () => invoke<boolean>("toggle_pause"),
   checkSecrets: () => invoke<SecretCheck>("check_secrets"),
   secretsDiagnostic: () => invoke<SecretsDiagnostic>("secrets_diagnostic"),
   secretAuditLog: (limit = 100) => invoke<SecretAuditEvent[]>("secret_audit_log", { limit }),

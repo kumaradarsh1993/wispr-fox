@@ -71,7 +71,7 @@
     dragArmed = null;
   }
 
-  type ClippyState = "idle" | "listening" | "thinking" | "writing" | "pasting";
+  type ClippyState = "idle" | "listening" | "paused" | "thinking" | "writing" | "pasting";
   type Mode = "light" | "advanced" | "drafting";
 
   // `flowState` is the *actual* flow state from Rust (changes fast during pipeline).
@@ -98,7 +98,15 @@
       } catch (e) {
         console.warn("[clippy] snapshot resync failed", e);
       }
-      if (lastRevision === armedRevision && flowState !== "idle" && flowState !== "listening") {
+      if (
+        lastRevision === armedRevision &&
+        flowState !== "idle" &&
+        flowState !== "listening" &&
+        // A paused dictation is allowed to sit indefinitely — that is the whole
+        // point of the feature. Nagging "still working on the previous
+        // dictation" at someone who deliberately paused would be nonsense.
+        flowState !== "paused"
+      ) {
         showToast("Still working on the previous dictation…", "info", 5000);
         armWatchdog();
       }
@@ -660,6 +668,9 @@
   const ANIMS_LIGHT: AnimMap = {
     idle: null, // let clippyts pick subtle Idle* animations automatically
     listening: "GetAttention",   // peers/leans toward user
+    // Paused: waiting posture, not an idle one — the session is still open and
+    // the avatar should read as "holding", not "done".
+    paused: "Wave",
     thinking: "Thinking",         // hand on chin
     writing: "Writing",            // pen + paper
     pasting: "Congratulate",       // celebrate
@@ -667,6 +678,7 @@
   const ANIMS_ADVANCED: AnimMap = {
     idle: null,
     listening: "GetAttention",
+    paused: "Wave",
     thinking: "Processing",        // heavier "gears turning" feel
     writing: "GetWizardy",         // magic wand transformation
     pasting: "Congratulate",
@@ -729,6 +741,10 @@
     if (snapshot.phase === "starting" || snapshot.phase === "recording") {
       return "listening";
     }
+    // Paused is its own resting state, deliberately NOT idle: the fox must stay
+    // on screen with a distinct look, so the user can see the session is still
+    // open and their earlier speech is banked.
+    if (snapshot.phase === "paused") return "paused";
     if (snapshot.phase === "stopping") return "thinking";
     if (snapshot.phase !== "processing") return "idle";
     if (snapshot.stage === "cleaning") return "writing";
@@ -781,8 +797,11 @@
         snapshot.phase === "stopping") &&
       snapshot.mic === "waking";
     micReadyMs = snapshot.mic_ready_ms;
+    if (typeof snapshot.segments === "number" && snapshot.segments > 0) {
+      pausedSegments = snapshot.segments;
+    }
 
-    if (next === "idle" || next === "listening") {
+    if (next === "idle" || next === "listening" || next === "paused") {
       sttProvider = "";
       llmProvider = "";
       disarmWatchdog();
@@ -1179,6 +1198,9 @@
   // user to understand that the delay is the DEVICE, not the app hanging.
   let micWaiting = $state(false);
   let micReadyMs = $state<number | null>(null);
+  /// Stretches of speech banked in the current dictation. Shown while paused so
+  /// the user can see earlier speech is held, not lost.
+  let pausedSegments = $state(1);
   let micWaitElapsed = $state(0);
   $effect(() => {
     if (!micWaiting || displayState !== "listening") return;
@@ -1219,8 +1241,16 @@
   // and every line is written to fit the bubble's 2-line cap. A minute
   // marker rides along once past 60s so a glance tells you how long you've
   // been going.
-  function listenLabel(secs: number, app: string): string {
-    const tail = app ? ` · ${app}` : "";
+  // The paused bubble. A pause raises exactly one anxiety — "did I just lose
+  // what I already said?" — so the line leads with the banked count and names
+  // the key that finishes, instead of a bare "paused".
+  function pausedLabel(segments: number): string {
+    const n = Math.max(1, segments);
+    const banked = n === 1 ? "1 part saved" : `${n} parts saved`;
+    return `paused · ${banked} · Esc to finish`;
+  }
+
+  function listenLabel(secs: number, app: string): string {    const tail = app ? ` · ${app}` : "";
     const mins = Math.floor(secs / 60);
     const clock = mins >= 1 ? ` · ${mins}m` : "";
     if (secs < 15)  return `listening…${tail}`;
@@ -1260,6 +1290,10 @@
     listening: micWaiting
       ? waitLabel(micWaitElapsed)
       : listenLabel(listenElapsed, activeApp),
+    // The paused line must answer the one question a pause raises: "is what I
+    // already said safe?" So it leads with the banked count, and names the key
+    // that finishes rather than leaving the user hunting for it.
+    paused: pausedLabel(pausedSegments),
     thinking: denoising
       ? "clearing noise…"
       : sttProvider ? `transcribing · ${prettyProvider(sttProvider)}` : runLines.think,

@@ -71,6 +71,7 @@ const FALLBACK: AppSettings = {
   force_clean_hotkey: "Shift+F8",
   force_clean_sticky_hotkey: "Shift+Super+F8",
   toggle_window_hotkey: "Super+F8",
+  pause_hotkey: "Ctrl+F8",
   adapt_to_app: true,
   device_name: "",
 };
@@ -213,6 +214,24 @@ class SettingsStore {
         remap("toggle_window_hotkey", "Super+F8", "Super+Shift+Space");
         try {
           await store?.set("macToggleWindowMigrated", true);
+          await store?.save();
+        } catch {
+          /* best-effort marker */
+        }      }
+
+      // Step 4: the pause/resume binding, added in v3.5.0. Same reasoning as
+      // step 3 — the Windows-shaped default is Ctrl+F8, which on a Mac would
+      // register an F-key that the function row never delivers.
+      let macPauseDone = false;
+      try {
+        macPauseDone = (await store?.get<boolean>("macPauseHotkeyMigrated")) ?? false;
+      } catch {
+        /* treat as not-yet-migrated */
+      }
+      if (!macPauseDone) {
+        remap("pause_hotkey", "Ctrl+F8", "Ctrl+Alt+Space");
+        try {
+          await store?.set("macPauseHotkeyMigrated", true);
           await store?.save();
         } catch {
           /* best-effort marker */

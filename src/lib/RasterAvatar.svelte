@@ -6,7 +6,11 @@
   } from "./avatar-packs";
   import type { Skin } from "./skin-store.svelte";
 
-  type LiveState = "idle" | "listening" | "thinking" | "writing" | "pasting";
+  // "paused" has no art of its own in any pack — it deliberately falls back to
+  // the idle frame and is distinguished by the `data-state="paused"` styling
+  // below (dimmed, with a pause glyph). That keeps a new dictation state from
+  // requiring a new sprite in every one of the avatar packs.
+  type LiveState = "idle" | "listening" | "paused" | "thinking" | "writing" | "pasting";
 
   let {
     skin,
@@ -150,6 +154,44 @@
 
   .raster-avatar[data-state="pasting"] {
     animation: raster-pop 720ms cubic-bezier(0.2, 0.9, 0.25, 1.25) both;
+  }
+
+  /* Paused: the session is open but the mic is off, so the avatar must read as
+     "holding" — not asleep (that is idle) and not listening. A slow breath plus
+     a muted tint says waiting without implying anything is being recorded. */
+  .raster-avatar[data-state="paused"] {
+    animation: raster-paused-breathe 2.8s ease-in-out infinite;
+  }
+
+  .raster-avatar[data-state="paused"] .raster-frame.active {
+    filter: saturate(0.55) brightness(0.94)
+      drop-shadow(0 7px 9px rgba(16, 18, 24, 0.22));
+  }
+
+  /* Small pause glyph so the state is legible even on a minimal skin and
+     even if the bubble is hidden. */
+  .raster-avatar[data-state="paused"]::after {
+    content: "";
+    position: absolute;
+    top: 6%;
+    right: 4%;
+    width: calc(12px * var(--fscale, 1));
+    height: calc(12px * var(--fscale, 1));
+    z-index: 4;
+    border-radius: 2px;
+    background:
+      linear-gradient(to right,
+        currentColor 0 34%,
+        transparent 34% 66%,
+        currentColor 66% 100%);
+    color: rgba(255, 255, 255, 0.92);
+    filter: drop-shadow(0 1px 2px rgba(16, 18, 24, 0.55));
+    opacity: 0.95;
+  }
+
+  @keyframes raster-paused-breathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-1.5px) scale(1.012); }
   }
 
   .raster-avatar.hovering .raster-frame.active {

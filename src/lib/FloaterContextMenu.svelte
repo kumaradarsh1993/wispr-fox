@@ -33,6 +33,7 @@
     | "cleaning"
     | "injecting"
     | "listening"
+    | "paused"
     | "thinking"
     | "writing"
     | "pasting";
@@ -81,6 +82,15 @@
       await api.floaterTrigger("light");
     } catch (e) {
       console.warn("floater_trigger stop failed", e);
+    }
+  }
+
+  async function togglePause() {
+    onClose();
+    try {
+      await api.togglePause();
+    } catch (e) {
+      console.warn("toggle_pause failed", e);
     }
   }
 
@@ -160,9 +170,20 @@
         <span class="ctx-label">Draft</span>
       </button>
     {:else}
+      <!-- Pause is only meaningful while capture is open. During the pipeline
+           stages (transcribing/cleaning/injecting) there is nothing to pause,
+           so the item is not offered there. -->
+      {#if recState === "recording" || recState === "listening" || recState === "paused"}
+        <button class="ctx-item" onclick={togglePause}>
+          <span class="ctx-glyph">{recState === "paused" ? "▶" : "⏸"}</span>
+          <span class="ctx-label">{recState === "paused" ? "Resume" : "Pause"}</span>
+        </button>
+      {/if}
       <button class="ctx-item ctx-stop" onclick={stopDictation}>
         <span class="ctx-glyph">⏹</span>
-        <span class="ctx-label">Stop ({recState})</span>
+        <span class="ctx-label">
+          {recState === "paused" ? "Finish and transcribe" : `Stop (${recState})`}
+        </span>
       </button>
     {/if}
 
