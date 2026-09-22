@@ -237,6 +237,179 @@ pub fn resize_floater(
     Ok((after.width, after.height, sf))
 }
 
+/// Clamp a proposed floater rect onto a monitor that actually exists, keeping
+/// clear of system chrome (macOS menu bar, Windows taskbar) by using each
+/// monitor's WORK AREA rather than its full bounds.
+///
+/// Picks the monitor the rect overlaps most; if it overlaps none (the classic
+/// "saved position came from an external display that is now unplugged" case)
+/// it falls back to the primary monitor and places the window in the
+/// equivalent relative spot instead of throwing the position away.
+///
+/// All coordinates are PHYSICAL px — the same space `outer_position()`,
+/// `outer_size()` and `Monitor::work_area()` all speak.
+fn clamp_onto_monitor<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> (i32, i32) {
+    let monitors = window.available_monitors().unwrap_or_default();
+    if monitors.is_empty() {
+        return (x, y);
+    }
+
+    // Overlap area between the proposed rect and each monitor's work area.
+    let overlap = |m: &tauri::window::Monitor| -> i64 {
+        let wa = m.work_area();
+        let (mx, my) = (wa.position.x, wa.position.y);
+        let (mw, mh) = (wa.size.width as i32, wa.size.height as i32);
+        let ox = (x + w).min(mx + mw) - x.max(mx);
+        let oy = (y + h).min(my + mh) - y.max(my);
+        if ox <= 0 || oy <= 0 {
+            0
+        } else {
+            ox as i64 * oy as i64
+        }
+    };
+
+    let best = monitors
+        .iter()
+        .max_by_key(|m| overlap(m))
+        .filter(|m| overlap(m) > 0)
+        .or_else(|| {
+            // Nothing overlaps — prefer the primary monitor, else the first.
+            window
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .and_then(|p| {
+                    let pname = p.name().cloned();
+                    monitors.iter().find(|m| m.name().cloned() == pname)
+                })
+                .or_else(|| monitors.first())
+        });
+
+    let Some(m) = best else {
+        return (x, y);
+    };
+    let wa = m.work_area();
+    let (mx, my) = (wa.position.x, wa.position.y);
+    let (mw, mh) = (wa.size.width as i32, wa.size.height as i32);
+
+    // Keep the whole window inside the work area. max() before min() so a
+    // window LARGER than the work area still lands at its top-left rather
+    // than at a negative offset.
+    let cx = x.min(mx + mw - w).max(mx);
+    let cy = y.min(my + mh - h).max(my);
+    (cx, cy)
+}
+
+/// The floater's BOTTOM-CENTRE point in physical px — the spot the avatar
+/// actually stands on.
+///
+/// Why this and not `outer_position()`: the floater window is a transparent
+/// box that GROWS (a speech bubble takes it from ~132×132 to ~226×187; the
+/// right-click menu to 192×316) and it grows upward/outward so the character
+/// stays visually still. Its top-left therefore moves while the avatar does
+/// not. Persisting the top-left and later restoring it at the RESTING size
+/// put the avatar up-and-left of where the user left it, compounding once per
+/// session until the floater walked off the top-left of the screen (reported
+/// 21-Sep-2026). The bottom-centre anchor is invariant under those resizes,
+/// so saving it removes the whole class of drift rather than patching one case.
+///
+/// Computed in Rust because `outerSize()` on the floater webview has a history
+/// of silently rejecting from JS (see `resize_floater`).
+#[tauri::command]
+pub fn floater_anchor(window: tauri::WebviewWindow) -> Result<(i32, i32), String> {
+    let pos = window
+        .outer_position()
+        .map_err(|e| format!("outer_position: {e}"))?;
+    let size = window
+        .outer_size()
+        .map_err(|e| format!("outer_size: {e}"))?;
+    Ok((
+        pos.x + size.width as i32 / 2,
+        pos.y + size.height as i32,
+    ))
+}
+
+/// Place the floater so its bottom-centre lands on `(ax, ay)`, clamped onto a
+/// real monitor's work area. Returns the anchor actually used, so the caller
+/// can re-persist a clamped value instead of keeping an off-screen one.
+#[tauri::command]
+pub fn place_floater_at_anchor(
+    window: tauri::WebviewWindow,
+    ax: i32,
+    ay: i32,
+) -> Result<(i32, i32), String> {
+    let size = window
+        .outer_size()
+        .map_err(|e| format!("outer_size: {e}"))?;
+    let (w, h) = (size.width as i32, size.height as i32);
+    let (cx, cy) = clamp_onto_monitor(&window, ax - w / 2, ay - h, w, h);
+    window
+        .set_position(tauri::PhysicalPosition::new(cx, cy))
+        .map_err(|e| format!("set_position: {e}"))?;
+    Ok((cx + w / 2, cy + h))
+}
+
+/// Safety net for display changes (unplugging an external monitor, resolution
+/// changes, a Space that moved the window): if less than half the floater is
+/// on any monitor, pull it back on-screen and return the new anchor.
+///
+/// Deliberately tolerant — a floater the user has parked half off the edge on
+/// purpose is left alone; only a mostly-gone window is rescued.
+#[tauri::command]
+pub fn rescue_floater(window: tauri::WebviewWindow) -> Result<Option<(i32, i32)>, String> {
+    let pos = window
+        .outer_position()
+        .map_err(|e| format!("outer_position: {e}"))?;
+    let size = window
+        .outer_size()
+        .map_err(|e| format!("outer_size: {e}"))?;
+    let (w, h) = (size.width as i32, size.height as i32);
+    let area = w as i64 * h as i64;
+    if area == 0 {
+        return Ok(None);
+    }
+
+    let monitors = window.available_monitors().unwrap_or_default();
+    let visible: i64 = monitors
+        .iter()
+        .map(|m| {
+            // Full monitor bounds here, not the work area: a floater tucked
+            // under the Dock is annoying, not lost, and rescuing it would
+            // fight the user every time they parked it low.
+            let (mx, my) = (m.position().x, m.position().y);
+            let (mw, mh) = (m.size().width as i32, m.size().height as i32);
+            let ox = (pos.x + w).min(mx + mw) - pos.x.max(mx);
+            let oy = (pos.y + h).min(my + mh) - pos.y.max(my);
+            if ox <= 0 || oy <= 0 {
+                0
+            } else {
+                ox as i64 * oy as i64
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    if visible * 2 >= area {
+        return Ok(None);
+    }
+
+    let (cx, cy) = clamp_onto_monitor(&window, pos.x, pos.y, w, h);
+    window
+        .set_position(tauri::PhysicalPosition::new(cx, cy))
+        .map_err(|e| format!("set_position: {e}"))?;
+    tracing::info!(
+        from_x = pos.x, from_y = pos.y, to_x = cx, to_y = cy,
+        "floater was mostly off-screen; rescued onto a live monitor"
+    );
+    Ok(Some((cx + w / 2, cy + h)))
+}
+
 /// Toggle the floater window's clickthrough mode. When `ignore=true` the
 /// window passes all clicks through to whatever app is behind it — and stops
 /// receiving any mouse events itself. Used by the JS hit-test in

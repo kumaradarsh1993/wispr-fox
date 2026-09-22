@@ -3,7 +3,6 @@
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { PhysicalPosition } from "@tauri-apps/api/window";
   import { skinStore } from "$lib/skin-store.svelte";
   import { avatarVisibility } from "$lib/avatar-visibility.svelte";
   import { isMac } from "$lib/hotkey-display";
@@ -960,40 +959,73 @@
 
     // Layer 3: periodic ping to the Rust watchdog so it knows the webview
     // is alive.  If this stops arriving, Rust force-repaints the floater.
+    // Every third tick (~30s) also asks Rust to rescue the window if a display
+    // change left it mostly off-screen (external monitor unplugged, resolution
+    // change, Space shuffle). Rust only acts when less than half the window is
+    // on any monitor, so a floater deliberately parked half off the edge is
+    // left alone.
+    let pingTick = 0;
     const jsPingInterval = setInterval(() => {
       invoke("js_heartbeat_ping").catch(() => {});
+      if (++pingTick % 3 === 0) {
+        invoke<[number, number] | null>("rescue_floater")
+          .then((moved) => {
+            if (moved) {
+              localStorage.setItem(
+                posKeyFor(skinStore.current),
+                JSON.stringify({ ax: moved[0], ay: moved[1] }),
+              );
+            }
+          })
+          .catch(() => {});
+      }
     }, 10_000);
 
     // Place the floater on first launch / restore saved position.
     //
-    // CRITICAL BUG FIX (nightly.12, reported on M4 Pro): the previous
-    // implementation mixed PHYSICAL and LOGICAL pixel coordinates.
-    // `availableMonitors()`/`primaryMonitor()` return positions/sizes in
-    // PHYSICAL px (i.e. multiplied by scaleFactor). `outerPosition()` also
-    // returns PHYSICAL. But `setPosition(new LogicalPosition(...))` expects
-    // LOGICAL px — Tauri internally converts back to physical by multiplying
-    // by scaleFactor. On a 2× Retina display that's a 2× error: placing the
-    // window 2× further than intended, well past the right edge of the screen.
-    // The floater rendered correctly, the JS heartbeat fired (proving the
-    // WKWebView was alive) — the user just couldn't see it because it was
-    // *literally off the edge of the monitor*. Toggling/avatar-switching
-    // didn't help because every code path kept the same broken position.
+    // DRIFT BUG FIX (reported 21-Sep-2026: "the avatar keeps creeping up and
+    // left across sessions until it walks off the screen"). The floater window
+    // is a transparent box that GROWS — a speech bubble takes a character from
+    // ~132×132 to ~226×187, the right-click menu to 192×316 — and it grows
+    // upward/outward so the avatar, which sits at the BOTTOM CENTRE, stays
+    // visually still. We used to persist the window's TOP-LEFT, saved on any
+    // mouseup, which in practice happens while the box is grown (you just
+    // right-clicked it, or a bubble is up). Next launch the box is back at its
+    // resting size, its top-left goes to the saved coordinate, and the avatar
+    // therefore appears up-and-left of where it was — by ~184px/~30px after a
+    // right-click. That new spot then gets saved in turn, so it compounded once
+    // per session.
     //
-    // Fix: use PhysicalPosition consistently (matches what outerPosition()
-    // returns AND what availableMonitors() reports). All saved/restored values
-    // stay in physical px; no scale-factor conversions needed.
+    // Fix: persist the BOTTOM-CENTRE ANCHOR instead — the point the avatar
+    // stands on, which is invariant under those resizes. Geometry lives in Rust
+    // (`floater_anchor` / `place_floater_at_anchor`) because outerSize() on this
+    // webview has a history of silently rejecting from JS, and because Rust can
+    // clamp onto a monitor's WORK AREA (clear of the macOS menu bar) in the
+    // same call.
     //
-    // We also persist via the new persist() that always saves physical.
+    // Historical note kept deliberately: an earlier bug here mixed PHYSICAL and
+    // LOGICAL pixels (availableMonitors() and outerPosition() report physical,
+    // setPosition(LogicalPosition) expects logical), which on a 2× Retina Mac
+    // placed the window ~1700px past the right edge — the floater painted fine,
+    // it was simply off-screen. Everything on this path stays PHYSICAL.
     (async () => {
-      const win = getCurrentWindow();
-      // Position storage is PER SKIN-CLASS (wave vs character) so switching
-      // between the top-center wave pill and a bottom-corner character doesn't
-      // make them fight over one saved slot. posKeyFor()/placeFloaterDefault()
-      // (lib/floater-place.ts) own the monitor math — single source of truth.
-      // The wave window is short/wide; characters are ~190×210 logical.
+      // Position storage is PER SKIN-CLASS (wave vs siri vs character) so the
+      // top-centre wave pill and a bottom-corner character don't fight over one
+      // saved slot. posKeyFor()/placeFloaterDefault() (lib/floater-place.ts)
+      // own the monitor math for the default placement.
       const curSkin = skinStore.current;
       const posKey = posKeyFor(curSkin);
-      const { w: logicalWinW, h: logicalWinH } = logicalWinSize(curSkin);
+
+      // Persist wherever we end up, so a clamped or migrated value replaces the
+      // bad one on disk instead of being re-read next launch.
+      const persistAnchor = async () => {
+        try {
+          const a = await invoke<[number, number]>("floater_anchor");
+          localStorage.setItem(posKey, JSON.stringify({ ax: a[0], ay: a[1] }));
+        } catch {
+          /* ignore */
+        }
+      };
 
       const placeDefault = async () => {
         try {
@@ -1001,6 +1033,7 @@
         } catch (e) {
           console.warn("[clippy] default-position placement failed", e);
         }
+        await persistAnchor();
       };
 
       const saved = localStorage.getItem(posKey);
@@ -1008,7 +1041,7 @@
         await placeDefault();
         return;
       }
-      let parsed: { x: number; y: number };
+      let parsed: { ax?: number; ay?: number; x?: number; y?: number };
       try {
         parsed = JSON.parse(saved);
       } catch {
@@ -1016,47 +1049,36 @@
         await placeDefault();
         return;
       }
+
       try {
-        const { availableMonitors, primaryMonitor } = await import(
-          "@tauri-apps/api/window"
-        );
-        const monitors = await availableMonitors();
-        // Find any monitor whose bounds (PHYSICAL) overlap with the saved
-        // position (PHYSICAL) by at least a margin so a small bit of window
-        // poking onto a monitor still counts.
-        let probe = monitors[0];
-        try {
-          const p = await primaryMonitor();
-          if (p) probe = p;
-        } catch {/* keep monitors[0] */}
-        const sf = (probe?.scaleFactor) ?? 1;
-        const winWPhys = Math.round(logicalWinW * sf);
-        const winHPhys = Math.round(logicalWinH * sf);
-        const marginPhys = Math.round(60 * sf);
-        const inside = monitors.some((mn) => {
-          const left = mn.position.x;
-          const top = mn.position.y;
-          const right = left + mn.size.width;
-          const bottom = top + mn.size.height;
-          return (
-            parsed.x + winWPhys - marginPhys > left &&
-            parsed.x + marginPhys < right &&
-            parsed.y + winHPhys - marginPhys > top &&
-            parsed.y + marginPhys < bottom
-          );
-        });
-        if (inside) {
-          console.info("[clippy] restore saved (physical px) →", parsed);
-          await win.setPosition(new PhysicalPosition(parsed.x, parsed.y));
-        } else {
-          console.warn(
-            "[clippy] saved position",
-            parsed,
-            "is offscreen; dropping it and using default",
-          );
-          localStorage.removeItem(posKey);
-          await placeDefault();
+        let ax = parsed.ax;
+        let ay = parsed.ay;
+        if (typeof ax !== "number" || typeof ay !== "number") {
+          // MIGRATION from the old top-left format. The stored value is a
+          // drifted top-left and we cannot know which grown size produced it,
+          // so read it as the top-left of the RESTING box: the avatar may land
+          // one final offset away from where it was, and from then on it holds.
+          if (typeof parsed.x !== "number" || typeof parsed.y !== "number") {
+            localStorage.removeItem(posKey);
+            await placeDefault();
+            return;
+          }
+          const { w: logW, h: logH } = logicalWinSize(curSkin);
+          const sf = window.devicePixelRatio || 1;
+          ax = Math.round(parsed.x + (logW * sf) / 2);
+          ay = Math.round(parsed.y + logH * sf);
+          console.info("[clippy] migrated saved top-left → bottom-centre anchor", {
+            from: parsed,
+            to: { ax, ay },
+          });
         }
+        // Rust clamps onto a live monitor's work area and hands back the anchor
+        // it actually used — so a position inherited from an unplugged external
+        // display lands in the equivalent spot on a real screen rather than
+        // being thrown away.
+        const used = await invoke<[number, number]>("place_floater_at_anchor", { ax, ay });
+        localStorage.setItem(posKey, JSON.stringify({ ax: used[0], ay: used[1] }));
+        console.info("[clippy] restored floater anchor (physical px) →", used);
       } catch (e) {
         console.warn("[clippy] position restore failed", e);
         await placeDefault();
@@ -1066,14 +1088,14 @@
     let posSaveTimer: ReturnType<typeof setTimeout> | undefined;
     const persist = async () => {
       try {
-        const pos = await getCurrentWindow().outerPosition();
-        // outerPosition() is PHYSICAL px; persist as physical and restore as
-        // physical so the two sides agree. Mixing logical/physical here was
-        // the M4 Pro invisible-floater bug. Keyed by the CURRENT skin's class
-        // so wave and character positions are remembered separately.
+        // Bottom-centre anchor, NOT the window's top-left — see the long note
+        // above. Saving the top-left is what made the avatar drift up-and-left
+        // once per session, because a mouseup usually lands while the window is
+        // grown for a bubble or the right-click menu.
+        const a = await invoke<[number, number]>("floater_anchor");
         localStorage.setItem(
           posKeyFor(skinStore.current),
-          JSON.stringify({ x: pos.x, y: pos.y }),
+          JSON.stringify({ ax: a[0], ay: a[1] }),
         );
       } catch {
         /* ignore */

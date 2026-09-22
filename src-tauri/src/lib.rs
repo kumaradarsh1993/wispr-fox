@@ -365,8 +365,13 @@ pub fn run() {
                     let size = monitor.size();
                     let pos = monitor.position();
                     let sf = monitor.scale_factor();
-                    let win_w_phys = (190.0 * sf) as i32;
-                    let win_h_phys = (210.0 * sf) as i32;
+                    // Resting box for a character skin is ART 116×116 + pads
+                    // → ~132×132 logical (see boxFor() in clippy/+page.svelte).
+                    // This used to assume 190×210, which put a freshly placed
+                    // fox ~58px further from the bottom-right corner than the
+                    // JS default placement intended — the two paths disagreed.
+                    let win_w_phys = (132.0 * sf) as i32;
+                    let win_h_phys = (132.0 * sf) as i32;
                     let margin_x = (24.0 * sf) as i32;
                     let margin_y = (60.0 * sf) as i32;
                     let x = pos.x + size.width as i32 - win_w_phys - margin_x;
@@ -464,6 +469,9 @@ pub fn run() {
             commands::set_clickthrough,
             commands::recover_clippy_window,
             commands::resize_floater,
+            commands::floater_anchor,
+            commands::place_floater_at_anchor,
+            commands::rescue_floater,
             commands::show_floater,
             commands::platform_diagnostic,
             commands::repair_accessibility,

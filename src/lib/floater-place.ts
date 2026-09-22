@@ -32,19 +32,30 @@ export function logicalWinSize(skin: Skin): { w: number; h: number } {
   if (skin === "wave") return { w: 136, h: 48 };
   // siri ART {58,58} + pads → 74×74.
   if (skin === "siri") return { w: 74, h: 74 };
-  // character: the classic 190×210 footprint.
-  return { w: 190, h: 210 };
+  // character: the classic footprint. ART fox 116×116 + SIDE_PAD·2 and
+  // BOTTOM_PAD+TOP_MARGIN → 132×132 (see boxFor() in clippy/+page.svelte).
+  // Was 190×210, which no skin has used since the box was tightened — the
+  // stale number pushed default placement ~58px away from the intended corner.
+  return { w: 132, h: 132 };
 }
 
 /**
  * Move the floater window to its skin-appropriate default position and return
- * the physical coordinates used (so the caller can persist them). Clears
- * nothing — the caller decides whether to also drop the saved position.
+ * the physical BOTTOM-CENTRE anchor used (so the caller can persist it).
+ * Clears nothing — the caller decides whether to also drop the saved position.
+ *
+ * Placement goes through the Rust `place_floater_at_anchor` command rather than
+ * setPosition, for two reasons: it clamps onto a live monitor's work area, and
+ * it accounts for the window's CURRENT size. That second part matters because
+ * the commonest caller is the right-click menu's "Reset position", which runs
+ * while the window is grown to the menu's 192×316 — placing a resting-box
+ * top-left in that state left the avatar ~184px below the intended spot.
  */
-export async function placeFloaterDefault(skin: Skin): Promise<{ x: number; y: number } | null> {
+export async function placeFloaterDefault(skin: Skin): Promise<{ ax: number; ay: number } | null> {
   const { getCurrentWindow, availableMonitors, primaryMonitor, PhysicalPosition } = await import(
     "@tauri-apps/api/window"
   );
+  const { invoke } = await import("@tauri-apps/api/core");
   const monitors = await availableMonitors();
   let m = monitors[0];
   try {
@@ -80,8 +91,19 @@ export async function placeFloaterDefault(skin: Skin): Promise<{ x: number; y: n
     y = m.position.y + m.size.height - winHPhys - marginYPhys;
   }
 
-  await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
-  return { x, y };
+  // The x/y above are the RESTING box's top-left; convert to the bottom-centre
+  // anchor the avatar actually stands on and let Rust do the placing.
+  const ax = x + Math.round(winWPhys / 2);
+  const ay = y + winHPhys;
+  try {
+    const used = await invoke<[number, number]>("place_floater_at_anchor", { ax, ay });
+    return { ax: used[0], ay: used[1] };
+  } catch {
+    // Fallback if the command is unavailable for any reason: place the resting
+    // top-left directly (physical px — never LogicalPosition, see the header).
+    await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
+    return { ax, ay };
+  }
 }
 
 /** localStorage key for the saved floater position. Per positioning class so a

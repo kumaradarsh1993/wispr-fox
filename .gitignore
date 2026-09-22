@@ -24,3 +24,6 @@ src-tauri/gen/schemas/
 # Local-only reference assets — never commit (third-party copyright)
 /Codex pets_*/
 /Foxy screenshots_*/
+
+# KiroCrew local agent config (not project source)
+.kiro/
