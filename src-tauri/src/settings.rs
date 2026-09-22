@@ -44,6 +44,17 @@ pub struct AppSettings {
     #[serde(default = "default_toggle_window_hotkey")]
     pub toggle_window_hotkey: String,
 
+    /// Pause / resume the dictation that is already running. NOT a dictation
+    /// binding — it never starts or ends a recording, so like
+    /// `toggle_window_hotkey` it carries no Mode and registers on its own path.
+    ///
+    /// Default is the start key plus Control (`Ctrl+Option+Space` on macOS,
+    /// `Ctrl+F8` on Windows), so there is one thing to remember: "add Control to
+    /// pause". A modifier-only chord cannot be registered as a global shortcut,
+    /// which is why Control+Option alone is not the binding. Empty disables it.
+    #[serde(default = "default_pause_hotkey")]
+    pub pause_hotkey: String,
+
     // ── Cleanup behaviour per mode ────────────────────────────────────────
     // Whether each mode runs the LLM cleanup step. Light defaults to OFF
     // (raw Whisper transcript is good enough; user can opt in). Advanced
@@ -232,6 +243,7 @@ impl Default for AppSettings {
             force_clean_hotkey: default_force_clean_hotkey(),
             force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
             toggle_window_hotkey: default_toggle_window_hotkey(),
+            pause_hotkey: default_pause_hotkey(),
             // F8 default OFF — raw Whisper is fast + accurate, no LLM tax.
             auto_clean_in_light: false,
             auto_clean_in_advanced: true,
@@ -358,6 +370,11 @@ fn default_force_clean_hotkey() -> String {
 /// why the list above errs conservative.
 fn default_toggle_window_hotkey() -> String {
     if cfg!(target_os = "macos") { "Super+Shift+Space" } else { "Super+F8" }.to_string()
+}
+
+/// The dictation key plus Control — "add Control to pause".
+fn default_pause_hotkey() -> String {
+    if cfg!(target_os = "macos") { "Ctrl+Alt+Space" } else { "Ctrl+F8" }.to_string()
 }
 
 fn default_true() -> bool {

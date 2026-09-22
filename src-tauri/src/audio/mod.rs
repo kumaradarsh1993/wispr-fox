@@ -239,6 +239,73 @@ enum AudioCmd {
     StopPreview {
         reply: oneshot::Sender<Result<()>>,
     },
+    /// Release the microphone but keep the session open, so the next Resume
+    /// adds to the same dictation rather than starting a new one. Replies with
+    /// the number of segments banked so far, which the floater shows.
+    Pause {
+        reply: oneshot::Sender<Result<u32>>,
+    },
+    /// Re-open capture into a fresh segment of the paused session.
+    Resume {
+        device: Option<String>,
+        reply: oneshot::Sender<Result<u32>>,
+    },
+}
+
+/// A dictation whose microphone is currently released, waiting to be resumed.
+///
+/// Pause deliberately tears the capture stream down rather than gating it: a
+/// paused dictation must not hold the microphone, or the OS mic indicator stays
+/// lit and the user cannot tell "paused" from "recording". The cost is that
+/// resuming pays the cold-start again (~200ms), which is invisible next to the
+/// pause it follows.
+struct PausedSession {
+    /// The session's final file. Segment 0 is written straight here, so a
+    /// dictation that is never paused costs nothing extra.
+    base_path: PathBuf,
+    /// Finalised segment files awaiting the weld at stop, in order.
+    pending_segments: Vec<PathBuf>,
+    /// Total mono samples banked across finished segments.
+    banked_samples: u64,
+    /// Total wall-clock time spent recording (pauses excluded).
+    banked_ms: i64,
+    /// Sample rate of the base file — what later segments are matched to.
+    sample_rate: u32,
+    device_name: String,
+    device_fallback: bool,
+    /// Sticky: once any segment reports a stream fault, the session has one.
+    stream_errored: bool,
+    /// Head-gap of the FIRST segment. Later segments' wake-up time is not the
+    /// user's "I pressed the key and it missed my first word" experience.
+    mic_ready_ms: i64,
+    generation: u64,
+    paused_at: Instant,
+    /// The device preference this session started with, so Resume re-opens the
+    /// same one rather than drifting to whatever is default now. Keeping every
+    /// segment on one device keeps their formats identical, which keeps the
+    /// weld at stop a cheap byte copy instead of a resample.
+    device_pref: Option<String>,
+}
+
+impl PausedSession {
+    /// Segments recorded so far, counting the one in the base file.
+    fn segment_count(&self) -> u32 {
+        self.pending_segments.len() as u32 + 1
+    }
+
+    /// Where the next resumed stretch should be written.
+    fn next_segment_path(&self) -> PathBuf {
+        wavio::tagged_path(
+            &self.base_path,
+            &format!("seg{}", self.pending_segments.len() + 1),
+        )
+    }
+
+    /// The session's original device, falling back to the caller's current
+    /// preference only if this session never had one.
+    fn device_pref_or(&self, current: Option<String>) -> Option<String> {
+        self.device_pref.clone().or(current)
+    }
 }
 
 #[derive(Clone)]
@@ -331,6 +398,33 @@ impl AudioController {
             .await
             .map_err(|_| anyhow!("audio worker dropped reply"))?
     }
+
+    /// Release the mic but keep the dictation open. Returns the number of
+    /// segments banked so far (>= 1), which the floater reports to the user.
+    pub async fn pause(&self) -> Result<u32> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(AudioCmd::Pause { reply: reply_tx })
+            .map_err(|_| anyhow!("audio worker thread is gone"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow!("audio worker dropped reply"))?
+    }
+
+    /// Re-open capture into a new segment of the paused dictation. Returns the
+    /// segment number now being recorded.
+    pub async fn resume(&self, device: Option<String>) -> Result<u32> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(AudioCmd::Resume {
+                device,
+                reply: reply_tx,
+            })
+            .map_err(|_| anyhow!("audio worker thread is gone"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow!("audio worker dropped reply"))?
+    }
 }
 
 struct ActiveRecording {
@@ -353,6 +447,141 @@ struct ActiveRecording {
     /// Resolved capture device, and whether we fell back to the default.
     device_name: String,
     device_fallback: bool,
+    /// --- Pause/resume session carry-over ---
+    /// The session's final file. Equal to `path` for an unpaused dictation;
+    /// when this stretch is a resumed segment, `path` is the segment file and
+    /// this is the base everything gets welded into.
+    base_path: PathBuf,
+    /// Segments already finalised before this one, in order.
+    pending_segments: Vec<PathBuf>,
+    /// Samples and recording time banked by earlier segments.
+    banked_samples: u64,
+    banked_ms: i64,
+    /// Sticky stream-fault flag inherited from earlier segments.
+    inherited_stream_error: bool,
+    /// Head-gap measured on the first segment, carried so a resumed stretch
+    /// does not overwrite it with its own (irrelevant) wake-up time.
+    inherited_mic_ready_ms: Option<i64>,
+    /// The device preference this session started with, so Resume re-opens the
+    /// same one rather than drifting to whatever is default now.
+    device_pref: Option<String>,
+    generation: u64,
+}
+
+/// Everything measured when one stretch of capture is closed down.
+///
+/// Pause and Stop do the identical tail-drain / finalise / measure sequence and
+/// differ only in what they do afterwards, so it lives here once. Getting the
+/// drain wrong is the "it ate my last word" bug, and having two copies of it is
+/// how one of them would silently lose the fix.
+struct SegmentOutcome {
+    /// File this stretch was written to (the base file for segment 0).
+    segment_path: PathBuf,
+    base_path: PathBuf,
+    pending_segments: Vec<PathBuf>,
+    /// Banked + this stretch.
+    total_samples: u64,
+    total_ms: i64,
+    sample_rate: u32,
+    device_name: String,
+    device_fallback: bool,
+    device_pref: Option<String>,
+    stream_errored: bool,
+    mic_ready_ms: i64,
+    generation: u64,
+}
+
+fn close_segment(rec: ActiveRecording, writer: &SharedWriter, meter: &Meter) -> SegmentOutcome {
+    let this_ms = rec.started_at.elapsed().as_millis() as i64;
+
+    // Tail drain. WASAPI hands us audio in buffered chunks, so at the instant
+    // the key is released the final ~tens-to-hundreds of milliseconds of speech
+    // are still sitting in the OS capture buffer, not yet delivered to our
+    // callback. Closing the writer and dropping the stream right now discards
+    // them — that's the long-standing "it ate my last word" bug. Keep the
+    // stream alive a beat longer so those trailing callbacks land in the WAV
+    // first, THEN finalise. (Any genuine silence captured here gets removed by
+    // trim_trailing_silence downstream.)
+    std::thread::sleep(std::time::Duration::from_millis(220));
+
+    // Close the gate; then drop the stream so the mic indicator turns off and
+    // the device is released to other apps.
+    if let Some(w) = writer.lock().take() {
+        if let Err(e) = w.finalize() {
+            tracing::warn!("WAV finalize error: {e}");
+        }
+    }
+
+    // Head-gap: how long the mic took to wake up after the key went down.
+    // Anything the user said before the first callback never reached the WAV.
+    // On a resumed segment the session already has this number from segment 0.
+    let this_mic_ready = (*rec.first_callback.lock())
+        .map(|t| t.saturating_duration_since(rec.cmd_received_at).as_millis() as i64)
+        .unwrap_or(-1);
+
+    let ActiveRecording {
+        path,
+        _stream,
+        sample_rate,
+        samples_written,
+        stream_error,
+        device_name,
+        device_fallback,
+        base_path,
+        mut pending_segments,
+        banked_samples,
+        banked_ms,
+        inherited_stream_error,
+        inherited_mic_ready_ms,
+        device_pref,
+        generation,
+        ..
+    } = rec;
+    drop(_stream);
+    meter.disarm();
+
+    // Segment 0 is the base file itself; later segments must be welded on.
+    if path != base_path {
+        pending_segments.push(path.clone());
+    }
+
+    SegmentOutcome {
+        segment_path: path,
+        base_path,
+        pending_segments,
+        total_samples: banked_samples + samples_written.load(Ordering::Relaxed),
+        total_ms: banked_ms + this_ms,
+        sample_rate,
+        device_name,
+        device_fallback,
+        device_pref,
+        stream_errored: inherited_stream_error || stream_error.load(Ordering::Relaxed),
+        mic_ready_ms: inherited_mic_ready_ms.unwrap_or(this_mic_ready),
+        generation,
+    }
+}
+
+/// Weld banked segments onto the session's base file and delete them.
+///
+/// Best-effort per segment: a segment that will not join is logged and skipped
+/// rather than failing the whole dictation, because losing one stretch of
+/// speech is much better than losing all of it.
+fn weld_segments(base: &Path, segments: &[PathBuf]) {
+    for seg in segments {
+        match wavio::append_wav_pcm(base, seg) {
+            Ok(frames) => {
+                tracing::info!(?seg, frames, "welded paused segment into the session");
+                if let Err(e) = std::fs::remove_file(seg) {
+                    tracing::warn!(?seg, "could not remove welded segment: {e}");
+                }
+            }
+            Err(e) => {
+                // Leave the file on disk — it is recoverable audio, and the
+                // launch-time sweep will find it.
+                tracing::error!(?seg, "could not weld segment, leaving it in place: {e:#}");
+            }
+        }
+    }
 }
 
 fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
@@ -365,6 +594,9 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
     // drivers, can be 1-5s on Realtek with audio enhancements enabled).
 
     let mut active: Option<ActiveRecording> = None;
+    // A dictation whose mic is released, waiting on Resume. Mutually exclusive
+    // with `active`.
+    let mut paused: Option<PausedSession> = None;
     // The mic-test preview stream. Parked on this thread for the same reason
     // the recording stream is: cpal's `Stream` is `!Send` on Windows.
     let mut preview: Option<Stream> = None;
@@ -381,6 +613,15 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                 if active.is_some() {
                     tracing::debug!("ignoring duplicate start (key repeat)");
                     let _ = reply.send(Err(anyhow!("recording already in progress")));
+                    continue;
+                }
+                if paused.is_some() {
+                    // Starting a new dictation on top of a paused one would
+                    // abandon the banked segments with no way to reach them.
+                    tracing::warn!("ignoring start — a paused recording is still open");
+                    let _ = reply.send(Err(anyhow!(
+                        "a paused recording is still open — finish it first"
+                    )));
                     continue;
                 }
 
@@ -422,6 +663,16 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                             first_callback: started.first_callback,
                             device_name: started.device_name,
                             device_fallback: started.device_fallback,
+                            // Fresh session: segment 0 IS the base file, so an
+                            // unpaused dictation never touches the weld path.
+                            base_path: path.clone(),
+                            pending_segments: Vec::new(),
+                            banked_samples: 0,
+                            banked_ms: 0,
+                            inherited_stream_error: false,
+                            inherited_mic_ready_ms: None,
+                            device_pref: device.clone(),
+                            generation,
                         });
                         let _ = reply.send(Ok(()));
                     }
@@ -478,81 +729,182 @@ fn worker_loop(rx: mpsc::Receiver<AudioCmd>, meter: Arc<Meter>) {
                 let _ = reply.send(Ok(()));
             }
 
-            AudioCmd::Stop { reply } => {
+            AudioCmd::Pause { reply } => {
+                if paused.is_some() {
+                    // Already paused — a second press is a no-op, not an error,
+                    // so a double-tap can't corrupt the session.
+                    let n = paused.as_ref().map(|p| p.segment_count()).unwrap_or(0);
+                    let _ = reply.send(Ok(n));
+                    continue;
+                }
                 let Some(rec) = active.take() else {
                     let _ = reply.send(Err(anyhow!("no recording in progress")));
                     continue;
                 };
+                let out = close_segment(rec, &writer, &meter);
+                let count = out.pending_segments.len() as u32 + 1;
+                tracing::info!(
+                    base = ?out.base_path,
+                    segments = count,
+                    total_ms = out.total_ms,
+                    "recording paused — microphone released"
+                );
+                paused = Some(PausedSession {
+                    base_path: out.base_path,
+                    pending_segments: out.pending_segments,
+                    banked_samples: out.total_samples,
+                    banked_ms: out.total_ms,
+                    sample_rate: out.sample_rate,
+                    device_name: out.device_name,
+                    device_fallback: out.device_fallback,
+                    stream_errored: out.stream_errored,
+                    mic_ready_ms: out.mic_ready_ms,
+                    generation: out.generation,
+                    paused_at: Instant::now(),
+                    device_pref: out.device_pref,
+                });
+                let _ = reply.send(Ok(count));
+            }
 
-                let duration_ms = rec.started_at.elapsed().as_millis() as i64;
+            AudioCmd::Resume { device, reply } => {
+                if active.is_some() {
+                    // Already recording — treat as a no-op for double-taps.
+                    let _ = reply.send(Ok(1));
+                    continue;
+                }
+                let Some(session) = paused.take() else {
+                    let _ = reply.send(Err(anyhow!("no paused recording to resume")));
+                    continue;
+                };
 
-                // Tail drain. WASAPI hands us audio in buffered chunks, so at
-                // (see below) — sleep first so the final callbacks land before
-                // we read the sample count.
-                // the instant the key is released the final ~tens-to-hundreds
-                // of milliseconds of speech are still sitting in the OS capture
-                // buffer, not yet delivered to our callback. Closing the writer
-                // and dropping the stream right now discards them — that's the
-                // long-standing "it ate my last word" bug. Keep the stream
-                // alive a beat longer so those trailing callbacks land in the
-                // WAV first, THEN finalise. (Any genuine silence captured here
-                // gets removed by trim_trailing_silence downstream.)
-                std::thread::sleep(std::time::Duration::from_millis(220));
+                let seg_path = session.next_segment_path();
+                let t0 = Instant::now();
+                if let Some(parent) = seg_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                // Reuse the session's original generation so the meter and the
+                // UI keep treating this as the same dictation.
+                meter.arm(session.generation, CaptureSource::Dictation);
+                // Prefer the device this session started on; fall back to the
+                // caller's current preference only if we were never given one.
+                let want = session.device_pref_or(device);
 
-                // Close the gate; then drop the stream so the mic indicator
-                // turns off and the device is released to other apps.
-                if let Some(w) = writer.lock().take() {
-                    if let Err(e) = w.finalize() {
-                        tracing::warn!("WAV finalize error: {e}");
+                match begin_cold_recording(&seg_path, &writer, meter.clone(), want.as_deref(), t0) {
+                    Ok(started) => {
+                        let paused_for_ms = session.paused_at.elapsed().as_millis();
+                        let count = session.pending_segments.len() as u32 + 2;
+                        tracing::info!(
+                            ?seg_path,
+                            paused_for_ms,
+                            segment = count,
+                            "recording resumed into a new segment"
+                        );
+                        active = Some(ActiveRecording {
+                            path: seg_path,
+                            started_at: Instant::now(),
+                            _stream: started.stream,
+                            sample_rate: started.sample_rate,
+                            samples_written: started.samples_written,
+                            stream_error: started.stream_error,
+                            cmd_received_at: t0,
+                            first_callback: started.first_callback,
+                            device_name: started.device_name,
+                            device_fallback: session.device_fallback || started.device_fallback,
+                            base_path: session.base_path,
+                            pending_segments: session.pending_segments,
+                            banked_samples: session.banked_samples,
+                            banked_ms: session.banked_ms,
+                            inherited_stream_error: session.stream_errored,
+                            inherited_mic_ready_ms: Some(session.mic_ready_ms),
+                            device_pref: want,
+                            generation: session.generation,
+                        });
+                        let _ = reply.send(Ok(count));
+                    }
+                    Err(e) => {
+                        // Resume failed (mic gone). Keep the session paused so
+                        // the banked audio is still reachable via Stop — losing
+                        // it because the mic vanished would be unforgivable.
+                        *writer.lock() = None;
+                        meter.disarm();
+                        tracing::error!("resume failed, session stays paused: {e:#}");
+                        let count = session.segment_count();
+                        paused = Some(session);
+                        let _ = reply.send(Err(anyhow!(
+                            "could not re-open the microphone ({e}); \
+                             {count} segment(s) are still saved — stop to transcribe them"
+                        )));
                     }
                 }
-                // Head-gap: how long the mic took to wake up after the key
-                // went down. Anything the user said before the first callback
-                // never reached the WAV.
-                let mic_ready_ms = (*rec.first_callback.lock())
-                    .map(|t| t.saturating_duration_since(rec.cmd_received_at).as_millis() as i64)
-                    .unwrap_or(-1);
+            }
 
-                let ActiveRecording {
-                    path,
-                    _stream,
-                    sample_rate,
-                    samples_written,
-                    stream_error,
-                    device_name,
-                    device_fallback,
-                    ..
-                } = rec;
-                drop(_stream);
-                meter.disarm();
+            AudioCmd::Stop { reply } => {
+                // Stopping from the paused state: there is no live stream, just
+                // banked segments to weld.
+                if active.is_none() {
+                    let Some(session) = paused.take() else {
+                        let _ = reply.send(Err(anyhow!("no recording in progress")));
+                        continue;
+                    };
+                    weld_segments(&session.base_path, &session.pending_segments);
+                    let captured_ms = if session.sample_rate > 0 {
+                        (session.banked_samples as i64 * 1000) / session.sample_rate as i64
+                    } else {
+                        0
+                    };
+                    tracing::info!(
+                        base = ?session.base_path,
+                        segments = session.segment_count(),
+                        captured_ms,
+                        "stopped from paused — segments welded into one file"
+                    );
+                    let _ = reply.send(Ok(FinishedRecording {
+                        path: session.base_path,
+                        duration_ms: session.banked_ms,
+                        captured_ms,
+                        stream_errored: session.stream_errored,
+                        mic_ready_ms: session.mic_ready_ms,
+                        device_name: session.device_name,
+                        device_fallback: session.device_fallback,
+                    }));
+                    continue;
+                }
+
+                let rec = active.take().expect("checked above");
+                let out = close_segment(rec, &writer, &meter);
+
+                // One upload per dictation: weld every banked segment onto the
+                // base file before anyone sees it. Groq bills per request, so
+                // five segments must not become five requests.
+                if !out.pending_segments.is_empty() {
+                    weld_segments(&out.base_path, &out.pending_segments);
+                }
 
                 // Convert the real sample count into milliseconds of audio. This
                 // is the ground truth we compare against the wall-clock timer to
                 // detect a mic that dropped mid-recording.
-                let samples = samples_written.load(Ordering::Relaxed);
-                let captured_ms = if sample_rate > 0 {
-                    (samples as i64 * 1000) / sample_rate as i64
+                let captured_ms = if out.sample_rate > 0 {
+                    (out.total_samples as i64 * 1000) / out.sample_rate as i64
                 } else {
                     0
                 };
-                let stream_errored = stream_error.load(Ordering::Relaxed);
-                if is_capture_gap(duration_ms, captured_ms, stream_errored) {
+                if is_capture_gap(out.total_ms, captured_ms, out.stream_errored) {
                     tracing::warn!(
-                        duration_ms,
+                        duration_ms = out.total_ms,
                         captured_ms,
-                        stream_errored,
+                        stream_errored = out.stream_errored,
                         "capture gap detected — WAV holds less audio than the timer ran"
                     );
                 }
 
                 let _ = reply.send(Ok(FinishedRecording {
-                    path,
-                    duration_ms,
+                    path: out.base_path,
+                    duration_ms: out.total_ms,
                     captured_ms,
-                    stream_errored,
-                    mic_ready_ms,
-                    device_name,
-                    device_fallback,
+                    stream_errored: out.stream_errored,
+                    mic_ready_ms: out.mic_ready_ms,
+                    device_name: out.device_name,
+                    device_fallback: out.device_fallback,
                 }));
             }
         }
@@ -774,8 +1126,108 @@ fn drain_errors(rx: mpsc::Receiver<AudioCmd>, reason: &str) {
             AudioCmd::StopPreview { reply, .. } => {
                 let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
             }
+            AudioCmd::Pause { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
+            AudioCmd::Resume { reply, .. } => {
+                let _ = reply.send(Err(anyhow!("audio unavailable: {reason}")));
+            }
         }
     }
+}
+
+/// Weld segments left behind by a crash back onto their sessions.
+///
+/// **Call this exactly once, at launch, before any recording can start.** A
+/// paused dictation holds its banked segments on disk and welds them at stop;
+/// if this ran on a timer it could weld a *live* paused session's segments out
+/// from under it and corrupt the dictation in progress. Launch is the one moment
+/// when any `.segN.wav` on disk is guaranteed to be an orphan.
+///
+/// Returns the base files that were repaired, so the caller can log them. The
+/// history row for a session already exists from the moment recording started,
+/// so a recovered session reappears in History with its audio intact and can be
+/// transcribed with Rerun — nothing needs to be re-created here.
+pub fn recover_orphaned_segments(audio_root: &Path) -> Vec<PathBuf> {
+    let mut repaired = Vec::new();
+    if !audio_root.exists() {
+        return repaired;
+    }
+
+    // audio/<date>/<uuid>[.segN].wav — one level of date folders.
+    let date_dirs = match std::fs::read_dir(audio_root) {
+        Ok(rd) => rd,
+        Err(e) => {
+            tracing::warn!(?audio_root, "could not scan for orphaned segments: {e}");
+            return repaired;
+        }
+    };
+
+    for date_entry in date_dirs.flatten() {
+        let dir = date_entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        // Group segments by their base session, keyed by segment number so they
+        // are welded back in the order they were spoken.
+        let mut groups: std::collections::BTreeMap<String, Vec<(u32, PathBuf)>> =
+            std::collections::BTreeMap::new();
+
+        let Ok(files) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for f in files.flatten() {
+            let p = f.path();
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if p.extension().and_then(|e| e.to_str()) != Some("wav") {
+                continue;
+            }
+            // "<uuid>.seg3" → base "<uuid>", index 3.
+            let Some((base, tag)) = stem.rsplit_once('.') else {
+                continue;
+            };
+            let Some(idx) = tag.strip_prefix("seg").and_then(|n| n.parse::<u32>().ok()) else {
+                continue;
+            };
+            groups.entry(base.to_owned()).or_default().push((idx, p));
+        }
+
+        for (base, mut segs) in groups {
+            segs.sort_by_key(|(idx, _)| *idx);
+            let base_path = dir.join(format!("{base}.wav"));
+
+            // If the base file never survived, promote the earliest segment
+            // into its place so the session still has a file to weld onto.
+            let mut start_at = 0;
+            if !base_path.exists() {
+                let (_, first) = &segs[0];
+                if let Err(e) = std::fs::rename(first, &base_path) {
+                    tracing::error!(?first, "could not promote orphan segment: {e}");
+                    continue;
+                }
+                start_at = 1;
+            }
+
+            let remaining: Vec<PathBuf> = segs[start_at..]
+                .iter()
+                .map(|(_, p)| p.clone())
+                .collect();
+            tracing::warn!(
+                ?base_path,
+                segments = segs.len(),
+                "recovering a dictation interrupted while paused"
+            );
+            weld_segments(&base_path, &remaining);
+            // The welded file's own header may also be unfinalised if the crash
+            // caught the base mid-write.
+            let _ = wavio::repair_truncated_header(&base_path);
+            repaired.push(base_path);
+        }
+    }
+
+    repaired
 }
 
 /// Everything the capture callback needs, bundled so the two stream builders
@@ -1045,5 +1497,104 @@ mod capture_gap_tests {
     #[test]
     fn rounding_on_a_tiny_take_stays_quiet() {
         assert!(!is_capture_gap(2_000, 1_400, false));
+    }
+}
+
+/// The pause/resume crash-recovery sweep. This code path only ever runs after
+/// an interrupted session, so it has to be proven here rather than in use.
+#[cfg(test)]
+mod segment_recovery_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wispr-segrec-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("2026-09-22")).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, frames: usize, level: f32) {
+        wavio::write_mono_i16(path, &vec![level; frames], 48_000).unwrap();
+    }
+
+    /// The ordinary crash-while-paused case: a base file plus two orphaned
+    /// segments. All three stretches must end up in one file, in order.
+    #[test]
+    fn welds_orphans_onto_their_base_in_spoken_order() {
+        let root = scratch("ordered");
+        let day = root.join("2026-09-22");
+        let base = day.join("abc.wav");
+        write(&base, 100, 0.10);
+        write(&day.join("abc.seg1.wav"), 200, 0.20);
+        write(&day.join("abc.seg2.wav"), 300, 0.30);
+
+        let repaired = recover_orphaned_segments(&root);
+        assert_eq!(repaired, vec![base.clone()]);
+
+        let joined = wavio::read_mono_f32(&base).unwrap();
+        assert_eq!(joined.samples.len(), 600, "all three stretches welded");
+        // Order matters: levels must ascend 0.1 → 0.2 → 0.3.
+        assert!((joined.samples[50] - 0.10).abs() < 0.01);
+        assert!((joined.samples[150] - 0.20).abs() < 0.01);
+        assert!((joined.samples[400] - 0.30).abs() < 0.01);
+        assert!(!day.join("abc.seg1.wav").exists(), "segments cleaned up");
+        assert!(!day.join("abc.seg2.wav").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The base file did not survive the crash. The earliest segment must be
+    /// promoted into its place rather than the whole session being lost.
+    #[test]
+    fn promotes_the_first_segment_when_the_base_is_gone() {
+        let root = scratch("promote");
+        let day = root.join("2026-09-22");
+        write(&day.join("xyz.seg1.wav"), 400, 0.40);
+        write(&day.join("xyz.seg2.wav"), 100, 0.15);
+
+        let repaired = recover_orphaned_segments(&root);
+        assert_eq!(repaired.len(), 1);
+
+        let base = day.join("xyz.wav");
+        assert!(base.exists(), "a base file should have been created");
+        let joined = wavio::read_mono_f32(&base).unwrap();
+        assert_eq!(joined.samples.len(), 500);
+        assert!((joined.samples[10] - 0.40).abs() < 0.01);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Segment numbers must sort numerically, not as text — otherwise seg10
+    /// lands before seg2 and a long session is reassembled scrambled.
+    #[test]
+    fn orders_double_digit_segments_numerically() {
+        let root = scratch("twodigit");
+        let day = root.join("2026-09-22");
+        let base = day.join("many.wav");
+        write(&base, 10, 0.01);
+        write(&day.join("many.seg2.wav"), 10, 0.02);
+        write(&day.join("many.seg10.wav"), 10, 0.10);
+
+        recover_orphaned_segments(&root);
+        let joined = wavio::read_mono_f32(&base).unwrap();
+        assert_eq!(joined.samples.len(), 30);
+        // seg2 (0.02) must come before seg10 (0.10).
+        assert!((joined.samples[15] - 0.02).abs() < 0.005, "seg2 should be second");
+        assert!((joined.samples[25] - 0.10).abs() < 0.005, "seg10 should be last");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A clean install, and an ordinary un-paused recording, must both be left
+    /// completely alone.
+    #[test]
+    fn leaves_plain_recordings_untouched() {
+        let root = scratch("plain");
+        let day = root.join("2026-09-22");
+        let base = day.join("solo.wav");
+        write(&base, 250, 0.2);
+        let before = std::fs::metadata(&base).unwrap().len();
+
+        assert!(recover_orphaned_segments(&root).is_empty());
+        assert_eq!(std::fs::metadata(&base).unwrap().len(), before);
+        assert!(recover_orphaned_segments(&std::env::temp_dir().join("nope-missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

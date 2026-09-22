@@ -59,6 +59,10 @@ pub struct HotkeyConfig {
     /// Show/hide the main window. Not a dictation binding: it carries no Mode
     /// and never reaches the flow layer, so it lives outside `combos()`.
     pub toggle_window: String,
+    /// Pause / resume the running dictation. Like `toggle_window` this carries
+    /// no Mode and never reaches the flow layer's dictation path, so it is not
+    /// part of `combos()`.
+    pub pause: String,
 }
 
 impl HotkeyConfig {
@@ -69,6 +73,7 @@ impl HotkeyConfig {
             drafting: s.drafting_hotkey.clone(),
             force_clean: s.force_clean_hotkey.clone(),
             toggle_window: s.toggle_window_hotkey.clone(),
+            pause: s.pause_hotkey.clone(),
         }
     }
 
@@ -202,7 +207,61 @@ fn rebuild_locked(
     }
 
     register_window_toggle(app, cfg, state);
+    register_pause_toggle(app, cfg, state);
     Ok(())
+}
+
+/// The pause/resume dispatcher. Installed separately from `CALLBACK` because
+/// pause is not a dictation edge — it carries no mode and no up/down semantics.
+static PAUSE_CALLBACK: std::sync::OnceLock<std::sync::Arc<dyn Fn() + Send + Sync + 'static>> =
+    std::sync::OnceLock::new();
+
+/// Register the handler the pause combo invokes. Call once at startup, before
+/// `install`; a second call is ignored.
+pub fn set_pause_handler(f: impl Fn() + Send + Sync + 'static) {
+    let _ = PAUSE_CALLBACK.set(std::sync::Arc::new(f));
+}
+
+/// Register the pause/resume combo.
+///
+/// Registered unconditionally rather than only while a dictation runs: the
+/// global-shortcut registry is not safe to mutate from inside a shortcut
+/// callback (v3.3.0-nightly.2 froze every hotkey doing exactly that), so
+/// arming it per-recording would mean registry writes on the recording path.
+/// Instead the binding is always live and the flow layer ignores it when no
+/// dictation is open, which is a no-op rather than a state change.
+fn register_pause_toggle(app: &AppHandle, cfg: &HotkeyConfig, state: &mut RegistrationState) {
+    let combo = cfg.pause.trim();
+    if combo.is_empty() {
+        return;
+    }
+    let sc = match Shortcut::from_str(combo) {
+        Ok(sc) => sc,
+        Err(e) => {
+            tracing::warn!(combo, "pause hotkey parse failed, skipping: {e}");
+            return;
+        }
+    };
+    let sc_match = sc.clone();
+    match app
+        .global_shortcut()
+        .on_shortcut(sc.clone(), move |_app, fired, event| {
+            // Pause is a tap, not an adaptive tap/hold — act on the down edge
+            // only, so holding it does not toggle twice.
+            if fired != &sc_match || event.state() != ShortcutState::Pressed {
+                return;
+            }
+            if let Some(cb) = PAUSE_CALLBACK.get() {
+                cb();
+            }
+        })
+    {
+        Ok(()) => {
+            tracing::info!(combo, "pause hotkey registered");
+            state.registered.push(sc);
+        }
+        Err(e) => tracing::warn!(combo, "pause hotkey registration failed: {e}"),
+    }
 }
 
 /// Register the show/hide-window combo.

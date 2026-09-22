@@ -22,6 +22,17 @@ pub fn get_flow_snapshot(flow: State<'_, Flow>) -> FlowSnapshot {
     flow.get_flow_snapshot()
 }
 
+/// Pause or resume the dictation that is already running.
+///
+/// The same action as the pause hotkey, exposed so the floater's own control
+/// and the tray can drive it by click. Returns true when a live dictation was
+/// toggled, false when there was nothing to pause — the caller can use that to
+/// avoid showing feedback for a press that did nothing.
+#[tauri::command]
+pub fn toggle_pause(app: tauri::AppHandle, flow: State<'_, Flow>) -> bool {
+    flow.toggle_pause(&app)
+}
+
 /// Called every 10s by the floater's JS to signal the webview is alive.
 /// The Rust-side watchdog checks the staleness of this timestamp to decide
 /// whether a full force_repaint is needed.

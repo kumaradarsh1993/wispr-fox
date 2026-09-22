@@ -79,33 +79,9 @@ pub fn repair_truncated_header(path: &Path) -> Result<bool> {
     }
     let riff_size = u32::from_le_bytes([head[4], head[5], head[6], head[7]]);
 
-    // Walk the chunk list looking for `data`. Chunks are id(4) + size(4) + body,
-    // body padded to an even length.
-    let mut cursor: u64 = 12;
-    let mut data_size_at: Option<u64> = None;
-    let mut data_body_at: u64 = 0;
-    let mut data_size: u32 = 0;
-    while cursor + 8 <= file_len {
-        f.seek(SeekFrom::Start(cursor))?;
-        let mut ch = [0u8; 8];
-        f.read_exact(&mut ch)?;
-        let id = [ch[0], ch[1], ch[2], ch[3]];
-        let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]);
-        if &id == b"data" {
-            data_size_at = Some(cursor + 4);
-            data_body_at = cursor + 8;
-            data_size = size;
-            break;
-        }
-        if size == 0 {
-            // A zero-length non-data chunk means the header was mangled beyond
-            // what we can safely walk; don't guess.
-            return Ok(false);
-        }
-        cursor += 8 + size as u64 + (size as u64 % 2);
-    }
-
-    let Some(size_at) = data_size_at else {
+    // Walk the chunk list looking for `data`. A mangled header that cannot be
+    // walked safely yields None — don't guess at it.
+    let Some((size_at, data_body_at, data_size)) = find_data_chunk(&mut f, file_len)? else {
         return Ok(false);
     };
 
@@ -203,6 +179,168 @@ pub fn read_mono_f32(path: &Path) -> Result<DecodedWav> {
         is_float: matches!(spec.sample_format, WavSampleFormat::Float),
         channels,
     })
+}
+
+/// Locate the `data` chunk in a RIFF/WAVE file.
+///
+/// Returns `(offset_of_size_field, offset_of_body, declared_size)`. Shared by
+/// the header repair and the segment concatenation so there is one chunk-walk
+/// in this module rather than two that can drift apart.
+fn find_data_chunk(f: &mut std::fs::File, file_len: u64) -> Result<Option<(u64, u64, u32)>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    if file_len < 12 {
+        return Ok(None);
+    }
+    f.seek(SeekFrom::Start(0))?;
+    let mut head = [0u8; 12];
+    f.read_exact(&mut head)?;
+    if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
+        return Ok(None);
+    }
+    let mut cursor: u64 = 12;
+    while cursor + 8 <= file_len {
+        f.seek(SeekFrom::Start(cursor))?;
+        let mut ch = [0u8; 8];
+        f.read_exact(&mut ch)?;
+        let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]);
+        if &ch[0..4] == b"data" {
+            return Ok(Some((cursor + 4, cursor + 8, size)));
+        }
+        if size == 0 {
+            return Ok(None);
+        }
+        cursor += 8 + size as u64 + (size as u64 % 2);
+    }
+    Ok(None)
+}
+
+/// Append `extra`'s audio onto the end of `base`, in place, and fix `base`'s
+/// header sizes. Returns the number of mono frames appended.
+///
+/// **Why this exists.** Pause/resume records each stretch of speech into its own
+/// segment file, because a paused session releases the microphone entirely (the
+/// mic indicator goes off — a pause should not look like a recording). At stop
+/// the segments are welded back into the session's single WAV, so the
+/// transcription provider still receives **one** request. Groq bills per
+/// request, so uploading five segments separately for one dictation would
+/// quintuple the cost of the same speech.
+///
+/// Two paths. When both files carry identical format — the normal case, since
+/// every segment is captured from the same device — the audio bytes are copied
+/// across verbatim in 1 MiB blocks: lossless, and it never holds more than a
+/// block in memory, which matters because a long session can be hundreds of MB.
+/// When the formats differ, which happens if the capture device changes while
+/// paused (headphones unplugged between two stretches of speech), `extra` is
+/// decoded to mono, resampled to `base`'s rate and re-encoded at `base`'s depth.
+pub fn append_wav_pcm(base: &Path, extra: &Path) -> Result<u64> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    // A segment whose header was never finalised (app killed while paused)
+    // must be healed before hound will read its spec.
+    let _ = repair_truncated_header(extra);
+    let _ = repair_truncated_header(base);
+
+    let base_spec = hound::WavReader::open(base)
+        .with_context(|| format!("opening base WAV {base:?}"))?
+        .spec();
+    let extra_spec = hound::WavReader::open(extra)
+        .with_context(|| format!("opening segment WAV {extra:?}"))?
+        .spec();
+
+    let bytes_per_frame =
+        (base_spec.bits_per_sample as u64 / 8).max(1) * base_spec.channels.max(1) as u64;
+
+    // --- Slow path: formats differ, so re-encode into base's format. ---
+    if base_spec.sample_format != extra_spec.sample_format
+        || base_spec.bits_per_sample != extra_spec.bits_per_sample
+        || base_spec.channels != extra_spec.channels
+        || base_spec.sample_rate != extra_spec.sample_rate
+    {
+        tracing::warn!(
+            ?extra,
+            from = ?(extra_spec.sample_rate, extra_spec.channels, extra_spec.bits_per_sample),
+            to = ?(base_spec.sample_rate, base_spec.channels, base_spec.bits_per_sample),
+            "segment format differs from the session (capture device changed while paused) \
+             — converting instead of copying bytes"
+        );
+        let decoded = read_mono_f32(extra)?;
+        let resampled = if decoded.sample_rate == base_spec.sample_rate {
+            decoded.samples
+        } else {
+            resample_linear(&decoded.samples, decoded.sample_rate, base_spec.sample_rate)
+        };
+        let tmp = tagged_path(extra, "conv");
+        write_mono_i16(&tmp, &resampled, base_spec.sample_rate)?;
+        let appended = append_wav_pcm(base, &tmp)?;
+        std::fs::remove_file(&tmp).ok();
+        return Ok(appended);
+    }
+
+    // --- Fast path: identical format, copy the data bytes straight across. ---
+    let extra_len = std::fs::metadata(extra)?.len();
+    let mut src = std::fs::File::open(extra)?;
+    let Some((_, extra_body_at, extra_declared)) = find_data_chunk(&mut src, extra_len)? else {
+        anyhow::bail!("segment {extra:?} has no data chunk");
+    };
+    // Trust the file's real length over a declared size that overruns it.
+    let extra_bytes = {
+        let real = extra_len - extra_body_at;
+        if extra_declared == 0 || extra_declared as u64 > real {
+            real
+        } else {
+            extra_declared as u64
+        }
+    };
+    if extra_bytes < bytes_per_frame {
+        return Ok(0); // empty segment (paused before any audio landed)
+    }
+
+    let base_len = std::fs::metadata(base)?.len();
+    let mut dst = std::fs::OpenOptions::new().read(true).write(true).open(base)?;
+    let Some((base_size_at, base_body_at, base_declared)) =
+        find_data_chunk(&mut dst, base_len)?
+    else {
+        anyhow::bail!("base {base:?} has no data chunk");
+    };
+    let base_bytes = {
+        let real = base_len - base_body_at;
+        if base_declared == 0 || base_declared as u64 > real {
+            real
+        } else {
+            base_declared as u64
+        }
+    };
+
+    // Append at the end of the existing audio. Anything after the data chunk
+    // (trailing metadata) is deliberately overwritten — we own these files.
+    src.seek(SeekFrom::Start(extra_body_at))?;
+    dst.seek(SeekFrom::Start(base_body_at + base_bytes))?;
+    let mut buf = vec![0u8; 1024 * 1024];
+    let mut remaining = extra_bytes;
+    while remaining > 0 {
+        let want = remaining.min(buf.len() as u64) as usize;
+        let got = src.read(&mut buf[..want])?;
+        if got == 0 {
+            break;
+        }
+        dst.write_all(&buf[..got])?;
+        remaining -= got as u64;
+    }
+    let copied = extra_bytes - remaining;
+
+    // Rewrite both length fields, and truncate in case the base had trailing
+    // bytes beyond its audio that we have now partially overwritten.
+    let new_data = base_bytes + copied;
+    let new_end = base_body_at + new_data;
+    dst.set_len(new_end)?;
+    dst.seek(SeekFrom::Start(base_size_at))?;
+    dst.write_all(&(u32::try_from(new_data).unwrap_or(u32::MAX)).to_le_bytes())?;
+    dst.seek(SeekFrom::Start(4))?;
+    dst.write_all(&(u32::try_from(new_end - 8).unwrap_or(u32::MAX)).to_le_bytes())?;
+    dst.flush()?;
+
+    Ok(copied / bytes_per_frame)
 }
 
 /// Write mono f32 (-1.0..=1.0) as 16-bit integer PCM.
@@ -357,8 +495,7 @@ mod tests {
     /// the audio — this is the 16-Sep-2026 "contains no audio" incident, where
     /// 13.5 minutes of speech were sitting behind a zeroed header.
     #[test]
-    fn read_repairs_zeroed_header_from_interrupted_recording() {
-        use std::io::{Seek, SeekFrom, Write};
+    fn read_repairs_zeroed_header_from_interrupted_recording() {        use std::io::{Seek, SeekFrom, Write};
         let path = tmp("zeroheader.wav");
         let spec = hound::WavSpec {
             channels: 1,
@@ -559,5 +696,93 @@ mod tests {
         let d = read_mono_f32(&path).unwrap();
         assert!(d.samples[0] > 0.99 && d.samples[1] < -0.99);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Pause/resume welds segments back into one file so STT is billed once.
+    /// Same format on both sides takes the byte-copy path.
+    #[test]
+    fn append_joins_two_segments_of_identical_format() {
+        let base = tmp("seg-base.wav");
+        let extra = tmp("seg-extra.wav");
+        let a: Vec<f32> = (0..1000).map(|i| (i % 50) as f32 / 100.0).collect();
+        let b: Vec<f32> = (0..700).map(|i| -((i % 40) as f32) / 100.0).collect();
+        write_mono_i16(&base, &a, 48_000).unwrap();
+        write_mono_i16(&extra, &b, 48_000).unwrap();
+
+        let appended = append_wav_pcm(&base, &extra).unwrap();
+        assert_eq!(appended, 700, "every frame of the segment should land");
+
+        let joined = read_mono_f32(&base).unwrap();
+        assert_eq!(joined.sample_rate, 48_000);
+        assert_eq!(joined.samples.len(), 1700, "both stretches in one file");
+        // The seam must be in the right place and carry the right sign.
+        assert!(joined.samples[999] >= 0.0);
+        assert!(joined.samples[1001] <= 0.0);
+        let _ = std::fs::remove_file(&base);
+        let _ = std::fs::remove_file(&extra);
+    }
+
+    /// The capture device changed while paused, so the segment arrives at a
+    /// different sample rate. It must still join, resampled, not be dropped.
+    #[test]
+    fn append_resamples_a_segment_recorded_at_another_rate() {
+        let base = tmp("seg-rate-base.wav");
+        let extra = tmp("seg-rate-extra.wav");
+        write_mono_i16(&base, &vec![0.25; 4800], 48_000).unwrap();
+        write_mono_i16(&extra, &vec![-0.25; 1600], 16_000).unwrap();
+
+        let appended = append_wav_pcm(&base, &extra).unwrap();
+        // 1600 frames at 16k is 0.1s, which is 4800 frames at 48k.
+        assert!(
+            (appended as i64 - 4800).abs() <= 2,
+            "expected ~4800 resampled frames, got {appended}"
+        );
+
+        let joined = read_mono_f32(&base).unwrap();
+        assert_eq!(joined.sample_rate, 48_000);
+        assert!((joined.samples.len() as i64 - 9600).abs() <= 2);
+        assert!(joined.samples[100] > 0.2, "first stretch kept its level");
+        assert!(joined.samples[9000] < -0.2, "second stretch kept its level");
+        let _ = std::fs::remove_file(&base);
+        let _ = std::fs::remove_file(&extra);
+    }
+
+    /// A pause that happened before any audio landed leaves a header-only
+    /// segment. Joining it must be a no-op, not an error.
+    #[test]
+    fn append_tolerates_an_empty_segment() {
+        let base = tmp("seg-empty-base.wav");
+        let extra = tmp("seg-empty-extra.wav");
+        write_mono_i16(&base, &vec![0.1; 500], 48_000).unwrap();
+        write_mono_i16(&extra, &[], 48_000).unwrap();
+        assert_eq!(append_wav_pcm(&base, &extra).unwrap(), 0);
+        assert_eq!(read_mono_f32(&base).unwrap().samples.len(), 500);
+        let _ = std::fs::remove_file(&base);
+        let _ = std::fs::remove_file(&extra);
+    }
+
+    /// The app was killed while paused: the segment's header was never
+    /// finalised. It must be healed and joined, not lost.
+    #[test]
+    fn append_heals_a_segment_left_with_a_zeroed_header() {
+        use std::io::{Seek, SeekFrom, Write};
+        let base = tmp("seg-heal-base.wav");
+        let extra = tmp("seg-heal-extra.wav");
+        write_mono_i16(&base, &vec![0.1; 300], 48_000).unwrap();
+        write_mono_i16(&extra, &vec![-0.1; 900], 48_000).unwrap();
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&extra)
+                .unwrap();
+            f.seek(SeekFrom::Start(4)).unwrap();
+            f.write_all(&0u32.to_le_bytes()).unwrap();
+            f.seek(SeekFrom::Start(40)).unwrap();
+            f.write_all(&0u32.to_le_bytes()).unwrap();
+        }
+        assert_eq!(append_wav_pcm(&base, &extra).unwrap(), 900);
+        assert_eq!(read_mono_f32(&base).unwrap().samples.len(), 1200);
+        let _ = std::fs::remove_file(&base);
+        let _ = std::fs::remove_file(&extra);
     }
 }

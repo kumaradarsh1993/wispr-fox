@@ -85,6 +85,18 @@ pub fn run() {
             let audio_dir = app_data.join("audio");
             std::fs::create_dir_all(&audio_dir).ok();
 
+            // Weld back any pause/resume segments orphaned by a crash while a
+            // dictation was paused. Launch-only and before any recording can
+            // start: at any later moment a `.segN.wav` on disk may belong to a
+            // LIVE paused session, and welding those would corrupt it.
+            let recovered = audio::recover_orphaned_segments(&audio_dir);
+            if !recovered.is_empty() {
+                tracing::warn!(
+                    count = recovered.len(),
+                    "recovered paused dictations left by an interrupted session"
+                );
+            }
+
             let history = History::open(&db_path)?;
 
             // Sweep any rows left stranded by a previous crash/force-quit.
@@ -189,6 +201,14 @@ pub fn run() {
             // registered.
             let app_for_hotkey = app.handle().clone();
             let flow_for_hotkey = flow.clone();
+            // Pause/resume dispatches to the flow layer too, but on its own
+            // path: it carries no mode and no key edge, and it is a no-op when
+            // no dictation is open.
+            let app_for_pause = app.handle().clone();
+            let flow_for_pause = flow.clone();
+            hotkey::set_pause_handler(move || {
+                flow_for_pause.toggle_pause(&app_for_pause);
+            });
             // Registration is live from here on: `commands::suspend_hotkeys` /
             // `apply_hotkeys` tear these down and rebuild them so the rebinding
             // UI can capture F8 without F8 firing a recording, and so a saved
@@ -465,6 +485,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::get_flow_snapshot,
+            commands::toggle_pause,
             commands::js_heartbeat_ping,
             commands::set_clickthrough,
             commands::recover_clippy_window,

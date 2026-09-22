@@ -436,6 +436,9 @@ pub enum FlowPhase {
     Idle,
     Starting,
     Recording,
+    /// Mid-dictation with the microphone released, waiting for a resume. The
+    /// session, its history row and the Escape-to-finish binding all stay alive.
+    Paused,
     Stopping,
     Processing,
     Succeeded,
@@ -493,6 +496,10 @@ pub struct FlowSnapshot {
     pub input: Option<InputDisposition>,
     pub mic: MicPhase,
     pub mic_ready_ms: Option<i64>,
+    /// How many stretches of speech this dictation holds. 1 for an ordinary
+    /// dictation; climbs with each pause/resume. The floater shows it while
+    /// paused so the user can see their earlier speech is banked, not lost.
+    pub segments: u32,
     pub notice: Option<FlowNotice>,
 }
 
@@ -507,6 +514,7 @@ impl Default for FlowSnapshot {
             input: None,
             mic: MicPhase::Inactive,
             mic_ready_ms: None,
+            segments: 0,
             notice: None,
         }
     }
@@ -532,6 +540,12 @@ enum RuntimeState {
     Recording {
         session: SessionContext,
         in_flight: InFlight,
+        /// True while the microphone is released mid-dictation. The session is
+        /// still live: Escape/the dictation key still finish it, and the next
+        /// resume appends to the same audio file rather than starting a new one.
+        paused: bool,
+        /// Stretches of speech banked so far, including the one in progress.
+        segments: u32,
     },
     Processing {
         session: SessionContext,
@@ -626,6 +640,10 @@ enum FlowAction {
         session_id: String,
         in_flight: InFlight,
     },
+    /// Release the mic but keep the dictation open.
+    Pause { session_id: String },
+    /// Re-open the mic into a new segment of the open dictation.
+    Resume { session_id: String },
 }
 
 struct CaptureCompletion {
@@ -864,6 +882,7 @@ impl Flow {
             RuntimeState::Recording {
                 mut session,
                 in_flight,
+                ..
             } => {
                 if session.input == InputDisposition::Undecided {
                     session.input = InputDisposition::HoldToTalk;
@@ -916,6 +935,9 @@ impl Flow {
         let armed = match action {
             Some(FlowAction::Start(_)) => true,
             Some(FlowAction::DisarmEscape | FlowAction::Stop { .. }) => false,
+            // Pause and resume leave the session open, so Escape must keep
+            // working exactly as it did — do not touch the registration.
+            Some(FlowAction::Pause { .. } | FlowAction::Resume { .. }) => return,
             None => return,
         };
 
@@ -958,9 +980,167 @@ impl Flow {
                     this.pipeline_finished(&app, &session_id, &record_id, outcome);
                 });
             }
+            Some(FlowAction::Pause { session_id }) => {
+                let this = self.clone();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    match this.audio.pause().await {
+                        Ok(segments) => {
+                            tracing::info!(%session_id, segments, "dictation paused");
+                            this.pause_settled(&app, &session_id, true, segments, None);
+                        }
+                        Err(e) => {
+                            // The mic could not be closed cleanly. Roll the UI
+                            // back to Recording rather than showing a paused
+                            // state the audio layer does not actually hold.
+                            tracing::warn!(%session_id, "pause failed: {e:#}");
+                            this.pause_settled(
+                                &app,
+                                &session_id,
+                                false,
+                                1,
+                                Some("Could not pause — still recording.".to_owned()),
+                            );
+                        }
+                    }
+                });
+            }
+            Some(FlowAction::Resume { session_id }) => {
+                let this = self.clone();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let device = this
+                        .settings
+                        .lock()
+                        .clone()
+                        .input_device
+                        .filter(|d| !d.trim().is_empty());
+                    match this.audio.resume(device).await {
+                        Ok(segments) => {
+                            tracing::info!(%session_id, segments, "dictation resumed");
+                            this.pause_settled(&app, &session_id, false, segments, None);
+                        }
+                        Err(e) => {
+                            // Resume failed but the banked audio is still held
+                            // by the audio layer, so stay paused and say so —
+                            // Escape will still transcribe what we have.
+                            tracing::error!(%session_id, "resume failed: {e:#}");
+                            this.pause_settled(
+                                &app,
+                                &session_id,
+                                true,
+                                0,
+                                Some(format!("{e}")),
+                            );
+                        }
+                    }
+                });
+            }
             Some(FlowAction::DisarmEscape) => {}
             None => {}
         }
+    }
+
+    /// Land the outcome of a pause or resume on the state machine.
+    ///
+    /// `segments` of 0 means "leave the count alone" — used when a resume fails
+    /// and the banked count has not changed.
+    fn pause_settled(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        now_paused: bool,
+        segments: u32,
+        problem: Option<String>,
+    ) {
+        let snapshot = {
+            let mut state = self.state.lock();
+            // A session that ended while the pause was in flight must not be
+            // resurrected — check identity before touching anything.
+            let matches = matches!(
+                &state.runtime,
+                RuntimeState::Recording { session, .. } if session.id == session_id
+            );
+            if !matches {
+                tracing::debug!(%session_id, "ignoring stale pause/resume result");
+                None
+            } else {
+                if let RuntimeState::Recording {
+                    paused,
+                    segments: held,
+                    ..
+                } = &mut state.runtime
+                {
+                    *paused = now_paused;
+                    if segments > 0 {
+                        *held = segments;
+                    }
+                    state.snapshot.segments = *held;
+                }
+                // While paused the mic really is released, so report it as such
+                // rather than leaving a live mic indicator in the UI.
+                state.snapshot.mic = if now_paused {
+                    MicPhase::Inactive
+                } else {
+                    MicPhase::Live
+                };
+                let phase = if now_paused {
+                    FlowPhase::Paused
+                } else {
+                    FlowPhase::Recording
+                };
+                let notice = problem.map(|summary| FlowNotice {
+                    code: if now_paused {
+                        "resume_failed".to_owned()
+                    } else {
+                        "pause_failed".to_owned()
+                    },
+                    severity: NoticeSeverity::Error,
+                    summary,
+                    detail_ref: None,
+                });
+                Some(state.revise(phase, None, notice))
+            }
+        };
+        self.publish_if_some(app, snapshot);
+    }
+
+    /// Toggle pause on the live dictation. No-op unless one is recording.
+    ///
+    /// Returns true when a transition was requested. The actual mic work happens
+    /// off this thread for the same reason Start/Stop do — this can be called
+    /// from inside a global-shortcut callback, and blocking there wedges every
+    /// shortcut in the process (v3.3.0-nightly.2).
+    pub fn toggle_pause(&self, app: &AppHandle) -> bool {
+        let (snapshot, action) = {
+            let mut state = self.state.lock();
+            match &state.runtime {
+                RuntimeState::Recording {
+                    session, paused, ..
+                } => {
+                    let session_id = session.id.clone();
+                    let going_to_pause = !*paused;
+                    let action = if going_to_pause {
+                        FlowAction::Pause { session_id }
+                    } else {
+                        FlowAction::Resume { session_id }
+                    };
+                    // Show the intent immediately so the floater reacts on the
+                    // keypress, not after the mic finishes closing.
+                    let phase = if going_to_pause {
+                        FlowPhase::Paused
+                    } else {
+                        FlowPhase::Recording
+                    };
+                    (Some(state.revise(phase, None, None)), Some(action))
+                }
+                _ => (None, None),
+            }
+        };
+        let requested = action.is_some();
+        self.publish_if_some(app, snapshot);
+        self.dispatch_action(app, action);
+        requested
     }
 
     async fn prepare_recording_async(
@@ -1062,7 +1242,12 @@ impl Flow {
                     }
                 }
                 Ok(in_flight) => {
-                    state.runtime = RuntimeState::Recording { session, in_flight };
+                    state.runtime = RuntimeState::Recording {
+                        session,
+                        in_flight,
+                        paused: false,
+                        segments: 1,
+                    };
                     CaptureCompletion {
                         snapshot: Some(state.revise(FlowPhase::Recording, None, None)),
                         action: None,
@@ -2744,6 +2929,9 @@ fn publish_snapshot(app: &AppHandle, snapshot: &FlowSnapshot) {
     let legacy_state = match snapshot.phase {
         FlowPhase::Idle | FlowPhase::Succeeded | FlowPhase::Failed => "idle",
         FlowPhase::Starting | FlowPhase::Recording => "recording",
+        // A paused dictation is still an open recording as far as the legacy
+        // string is concerned — the session has not ended.
+        FlowPhase::Paused => "recording",
         FlowPhase::Stopping => "transcribing",
         FlowPhase::Processing => match snapshot.stage {
             Some(FlowStage::Denoising) => "denoising",
