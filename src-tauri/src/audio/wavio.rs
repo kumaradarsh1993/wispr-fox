@@ -41,10 +41,123 @@ pub struct DecodedWav {
     pub channels: u16,
 }
 
+/// Repair a WAV whose header sizes were never written, in place.
+///
+/// **Why this exists.** A WAV states its own length in two places — the `RIFF`
+/// chunk size near byte 4 and the `data` chunk size just before the audio — and
+/// both can only be filled in when recording STOPS. If the app is killed
+/// mid-recording (crash, forced quit, or an update that replaces the running
+/// app — which is exactly how a 13.5-minute session was nearly lost on
+/// 16-Sep-2026), those fields stay zero while the real audio sits right behind
+/// them. Every decoder trusts the header, so the file reads as "contains no
+/// audio" and the recording looks destroyed when in fact only 8 bytes are wrong.
+///
+/// This rewrites those 8 bytes from the file's true size on disk. Nothing else
+/// in the file is touched and no samples are re-encoded. It runs from
+/// `read_mono_f32`, so every consumer — playback, chunked upload, the STT
+/// shrink, a Rerun from History — heals the file on first touch instead of
+/// needing a separate recovery pass.
+///
+/// Returns `Ok(true)` when a repair was written. Fail-open: a header that looks
+/// fine, an unreadable or read-only file, and an exotic layout all return
+/// `Ok(false)` / `Err` and leave the caller to proceed as before.
+pub fn repair_truncated_header(path: &Path) -> Result<bool> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let file_len = std::fs::metadata(path)?.len();
+    // Smallest plausible WAV: 12-byte RIFF/WAVE + 24-byte fmt + 8-byte data
+    // header. Anything shorter has no audio to rescue.
+    if file_len < 46 {
+        return Ok(false);
+    }
+
+    let mut f = std::fs::OpenOptions::new().read(true).open(path)?;
+    let mut head = [0u8; 12];
+    f.read_exact(&mut head)?;
+    if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
+        return Ok(false); // not a RIFF/WAVE file (or it is an exotic RF64)
+    }
+    let riff_size = u32::from_le_bytes([head[4], head[5], head[6], head[7]]);
+
+    // Walk the chunk list looking for `data`. Chunks are id(4) + size(4) + body,
+    // body padded to an even length.
+    let mut cursor: u64 = 12;
+    let mut data_size_at: Option<u64> = None;
+    let mut data_body_at: u64 = 0;
+    let mut data_size: u32 = 0;
+    while cursor + 8 <= file_len {
+        f.seek(SeekFrom::Start(cursor))?;
+        let mut ch = [0u8; 8];
+        f.read_exact(&mut ch)?;
+        let id = [ch[0], ch[1], ch[2], ch[3]];
+        let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]);
+        if &id == b"data" {
+            data_size_at = Some(cursor + 4);
+            data_body_at = cursor + 8;
+            data_size = size;
+            break;
+        }
+        if size == 0 {
+            // A zero-length non-data chunk means the header was mangled beyond
+            // what we can safely walk; don't guess.
+            return Ok(false);
+        }
+        cursor += 8 + size as u64 + (size as u64 % 2);
+    }
+
+    let Some(size_at) = data_size_at else {
+        return Ok(false);
+    };
+
+    let true_data = file_len - data_body_at;
+    let true_riff = file_len - 8;
+    // Only step in when the declared size is missing or overruns the file. A
+    // header that is merely SMALLER than the file is legitimate (trailing
+    // LIST/id3 metadata chunks after the audio), so leave it alone.
+    let data_broken = data_size == 0 || data_body_at + data_size as u64 > file_len;
+    let riff_broken = riff_size == 0 || riff_size as u64 > true_riff;
+    if !data_broken && !riff_broken {
+        return Ok(false);
+    }
+    // Need at least one 16-bit frame of real audio to be worth repairing.
+    if true_data < 2 {
+        return Ok(false);
+    }
+
+    drop(f);
+    let mut w = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    if data_broken {
+        let clamped = u32::try_from(true_data).unwrap_or(u32::MAX);
+        w.seek(SeekFrom::Start(size_at))?;
+        w.write_all(&clamped.to_le_bytes())?;
+    }
+    if riff_broken {
+        let clamped = u32::try_from(true_riff).unwrap_or(u32::MAX);
+        w.seek(SeekFrom::Start(4))?;
+        w.write_all(&clamped.to_le_bytes())?;
+    }
+    w.flush()?;
+
+    tracing::warn!(
+        ?path,
+        file_len,
+        declared_data = data_size,
+        repaired_data = true_data,
+        "WAV header had no length (recording was interrupted) — repaired in place"
+    );
+    Ok(true)
+}
+
 /// Read any WAV we can decode into mono f32. Errors only on a genuinely
 /// unreadable file or an exotic bit depth (e.g. 8-bit, which no capture device
 /// in this workflow produces).
 pub fn read_mono_f32(path: &Path) -> Result<DecodedWav> {
+    // Heal an interrupted recording's zeroed header before any decoder sees it
+    // (see repair_truncated_header). Best-effort: a failure here just means the
+    // open below reports the original problem.
+    if let Err(e) = repair_truncated_header(path) {
+        tracing::debug!(?path, error = %e, "WAV header repair check failed; decoding as-is");
+    }
     let reader = hound::WavReader::open(path)
         .with_context(|| format!("opening WAV {path:?}"))?;
     let spec = reader.spec();
@@ -236,6 +349,74 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("wispr-wavio-{name}"))
+    }
+
+    /// A recording interrupted mid-capture (app killed, crash, in-place update)
+    /// keeps its audio but never gets its RIFF/data lengths written, so every
+    /// decoder calls it empty. Reading it must repair those 8 bytes and return
+    /// the audio — this is the 16-Sep-2026 "contains no audio" incident, where
+    /// 13.5 minutes of speech were sitting behind a zeroed header.
+    #[test]
+    fn read_repairs_zeroed_header_from_interrupted_recording() {
+        use std::io::{Seek, SeekFrom, Write};
+        let path = tmp("zeroheader.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: WavSampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..24_000 {
+            w.write_sample(((i % 100) as i16) * 50).unwrap();
+        }
+        w.finalize().unwrap();
+
+        // Simulate the kill: blank both length fields. The data chunk header of
+        // a canonical 44-byte hound WAV starts at 36, so its size lives at 40.
+        {
+            let mut f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            f.seek(SeekFrom::Start(4)).unwrap();
+            f.write_all(&0u32.to_le_bytes()).unwrap();
+            f.seek(SeekFrom::Start(40)).unwrap();
+            f.write_all(&0u32.to_le_bytes()).unwrap();
+        }
+        // Sanity: the file really is unreadable in that state.
+        assert!(
+            hound::WavReader::open(&path)
+                .map(|r| r.len() == 0)
+                .unwrap_or(true),
+            "zeroed header should read as empty before repair"
+        );
+
+        let decoded = read_mono_f32(&path).expect("repair should make it readable");
+        assert_eq!(decoded.sample_rate, 48_000);
+        assert_eq!(decoded.samples.len(), 24_000);
+        // Idempotent: a second read finds a healthy header and changes nothing.
+        assert!(!repair_truncated_header(&path).unwrap());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Trailing metadata chunks (LIST, id3) make the data size legitimately
+    /// smaller than the file. That must NOT be "repaired" into swallowing them.
+    #[test]
+    fn repair_leaves_a_healthy_header_alone() {
+        let path = tmp("healthy.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: WavSampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..1_000 {
+            w.write_sample((i % 50) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(!repair_truncated_header(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A 48 kHz recording (every Mac mic) must shrink to a 16 kHz side file
