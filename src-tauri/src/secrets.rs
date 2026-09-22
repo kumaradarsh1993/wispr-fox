@@ -142,7 +142,7 @@ mod platform_fallback {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretKey {
     GroqStt,
@@ -267,6 +267,41 @@ pub fn audit_log(limit: Option<usize>) -> Vec<SecretAuditEvent> {
         out.push_back(event);
     }
     out.into_iter().collect()
+}
+
+// -- Resolved-secret cache ---------------------------------------------------
+//
+// See the long note on `get` for why this exists. Keyed by SecretKey; the value
+// is the resolution outcome, so a configured key caches its value and an
+// unconfigured one caches `None`.
+
+static SECRET_CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<SecretKey, Option<String>>>> =
+    std::sync::OnceLock::new();
+
+fn secret_cache() -> &'static Mutex<std::collections::HashMap<SecretKey, Option<String>>> {
+    SECRET_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// `Some(outcome)` on a cache hit, `None` when this key has not been resolved
+/// yet. The nesting is deliberate: a hit whose outcome is `None` means "we have
+/// already asked, and there is no such key" — do not ask the keychain again.
+fn cache_get(key: SecretKey) -> Option<Option<String>> {
+    secret_cache().lock().get(&key).cloned()
+}
+
+fn cache_put(key: SecretKey, value: Option<String>) {
+    secret_cache().lock().insert(key, value);
+}
+
+fn cache_forget(key: SecretKey) {
+    secret_cache().lock().remove(&key);
+}
+
+/// Drop every cached secret. Call when the trust story changes underneath us —
+/// signing out, or a sync pass that may have replaced keys from another device —
+/// so the next read resolves from the real store instead of a stale value.
+pub fn invalidate_cache() {
+    secret_cache().lock().clear();
 }
 
 // -- Keyring helpers ---------------------------------------------------------
@@ -616,6 +651,9 @@ pub fn set(key: SecretKey, value: &str) -> Result<()> {
 
     if keyring_ok {
         delete_fallback_copies(key);
+        // The cache must reflect the write immediately, or a key the user just
+        // typed would be shadowed by a cached `None` from an earlier miss.
+        cache_put(key, Some(value.to_owned()));
         return Ok(());
     }
 
@@ -647,10 +685,47 @@ pub fn set(key: SecretKey, value: &str) -> Result<()> {
     if legacy_file_has(key) {
         let _ = legacy_file_delete(key);
     }
+    cache_put(key, Some(value.to_owned()));
     Ok(())
 }
 
 pub fn get(key: SecretKey) -> Result<Option<String>> {
+    // Resolved-secret cache — read the OS keychain ONCE per key per launch.
+    //
+    // **Why this exists.** Every dictation resolves at least two secrets (the
+    // STT key, then the LLM key), and `get` used to walk all the way to the
+    // macOS Keychain each time. Before v3.5.0-nightly.4 that cost nothing
+    // visible, because keyring 3 had no backend compiled and the call hit an
+    // in-process mock. Once the real Keychain was wired up, every single
+    // narration performed real Keychain reads — and if the stored item's ACL
+    // does not already trust this exact binary, macOS raises an authorization
+    // prompt for each one. That is the "it asks for my password after every
+    // narration, twice" report: two reads, two prompts, once per dictation.
+    //
+    // Caching makes the prompt at most a once-per-launch event (and none at all
+    // once the user picks "Always Allow"), and it also stops the audit log
+    // filling with thousands of identical read events.
+    //
+    // A miss is cached too — `None` for "this key is not configured" — because
+    // an unset key is resolved on the same hot path and would otherwise keep
+    // re-asking the keychain forever. Every mutation (`set`, `delete`) updates
+    // this map, so a cached `None` cannot outlive the user adding a key.
+    //
+    // Holding the value in memory is not a meaningful new exposure: the process
+    // already holds these keys in cleartext while building provider clients and
+    // signing requests. What changes is how often we ask the OS for them.
+    if let Some(hit) = cache_get(key) {
+        return Ok(hit);
+    }
+
+    let resolved = resolve_uncached(key)?;
+    cache_put(key, resolved.clone());
+    Ok(resolved)
+}
+
+/// The original resolution order: keyring, then encrypted fallback, then the
+/// legacy plaintext file, migrating upward as it goes.
+fn resolve_uncached(key: SecretKey) -> Result<Option<String>> {
     if let Some(value) = keyring_get(key) {
         return Ok(Some(value));
     }
@@ -683,6 +758,9 @@ pub fn get(key: SecretKey) -> Result<Option<String>> {
 }
 
 pub fn delete(key: SecretKey) -> Result<()> {
+    // Forget first: if anything below fails partway, a stale cached value must
+    // not survive a delete the user asked for.
+    cache_forget(key);
     record_secret_audit(
         key,
         "delete",
@@ -697,6 +775,7 @@ pub fn delete(key: SecretKey) -> Result<()> {
     }
     file_delete(key)?;
     legacy_file_delete(key)?;
+    cache_forget(key);
     record_secret_audit(key, "delete", "all", "ok", "Local fallback entries removed");
     Ok(())
 }
@@ -778,5 +857,94 @@ pub fn diagnostic() -> SecretsDiagnostic {
         legacy_fallback_path: legacy_path.display().to_string(),
         legacy_fallback_exists: legacy_path.exists(),
         audit_log_path: audit_log_path().display().to_string(),
+    }
+}
+
+/// The resolved-secret cache. Covers the v3.5.0-nightly.6 regression where every
+/// narration performed real macOS Keychain reads and so raised an authorization
+/// prompt per dictation (two keys → two prompts, every single time).
+///
+/// These exercise the cache layer directly rather than going through `get`,
+/// because `get` would touch the real OS keychain on a developer machine.
+#[cfg(test)]
+mod secret_cache_tests {
+    use super::*;
+
+    /// A resolved value is served from memory on the second look, so the
+    /// keychain is asked once per launch rather than once per narration.
+    #[test]
+    fn caches_a_resolved_value() {
+        cache_forget(SecretKey::GroqStt);
+        assert!(cache_get(SecretKey::GroqStt).is_none(), "starts unresolved");
+
+        cache_put(SecretKey::GroqStt, Some("gsk_example".into()));
+        assert_eq!(
+            cache_get(SecretKey::GroqStt),
+            Some(Some("gsk_example".into())),
+            "second read must come from memory"
+        );
+        cache_forget(SecretKey::GroqStt);
+    }
+
+    /// A MISS is cached too. An unconfigured key sits on the same hot path, and
+    /// without this it would re-ask the keychain (and re-prompt) forever.
+    #[test]
+    fn caches_a_negative_result_distinctly_from_no_answer() {
+        cache_forget(SecretKey::ElevenLabsStt);
+        cache_put(SecretKey::ElevenLabsStt, None);
+        // Outer Some = "we have asked"; inner None = "there is no such key".
+        assert_eq!(cache_get(SecretKey::ElevenLabsStt), Some(None));
+        cache_forget(SecretKey::ElevenLabsStt);
+    }
+
+    /// The dangerous case: a cached "no such key" must not shadow a key the
+    /// user just typed into Settings. `set` overwrites the cache entry.
+    #[test]
+    fn a_write_replaces_a_cached_miss() {
+        cache_forget(SecretKey::GeminiLlm);
+        cache_put(SecretKey::GeminiLlm, None);
+        // This is what `set` does on its success paths.
+        cache_put(SecretKey::GeminiLlm, Some("AIza_example".into()));
+        assert_eq!(
+            cache_get(SecretKey::GeminiLlm),
+            Some(Some("AIza_example".into())),
+            "a freshly saved key must be visible immediately"
+        );
+        cache_forget(SecretKey::GeminiLlm);
+    }
+
+    /// A delete must leave nothing behind to serve.
+    #[test]
+    fn a_delete_drops_the_entry_entirely() {
+        cache_put(SecretKey::OpenAiLlm, Some("sk_example".into()));
+        cache_forget(SecretKey::OpenAiLlm);
+        assert!(
+            cache_get(SecretKey::OpenAiLlm).is_none(),
+            "a deleted key must re-resolve, not serve a stale value"
+        );
+    }
+
+    /// Keys are cached independently — resolving one must not answer another.
+    #[test]
+    fn entries_do_not_bleed_between_keys() {
+        cache_forget(SecretKey::DeepgramStt);
+        cache_forget(SecretKey::GroqLlm);
+        cache_put(SecretKey::DeepgramStt, Some("dg_example".into()));
+        assert!(
+            cache_get(SecretKey::GroqLlm).is_none(),
+            "an unrelated key must stay unresolved"
+        );
+        cache_forget(SecretKey::DeepgramStt);
+    }
+
+    /// Sign-out and cross-device sync change the trust story, so everything
+    /// must be dropped rather than selectively patched.
+    #[test]
+    fn invalidate_clears_every_key() {
+        cache_put(SecretKey::GroqStt, Some("a".into()));
+        cache_put(SecretKey::GroqLlm, Some("b".into()));
+        invalidate_cache();
+        assert!(cache_get(SecretKey::GroqStt).is_none());
+        assert!(cache_get(SecretKey::GroqLlm).is_none());
     }
 }
