@@ -223,7 +223,6 @@
   let showPlatformBadge = $derived(rec.remote || rec.platform === "web" || rec.platform === "mobile");
 
   // Which device made this recording.
-  //
   // `device_id` is the reliable join, but it only exists on rows created
   // after that column shipped. Two fallbacks, in order of trustworthiness:
   // a LOCAL row is by definition this device (that is what `remote` means),
@@ -252,6 +251,25 @@
       ? deviceDisplayName(sourceDevice)
       : (rec.device_name ?? "Unknown device"),
   );
+
+  // ONE collapsed chip, and only for a row that is not an ordinary local
+  // dictation. The old header carried an Uploaded badge, a platform badge, a
+  // retry counter, a device glyph and a "Failed — see details" pill, all
+  // competing on every single card; a marker that appears on every row tells
+  // the eye nothing. Ordinary dictations now show no chip at all, so a chip
+  // means "this one is different" and reads at a glance. Everything that used
+  // to be a chip is still on the row — it moved into Details, where it is
+  // labelled rather than abbreviated.
+  let kindChip = $derived.by(() => {
+    if (isError) return "Failed";
+    if (rec.is_meeting) return "Meeting";
+    if (rec.source === "upload") return "Uploaded";
+    if (rec.platform === "mobile") return "From phone";
+    if (rec.platform === "web") return "From web";
+    // A synced row from another machine, once there IS another machine.
+    if (rec.remote && showDeviceChip) return deviceChipName;
+    return "";
+  });
 
   async function ensureAudioUrl() {
     if (audioUrl) return;
@@ -414,74 +432,45 @@
   class:error-row={isError}
   class:meeting-row={rec.is_meeting}
 >
-  <header class="row-head">
-    <button class="row-toggle" onclick={(e) => { e.stopPropagation(); expanded = !expanded; }} aria-label="Toggle expand">
-      <svg class="caret" class:open={expanded} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <path d="M 5 3 L 11 8 L 5 13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
+  <!-- The whole header is the expand control, replacing the old dedicated caret
+       button (two ways to open one row was the nested-interactive ambiguity the
+       surveys flagged). It must stay keyboard-operable, so this is a real
+       role=button with tabindex and aria-expanded, handling Enter and Space —
+       a bare click handler here would have made expansion mouse-only. Nested
+       buttons stop propagation, so they still do their own job. -->
+  <header
+    class="row-head"
+    role="button"
+    tabindex="0"
+    aria-expanded={expanded}
+    aria-label={`${rec.title || "Untitled recording"} — ${expanded ? "collapse" : "expand"}`}
+    onclick={() => (expanded = !expanded)}
+    onkeydown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        expanded = !expanded;
+      }
+    }}
+  >
     <div class="meta">
-      <!-- Which machine this came from, before the timestamp so the eye picks
-           up "where" and "when" in one pass. Icon-only to stay out of the
-           way; the name is in the tooltip and in Settings -> Account. -->
-      {#if showDeviceChip}
-        <span
-          class="dev-chip"
-          class:mine={sourceDevice?.this_device}
-          title="Recorded on {deviceChipName}"
-          aria-label="Recorded on {deviceChipName}"
-        >{deviceChipGlyph}</span>
+      <!-- Line 1 is the NAME of the note. It used to sit third, behind time and
+           duration, which made a list of cards read as a list of timestamps
+           rather than a list of things you said. Title first, clock to the far
+           right — the newspaper order. -->
+      <span class="rec-title" class:untitled={!rec.title} title={rec.title || "Untitled recording"}>
+        {rec.title || "Untitled recording"}
+      </span>
+
+      <!-- One chip, and only when this row is NOT a plain dictation. A badge on
+           every row carries no information; a badge on the exceptions does. -->
+      {#if kindChip}
+        <span class="kind-chip" class:kind-failed={isError}>{kindChip}</span>
       {/if}
-      <span class="when">{timeShort(rec.created_at)}</span>
-      <span class="dot">·</span>
+
+      <span class="meta-spacer"></span>
+
       <span class="dur">{durationShort(rec.duration_ms)}</span>
-      <!-- LLM-generated one-line name (auto-title). Arrives a beat after the
-           run finishes; until then the time + duration carry the header. -->
-      {#if rec.title}
-        <span class="dot">·</span>
-        <span class="rec-title" title={rec.title}>{rec.title}</span>
-      {/if}
-
-      {#if rec.retry_count > 0}
-        <span class="retry-count" title="Number of retry attempts">↻ {rec.retry_count}</span>
-      {/if}
-      {#if isError}
-        <span class="err-pill">Failed — see details</span>
-      {/if}
-
-      <!-- (i) details button. Always present; pulses a red dot when
-           there's an error to surface so the user notices without
-           clicking. Clicking expands an inline details panel below
-           the body. -->
-      <button
-        class="info-btn"
-        class:has-news={inspectorHasNews}
-        onclick={(e) => { e.stopPropagation(); showInspector = !showInspector; }}
-        aria-label="Show recording details and event log"
-        aria-expanded={showInspector}
-        title={inspectorHasNews ? "Details (error logged)" : "Details"}
-      >
-        i
-      </button>
-    </div>
-
-    <!-- Source chips sit just left of the version tabs, out of the meta strip
-         so a long auto-title can't shove them around. Deliberately outside
-         .tail: these aren't controls, so clicking them should still expand
-         the row like the rest of the header. -->
-    <div class="badges">
-      {#if rec.source === "upload"}
-        <span class="src-badge" title="Transcribed from an uploaded audio file">
-          <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
-            <path d="M8 10V3M5.5 5.5 8 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M3.5 10v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Uploaded
-        </span>
-      {/if}
-      {#if showPlatformBadge}
-        <span class="plat-badge" title={platformTitle}>{platformLabel(rec.platform)}</span>
-      {/if}
+      <span class="when">{timeShort(rec.created_at)}</span>
     </div>
 
     <!-- Right rail: version tabs (always visible, so every card's Raw /
@@ -715,16 +704,30 @@
       <!-- Expanded action area stops click-bubbling so its buttons don't
            re-toggle the row when clicked. -->
       <div role="presentation" onclick={(e) => e.stopPropagation()}>
-      <!-- Delete used to live in the action button row. Moved here so it
-           takes a deliberate click instead of being a thumb-reachable
-           danger button alongside Play/Copy/Retry. Still confirms. Hidden on
-           rows synced from another device — ownership-scoped delete can only
-           remove what this device originated. -->
-      {#if !rec.remote}
-        <div class="expanded-actions">
+      <!-- Details moved off the collapsed header. It used to be an always-on
+           (i) button on every row, competing with the version tabs and the
+           action rail for the same strip; it is reference material, so it
+           belongs one deliberate click inside the opened row. The red dot still
+           rides along when there is an error worth reading. -->
+      <div class="expanded-actions">
+        <button
+          class="details-link"
+          class:has-news={inspectorHasNews}
+          onclick={() => (showInspector = !showInspector)}
+          aria-expanded={showInspector}
+        >
+          <span class="details-caret" class:open={showInspector}>›</span>
+          {showInspector ? "Hide details" : "Details"}
+        </button>
+        <!-- Delete used to live in the action button row. Kept here so it takes
+             a deliberate click instead of being a thumb-reachable danger button
+             alongside Play/Copy/Retry. Still confirms. Hidden on rows synced
+             from another device — ownership-scoped delete can only remove what
+             this device originated. -->
+        {#if !rec.remote}
           <button class="delete-link" onclick={remove} disabled={busy}>Delete recording</button>
-        </div>
-      {/if}
+        {/if}
+      </div>
       </div>
     {/if}
   </div>
@@ -792,6 +795,28 @@
 
         <div class="insp-k">Created</div>
         <div class="insp-v">{fmtFullTime(rec.created_at)}</div>
+
+        <!-- Moved out of the collapsed header, which used to carry five
+             competing chips. Labelled here rather than abbreviated to a glyph:
+             a row that needs this information needs it named. -->
+        {#if showDeviceChip || rec.remote}
+          <div class="insp-k">Recorded on</div>
+          <div class="insp-v">{deviceChipGlyph} {deviceChipName}</div>
+        {/if}
+
+        <div class="insp-k">Source</div>
+        <div class="insp-v">
+          {rec.source === "upload" ? "Uploaded audio file" : "Dictated"}
+          {#if showPlatformBadge}· {platformLabel(rec.platform)}{/if}
+        </div>
+
+        {#if rec.retry_count > 0}
+          <div class="insp-k">Retries</div>
+          <div class="insp-v">
+            {rec.retry_count}
+            {rec.retry_count === 1 ? "attempt" : "attempts"} after the first
+          </div>
+        {/if}
 
         <div class="insp-k">Audio</div>
         <div class="insp-v insp-mono insp-small">{rec.audio_path}</div>
@@ -890,33 +915,18 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  .row-toggle {
-    background: transparent;
-    border: 1px solid transparent;
+    /* The whole header is the expand control now. The old design had TWO ways
+       to open a row — a dedicated caret button AND the header — which is the
+       nested-interactive ambiguity the surveys flagged. Buttons inside stop
+       propagation, so they still do their own job. */
     cursor: pointer;
-    color: var(--text-secondary);
-    padding: 6px;
+  }
+
+  /* Keyboard users must be able to see what they are about to open. */
+  .row-head:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
     border-radius: 6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 100ms ease, border-color 100ms ease;
-  }
-
-  .row-toggle:hover {
-    background: var(--bg-subtle);
-    border-color: var(--border);
-    color: var(--text-primary);
-  }
-
-  .caret {
-    transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
-  }
-
-  .caret.open {
-    transform: rotate(90deg);
   }
 
   .meta {
@@ -932,15 +942,25 @@
     flex-wrap: nowrap;
   }
 
-  .when {
-    font-weight: 500;
-    color: var(--text-primary);
-    flex-shrink: 0;
+  /* Pushes duration + time to the right edge, so the clock sits in one column
+     down the whole list instead of floating after a variable-length title. */
+  .meta-spacer {
+    flex: 1 1 auto;
+    min-width: 8px;
   }
 
-  /* Auto-title — the "what did I talk about" one-liner. Slightly bolded,
-     truncates with an ellipsis rather than wrapping. */
+  .when {
+    font-weight: 500;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The auto-title now LEADS the card — it is the name of the note, and a list
+     of names reads as a list of things you said, where a list of timestamps
+     does not. Full size, primary colour, ellipsis rather than wrap. */
   .rec-title {
+    font-size: 13.5px;
     font-weight: 600;
     color: var(--text-primary);
     overflow: hidden;
@@ -950,12 +970,36 @@
     flex: 0 1 auto;
   }
 
-  /* Right rail: always-visible version tabs + hover-revealed actions. */
-  .badges {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  /* Until the auto-title arrives (a beat after the run finishes) the row still
+     needs a name, so it says so quietly rather than showing an empty slot. */
+  .rec-title.untitled {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  /* The single "this row is not an ordinary dictation" chip that replaced five
+     competing header badges. */
+  .kind-chip {
     flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .kind-chip.kind-failed {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+    color: var(--danger);
   }
 
   .tail {
@@ -966,47 +1010,16 @@
     margin-left: auto;
   }
 
-  .dur, .retry-count {
-    color: var(--text-secondary);
+  .dur {
+    color: var(--text-tertiary, var(--text-secondary));
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* "Uploaded" badge — marks rows that came from a dropped/picked audio file
-     rather than a live dictation. Small accent-tinted pill next to the meta. */
-  .src-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 1px 7px 1px 5px;
-    border-radius: 9999px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    background: var(--accent-fade);
-    color: var(--accent);
-    flex-shrink: 0;
-  }
-
-  /* Platform badge — which device (Desktop / Web / Mobile) a synced row came
-     from. Neutral tone so it reads as metadata, distinct from the accent
-     "Uploaded" pill. */
-  .plat-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 7px;
-    border-radius: 9999px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    background: var(--bg-subtle);
-    color: var(--text-secondary);
-    border: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .dot {
-    color: var(--border);
-    flex-shrink: 0;
-  }
+  /* The "Uploaded" pill, the platform badge and the dot separators were all
+     header furniture. They are gone from the collapsed card: the single
+     .kind-chip names the one thing that makes a row unusual, and the rest is
+     labelled in Details. */
 
   .mode {
     padding: 2px 9px;
@@ -1032,28 +1045,34 @@
     color: #c47a30;
   }
 
-  .err-pill {
-    background: var(--danger-fade);
-    color: var(--danger);
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 10px;
-    font-weight: 500;
-  }
-
-  .retry-count {
-    background: var(--bg-subtle);
-    padding: 1px 7px;
-    border-radius: 9999px;
-    font-size: 10px;
-  }
+  /* .err-pill and .retry-count retired with the busy header — a failed row is
+     now named by .kind-chip, and the retry count is labelled in Details. */
 
   .actions {
     display: flex;
     align-items: center;
     gap: 6px;
-    opacity: 1;
+    /* Dimmed at rest, full strength on hover or keyboard focus.
+       Deliberately NOT hidden: with ~14 rows on screen, four solid icons per
+       row is the noise the redesign is fixing, but hiding them outright means
+       reaching for a control that is not there. Dimming quiets the list while
+       keeping every button discoverable and in the same place. */
+    opacity: 0.45;
     visibility: visible;
+    transition: opacity 120ms ease;
+  }
+
+  .row:hover .actions,
+  .row:focus-within .actions,
+  .row.expanded .actions {
+    opacity: 1;
+  }
+
+  /* Touch and reduced-motion users get no hover, so never dim for them. */
+  @media (hover: none) {
+    .actions {
+      opacity: 1;
+    }
   }
 
   /* Keep an open kebab menu (and its trigger cluster) visible even if the
@@ -1190,39 +1209,50 @@
 
   /* Round (i) details button. Italic serif "i" — the classic affordance.
      Pulses a red dot in the top-right when there's an error to surface. */
-  .info-btn {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    font-family: Georgia, "Times New Roman", serif;
-    font-style: italic;
-    font-size: 12px;
-    line-height: 16px;
+  /* The (i) circle is gone from the collapsed header. Details is now a text
+     link inside the opened row, so it reads as a label rather than a glyph the
+     user has to learn — and it stops competing with the version tabs and the
+     action rail for the same strip on every single card. */
+  .details-link {
+    background: transparent;
+    border: none;
     padding: 0;
     cursor: pointer;
-    position: relative;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-family: inherit;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
+    gap: 5px;
+    position: relative;
+    margin-right: auto;
   }
-  .info-btn:hover {
+
+  .details-link:hover {
     color: var(--text-primary);
-    border-color: var(--text-secondary);
   }
-  .info-btn.has-news::after {
+
+  .details-caret {
+    display: inline-block;
+    transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .details-caret.open {
+    transform: rotate(90deg);
+  }
+
+  /* Still flags an error worth reading without needing to be opened. */
+  .details-link.has-news::after {
     content: "";
     position: absolute;
-    top: -2px;
-    right: -2px;
+    top: -1px;
+    right: -9px;
     width: 6px;
     height: 6px;
     background: var(--danger);
     border-radius: 50%;
-    border: 1px solid var(--bg-elev);
   }
 
   /* Delete moved out of the icon button row into a subtle text link
@@ -1255,7 +1285,8 @@
   /* Inspector panel — inline expansion below the row body. Two-column
      key/value grid; the error text gets its own monospace block. */
   .inspector {
-    margin: 10px 0 0 36px;
+    /* Was indented 36px to clear the old caret column; that column is gone. */
+    margin: 10px 0 0;
     padding: 12px 14px;
     background: var(--bg-subtle);
     border: 1px solid var(--border-subtle);
@@ -1401,26 +1432,15 @@
 
   /* Device chip. Sized and baseline-aligned to sit quietly next to the
      timestamp rather than competing with it. */
-  .dev-chip {
-    font-size: 12px;
-    line-height: 1;
-    flex-shrink: 0;
-    opacity: 0.75;
-    cursor: help;
-    /* Emoji glyphs vary wildly in optical weight; a fixed box stops cards
-       from shifting by a pixel or two depending on which icon is assigned. */
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-  }
-  .dev-chip.mine {
-    opacity: 0.95;
-  }
+  /* The device glyph left the collapsed header — on a one-device account it
+     always answered "this computer", and on a fleet the answer belongs in
+     Details under a "Recorded on" label rather than as an emoji to decode. */
 
   .body {
     margin-top: 10px;
-    padding-left: 36px;
+    /* No caret column to clear any more, so the text lines up under the title
+       instead of being indented past a control that no longer exists. */
+    padding-left: 0;
   }
 
   .body.clamped .text {
@@ -1595,7 +1615,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin: 6px 0 0 36px;
+    margin: 6px 0 0;
     padding: 3px 8px;
     background: var(--bg-subtle);
     border: 1px solid var(--border-subtle);
@@ -1623,14 +1643,16 @@
     }
 
     .row-head {
+      /* No caret column at narrow widths either — the header is one flow, with
+         the tail wrapping beneath it. */
       display: grid;
-      grid-template-columns: 30px minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       align-items: start;
       gap: 6px 8px;
     }
 
     .meta {
-      min-height: 30px;
+      min-height: 26px;
       gap: 6px;
       flex-wrap: wrap;
       white-space: normal;
@@ -1642,9 +1664,14 @@
       font-size: 13px;
     }
 
-    .badges,
+    /* Narrow: the clock does not need pushing to a far edge that no longer
+       exists, so the spacer collapses and duration/time sit together. */
+    .meta-spacer {
+      display: none;
+    }
+
     .tail {
-      grid-column: 2;
+      grid-column: 1;
     }
 
     .tail {
