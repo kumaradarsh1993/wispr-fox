@@ -60,6 +60,7 @@ pub(super) fn http() -> reqwest::Client {
         reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(6))
+            .dns_resolver(super::dns::shared())
             .build()
             .expect("reqwest client construction is infallible with default config")
     })

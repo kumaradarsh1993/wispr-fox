@@ -11,5 +11,6 @@
 
 pub mod auth;
 pub mod config;
+pub mod dns;
 pub mod engine;
 pub mod fleet;
