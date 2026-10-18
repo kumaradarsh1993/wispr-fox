@@ -13,6 +13,12 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
+**Current nightly: `v3.5.0-nightly.8`** (2026-10-19) — design revamp in progress
+(`docs/DESIGN_v3.5.md`), real OS keychain + per-launch secret cache,
+pause/resume dictation, self-repairing WAV headers, floater anchor fix, and
+DNS-over-HTTPS for Supabase (Indian ISPs block `*.supabase.co`). See
+`HANDOVER.md` 2026-10-19 section. **Never strip the rich left sidebar — the
+user rejected that in nightly.2.**
 **Current stable: `v3.4.0`** (Latest, 2026-09-14) — the Mac release: signed
 builds with one stable identity (no "damaged" dialog; Accessibility grant
 survives updates), Accessory activation policy (menu-bar app, floater follows

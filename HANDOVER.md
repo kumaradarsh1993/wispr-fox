@@ -5,11 +5,64 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-09-14** (**`v3.4.0` is stable and Latest** — the roll-up
-> of nightlies 1–15, promoted on the user's signal after two days on nightly.15.
-> Next line of work is the **design revamp** (see the 2026-09-14 section).
+> **Last updated: 2026-10-19** (**`v3.5.0-nightly.8` is the current nightly**;
+> `v3.4.0` is still stable/Latest. The v3.5 line is the design revamp plus the
+> fixes below — see the 2026-10-19 section. Design brief: `docs/DESIGN_v3.5.md`.
 > **`v3.3.0-nightly.2` is burned — it froze on the first hotkey press; do not
 > install or test it.**)
+
+## 2026-10-19 — v3.5.0 nightlies 1–8: design revamp, keychain, pause/resume, India sync block
+
+Per-nightly detail is in `docs/RELEASE_NOTES_v3.5.0-nightly.N.md`.
+
+**Design revamp (nightlies 1–3, 6; brief in `docs/DESIGN_v3.5.md`):**
+- Foundations: one 6-step type scale (nothing under 11px), spacing scale,
+  semantic kind colours in all three themes, shared `Button` / `Field` /
+  `Disclosure` / `Segmented` / `Kbd`. Mac overlay titlebar (sidebar runs under
+  the traffic lights).
+- **The user rejected the slim sidebar rail (nightly.2) — the rich left pane
+  (engine, Polish, mic, avatar + visibility, keys card, fox) was restored in
+  nightly.3.** Do not strip it again; he keeps the pane open all day.
+- Home cards (nightly.6): title leads, one exception chip, actions dimmed to
+  45% until hover. Raw/Cleaned/Drafted tabs deliberately stay on the collapsed
+  card. Clear all moved to Settings › App & data › Danger zone.
+- Still owed from the brief: Settings Essentials/Advanced tiering, Insights
+  pass, onboarding rework, menu-bar popover.
+
+**Keychain (nightlies 4, 7):** `keyring` 3 compiles a fake in-memory store
+unless a per-platform feature is enabled. Cargo.toml now sets `apple-native`,
+`windows-native`, `sync-secret-service`. Before nightly.4 nothing was ever in
+the OS keychain (sign-in never persisted; 12,000+ failed writes in the audit
+log). Nightly.7 caches resolved secrets per launch — without the cache every
+dictation did two live Keychain reads and macOS prompted twice per narration.
+
+**Recording robustness (nightlies 5–6):** WAV headers zeroed by a killed
+recording self-repair on first read (`wavio::read_mono_f32`). Pause/resume:
+`⌃⌥Space` / `Ctrl+F8` pauses and resumes (mic genuinely released), segments
+welded into ONE file before upload (one Groq request), orphaned segments
+welded at next launch. **Before installing a build over a running app, check
+the newest WAV is finalized and not growing** — an install killed a 13.5-min
+session on 2026-09-16.
+
+**Floater drift (nightly.5):** position is persisted as the fox's bottom-centre
+anchor, not the window's top-left (the window grows for bubble/menu, so the
+old scheme crept up-left every session); clamped to a real monitor.
+
+**India Supabase block (nightly.8):** since 2026-02-24 Jio/Airtel/ACT DNS-
+sinkhole `*.supabase.co`; sign-in failed with `tls handshake eof`.
+`src-tauri/src/sync/dns.rs` resolves Supabase hosts via Cloudflare/Google DoH
+(by IP), falling back to system DNS; used by both sync HTTP clients. The
+Google button's browser half uses the browser's own DNS.
+
+**Models (nightly.8, verified 2026-10-19):** Groq shut `qwen/qwen3.6-27b` on
+2026-09-14 (saved picks coerce to `qwen3.8-27b` in `flow.rs`); Gemini 3.7/3.5
+Flash removed (Google silently re-routes them); Gemini default `gemini-3.8-flash`.
+
+**Sync bug found on Android (fixed there in v2.2.0-nightly.5):** PostgREST
+refuses a bulk insert whose JSON objects differ in keys (PGRST102 "All object
+keys must match"). Desktop is safe because `push_notes` always emits every key
+via `json!`. **Keep it that way** — never switch notes push to a serializer
+that skips nulls.
 
 ## 2026-09-14 — v3.4.0 stable; what the fourteen nightlies since this file was last touched actually did
 
