@@ -60,10 +60,10 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
   groq: [
     { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", quality: "Fast cleanup and titles — free tier" },
     { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", quality: "Stronger drafts and meeting notes — free tier" },
-    { id: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B", quality: "Multilingual alternative (preview, ~5x the price)" },
-    { id: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", quality: "Newest Qwen (preview, ~7x the price)" },
-    // Catalog check 2026-09-14 against console.groq.com/docs/models:
-    // production = gpt-oss-20b/120b + Whisper; Llama 3.1/3.3 are now
+    { id: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", quality: "Multilingual alternative (preview, ~7x the price)" },
+    // Catalog check 2026-10-19 against console.groq.com/docs/deprecations:
+    // qwen3.6-27b was shut down 2026-09-14 (saved picks coerce to 3.8 in
+    // flow.rs). Earlier, 2026-09-14: production = gpt-oss-20b/120b + Whisper; Llama 3.1/3.3 are now
     // Enterprise-only ("Contact Sales") so they are not offered here — saved
     // Llama selections coerce to GPT-OSS in settings-store.svelte.ts and
     // flow.rs. Qwen 3.6/3.8 are PREVIEW (may be pulled at short notice) and
@@ -76,10 +76,10 @@ export const LLM_MODELS: Record<string, ProviderModel[]> = {
     { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", quality: "Cheapest and fastest" },
   ],
   gemini: [
-    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", quality: "Latest stable Flash" },
-    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", quality: "Previous stable Flash" },
-    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", quality: "Stable balance model" },
-    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", quality: "Stable balance fallback" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", quality: "Latest stable Flash (default)" },
+    // 3.7 Flash and 3.5 Flash are deprecated and silently re-routed by Google
+    // (to 3.8 and 3.6), so they are no longer offered — checked 2026-10-19.
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", quality: "Previous stable Flash" },
     { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", quality: "Fastest current stable model" },
     { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", quality: "Stable low-cost fallback" },
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", quality: "Fast free-tier option" },

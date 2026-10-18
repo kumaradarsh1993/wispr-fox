@@ -273,6 +273,8 @@ fn build_llm_provider(provider_id: &str, model: String) -> Result<Box<dyn LlmPro
                 "llama-3.3-70b-versatile" | "meta-llama/llama-4-scout-17b-16e-instruct" => {
                     crate::llm::groq::DEFAULT_ADVANCED_MODEL.to_string()
                 }
+                // Groq shut qwen3.6-27b down on 2026-09-14; 3.8 is its successor.
+                "qwen/qwen3.6-27b" => "qwen/qwen3.8-27b".to_string(),
                 _ if model.trim().is_empty() => crate::llm::groq::DEFAULT_LIGHT_MODEL.to_string(),
                 _ => model,
             };
