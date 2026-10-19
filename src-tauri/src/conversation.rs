@@ -385,7 +385,7 @@ pub fn export_markdown(input: &ExportInput) -> String {
         .notes
         .map(str::trim)
         .filter(|n| !n.is_empty())
-        .map(|n| substitute_names(n, names))
+        .map(|n| demote_headings(&substitute_names(n, names)))
         .unwrap_or_else(|| NOT_GENERATED.to_string());
 
     let transcript = if doc.turns.is_empty() {
@@ -416,6 +416,22 @@ pub fn export_markdown(input: &ExportInput) -> String {
     )
 }
 
+/// Push Markdown headings in meeting notes one level down, so the notes'
+/// own "## Summary" sits under the export's "## Meeting notes".
+pub fn demote_headings(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            if (1..=5).contains(&hashes) && line[hashes..].starts_with(' ') {
+                format!("#{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// `<YYYY-MM-DD> <title>.md`, with the title made safe for every file system.
 pub fn export_filename(date_ymd: &str, title: Option<&str>) -> String {
     let raw = display_title(title);
@@ -443,6 +459,14 @@ pub fn export_filename(date_ymd: &str, title: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_headings_are_demoted_below_the_export_section() {
+        assert_eq!(
+            demote_headings("## Summary\n- a\n#hashtag\n###### deep"),
+            "### Summary\n- a\n#hashtag\n###### deep"
+        );
+    }
 
     fn turn(speaker: &str, text: &str, start: f64) -> SpeakerTurn {
         SpeakerTurn { speaker: speaker.into(), text: text.into(), start: Some(start), end: None }
@@ -627,7 +651,7 @@ mod tests {
             notes: Some("## Summary\n- Speaker 1 opened. Speaker 12 is not Speaker 1."),
             stt_provider_fallback: None,
         });
-        let expected = "# Weekly sync\n\n- Date: 2026-10-19 14:05\n- Length: 1:02:05\n- Speakers: Asha, Rohan, Speaker 3\n- Speaker engine: Deepgram nova-3\n- Word engine: Groq whisper-large-v3\n\n> Two transcripts of the same recording follow. The speaker transcript\n> knows who spoke but can mishear words. The Whisper transcript has more\n> accurate wording but no speakers. Use the speaker transcript for who said\n> what, and the Whisper transcript to correct the wording.\n\n## Meeting notes\n\n## Summary\n- Asha opened. Speaker 12 is not Asha.\n\n## Speaker transcript\n\n**[00:00] Asha:** Shall we start?\n\n**[00:42] Rohan:** Yes.\n\n**[01:01] Speaker 3:** Hi all.\n\n## Whisper transcript\n\nShall we start? Yes. Hi all.\n";
+        let expected = "# Weekly sync\n\n- Date: 2026-10-19 14:05\n- Length: 1:02:05\n- Speakers: Asha, Rohan, Speaker 3\n- Speaker engine: Deepgram nova-3\n- Word engine: Groq whisper-large-v3\n\n> Two transcripts of the same recording follow. The speaker transcript\n> knows who spoke but can mishear words. The Whisper transcript has more\n> accurate wording but no speakers. Use the speaker transcript for who said\n> what, and the Whisper transcript to correct the wording.\n\n## Meeting notes\n\n### Summary\n- Asha opened. Speaker 12 is not Asha.\n\n## Speaker transcript\n\n**[00:00] Asha:** Shall we start?\n\n**[00:42] Rohan:** Yes.\n\n**[01:01] Speaker 3:** Hi all.\n\n## Whisper transcript\n\nShall we start? Yes. Hi all.\n";
         assert_eq!(md, expected);
     }
 
