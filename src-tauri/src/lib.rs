@@ -2,6 +2,7 @@ mod audio;
 mod adaptive;
 mod clippy;
 mod commands;
+mod conversation;
 mod cursor_poller;
 mod flow;
 mod gc;
@@ -526,6 +527,12 @@ pub fn run() {
             updates::update_status,
             updates::download_and_install,
             commands::transcribe_upload,
+            commands::transcribe_conversation,
+            commands::retry_conversation_pass,
+            commands::list_conversations,
+            commands::conversation_markdown,
+            commands::conversation_export_name,
+            commands::export_conversation,
             commands::generate_alt_version,
             commands::set_speaker_names,
             commands::audio_url_for,

@@ -1179,7 +1179,139 @@ pub fn set_speaker_names(
     }
     history.set_speaker_names(&id, &names_json).map_err(|e| e.to_string())?;
     let _ = app.emit("wispr:history_changed", ());
+    // Push the rename promptly (a no-op when signed out).
+    crate::sync::engine::notify_recording_done(&app);
     Ok(())
+}
+
+// ─── Conversations ──────────────────────────────────────────────────────────
+
+/// Transcribe an uploaded conversation: speakers pass, optional Whisper
+/// accuracy pass, optional meeting notes. Returns the new recording id.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn transcribe_conversation(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    path: String,
+    speakers_provider: Option<String>,
+    speakers_model: Option<String>,
+    accuracy: bool,
+    notes: bool,
+    notes_llm_provider: Option<String>,
+    notes_llm_model: Option<String>,
+) -> Result<String, String> {
+    flow.transcribe_conversation(
+        &app,
+        &path,
+        crate::flow::ConversationRequest {
+            speakers_provider,
+            speakers_model,
+            accuracy,
+            notes,
+            notes_llm_provider,
+            notes_llm_model,
+        },
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Rerun one pass ("speakers" | "accuracy" | "notes") of a conversation.
+#[tauri::command]
+pub async fn retry_conversation_pass(
+    app: AppHandle,
+    flow: State<'_, Flow>,
+    id: String,
+    pass: String,
+    provider: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    let pass = crate::conversation::Pass::parse(&pass)
+        .ok_or_else(|| format!("unknown conversation pass '{pass}'"))?;
+    flow.retry_conversation_pass(&app, &id, pass, provider, model)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn list_conversations(
+    history: State<'_, History>,
+    limit: Option<i64>,
+) -> Result<Vec<Recording>, String> {
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || history.list_conversations(limit.unwrap_or(500)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+fn conversation_export(rec: &Recording) -> (String, String) {
+    use crate::conversation::{export_filename, export_markdown, ExportInput, TurnsDoc};
+    let doc = TurnsDoc::parse_or_default(rec.speaker_turns.as_deref());
+    let names: std::collections::BTreeMap<String, String> = rec
+        .speaker_names
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    let local = rec.created_at.with_timezone(&chrono::Local);
+    let duration_ms = if rec.duration_ms > 0 {
+        rec.duration_ms
+    } else {
+        doc.turns
+            .last()
+            .and_then(|t| t.end)
+            .map(|e| (e * 1000.0) as i64)
+            .unwrap_or(0)
+    };
+    let md = export_markdown(&ExportInput {
+        title: rec.title.as_deref(),
+        date_display: local.format("%Y-%m-%d %H:%M").to_string(),
+        duration_ms,
+        doc: &doc,
+        names: &names,
+        notes: rec.meeting_notes_text.as_deref(),
+        stt_provider_fallback: rec.stt_provider.as_deref(),
+    });
+    let name = export_filename(&local.format("%Y-%m-%d").to_string(), rec.title.as_deref());
+    (md, name)
+}
+
+fn get_recording(history: &History, id: &str) -> Result<Recording, String> {
+    history
+        .get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("recording {id} not found"))
+}
+
+/// The export Markdown, for "Copy everything".
+#[tauri::command]
+pub async fn conversation_markdown(history: State<'_, History>, id: String) -> Result<String, String> {
+    let rec = get_recording(history.inner(), &id)?;
+    Ok(conversation_export(&rec).0)
+}
+
+/// Default export filename, `<YYYY-MM-DD> <title>.md`.
+#[tauri::command]
+pub async fn conversation_export_name(history: State<'_, History>, id: String) -> Result<String, String> {
+    let rec = get_recording(history.inner(), &id)?;
+    Ok(conversation_export(&rec).1)
+}
+
+/// Write the export to a path the user picked in the save dialog.
+#[tauri::command]
+pub async fn export_conversation(
+    history: State<'_, History>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    let rec = get_recording(history.inner(), &id)?;
+    let (md, _) = conversation_export(&rec);
+    let path = std::path::PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path, md))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("couldn't write the file: {e}"))
 }
 
 /// Returns a `tauri://localhost` URL the frontend can use as an `<audio src>`

@@ -306,6 +306,13 @@ impl History {
         // re-point every card it ever made. Old rows stay NULL and fall back
         // to the platform glyph.
         let _ = conn.execute("ALTER TABLE recordings ADD COLUMN device_id TEXT", []);
+        // Speaker names edited here on a row ANOTHER device made. `dirty`
+        // can't carry this (remote rows are never pushed whole), so a separate
+        // flag tells sync to PATCH just `speaker_names` for the row.
+        let _ = conn.execute(
+            "ALTER TABLE recordings ADD COLUMN names_dirty INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         // Repair for the `mark_all_done_dirty` defect shipped in v3.0.0: it
         // marked PULLED rows dirty as well as local ones. `list_dirty` refuses
@@ -563,11 +570,93 @@ impl History {
 
     pub fn set_speaker_names(&self, id: &str, names_json: &str) -> Result<()> {
         let conn = self.inner.lock();
+        // Name edits are presentation metadata and sync for every row
+        // (CONVERSATIONS_CONTRACT.md). A local row rides the normal push; a
+        // remote row gets `names_dirty`, which sync turns into a PATCH that
+        // touches only `speaker_names`.
         conn.execute(
             "UPDATE recordings SET speaker_names = ?1, \
-             dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END \
+             dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END, \
+             names_dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 1 ELSE 0 END \
              WHERE id = ?2",
             params![names_json, id],
+        )?;
+        Ok(())
+    }
+
+    /// Remote rows whose speaker names were edited on this device and not yet
+    /// pushed: `(id, speaker_names)`.
+    pub fn list_names_dirty_remote(&self) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, speaker_names FROM recordings \
+             WHERE names_dirty = 1 AND COALESCE(remote, 0) = 1",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Clear `names_dirty` after a successful PATCH, but only if the names are
+    /// still what was pushed (an edit made mid-push stays dirty).
+    pub fn clear_names_dirty(&self, id: &str, pushed: Option<&str>) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET names_dirty = 0 WHERE id = ?1 AND speaker_names IS ?2",
+            params![id, pushed],
+        )?;
+        Ok(())
+    }
+
+    /// Our own row came back from the cloud with different speaker names
+    /// (another device renamed a speaker). Take just the names, and only when
+    /// this device has no unpushed edits of its own for the row.
+    pub fn apply_remote_speaker_names(&self, id: &str, names_json: Option<&str>) -> Result<bool> {
+        let conn = self.inner.lock();
+        let n = conn.execute(
+            "UPDATE recordings SET speaker_names = ?1 \
+             WHERE id = ?2 AND dirty = 0 AND COALESCE(remote, 0) = 0 \
+             AND speaker_names IS NOT ?1",
+            params![names_json, id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Conversations only (`is_meeting = 1`), newest first.
+    pub fn list_conversations(&self, limit: i64) -> Result<Vec<Recording>> {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare(&format!(
+            "{SELECT_ALL_COLUMNS} WHERE is_meeting = 1 ORDER BY created_at DESC LIMIT ?1"
+        ))?;
+        let rows = stmt
+            .query_map(params![limit], row_to_recording)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Store the conversation envelope without touching the flags
+    /// `set_meeting_metadata` owns. Same dirty rule as every other edit.
+    pub fn set_speaker_turns(&self, id: &str, turns_json: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET speaker_turns = ?1, is_meeting = 1, \
+             dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END \
+             WHERE id = ?2",
+            params![turns_json, id],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a row done after a per-pass retry. Unlike `update_status(Done)`
+    /// this never flags a remote row dirty (remote rows are not pushed).
+    pub fn set_done_after_retry(&self, id: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET status = 'done', error = NULL, \
+             dirty = CASE WHEN COALESCE(remote, 0) = 1 THEN 0 ELSE 1 END \
+             WHERE id = ?1",
+            params![id],
         )?;
         Ok(())
     }
@@ -969,7 +1058,9 @@ impl History {
                  drafted_text = excluded.drafted_text,
                  meeting_notes_text = excluded.meeting_notes_text,
                  speaker_turns = excluded.speaker_turns,
-                 speaker_names = excluded.speaker_names,
+                 speaker_names = CASE WHEN recordings.names_dirty = 1
+                                      THEN recordings.speaker_names
+                                      ELSE excluded.speaker_names END,
                  is_meeting = excluded.is_meeting,
                  diarization_enabled = excluded.diarization_enabled,
                  stt_provider = excluded.stt_provider,
@@ -1131,5 +1222,76 @@ mod tests {
         assert_eq!(r.cleaned_text.as_deref(), Some("Hello world."));
         assert_eq!(r.status, Status::Done);
         assert!(r.clippy_used);
+    }
+
+    fn remote_note(id: &str, names: Option<&str>) -> RemoteNote {
+        RemoteNote {
+            id: id.into(),
+            device_id: "other-device".into(),
+            platform: "mobile".into(),
+            device_name: None,
+            title: Some("Sync".into()),
+            transcript: Some("Speaker 1: hi".into()),
+            cleaned_text: None,
+            drafted_text: None,
+            meeting_notes_text: None,
+            speaker_turns: None,
+            speaker_names: names.map(str::to_string),
+            is_meeting: true,
+            diarization_enabled: true,
+            duration_ms: 1000,
+            stt_provider: Some("deepgram".into()),
+            llm_provider: None,
+            created_at: "2026-10-19T00:00:00Z".into(),
+            updated_at: "2026-10-19T00:00:00Z".into(),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn renaming_a_speaker_on_a_remote_row_queues_a_names_only_push() {
+        let tmp = TempDir::new().unwrap();
+        let h = History::open(&tmp.path().join("h.sqlite")).unwrap();
+        h.upsert_remote(&remote_note("r1", None)).unwrap();
+
+        h.set_speaker_names("r1", r#"{"Speaker 1":"Asha"}"#).unwrap();
+        let r = h.get("r1").unwrap().unwrap();
+        assert!(!r.dirty, "remote rows are never pushed whole");
+        let queued = h.list_names_dirty_remote().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].1.as_deref(), Some(r#"{"Speaker 1":"Asha"}"#));
+
+        // A pull before the push lands must not overwrite the local rename.
+        h.upsert_remote(&remote_note("r1", Some(r#"{"Speaker 1":"Old"}"#))).unwrap();
+        let r = h.get("r1").unwrap().unwrap();
+        assert_eq!(r.speaker_names.as_deref(), Some(r#"{"Speaker 1":"Asha"}"#));
+
+        h.clear_names_dirty("r1", Some(r#"{"Speaker 1":"Asha"}"#)).unwrap();
+        assert!(h.list_names_dirty_remote().unwrap().is_empty());
+
+        // Once pushed, later pulls apply again.
+        h.upsert_remote(&remote_note("r1", Some(r#"{"Speaker 1":"New"}"#))).unwrap();
+        let r = h.get("r1").unwrap().unwrap();
+        assert_eq!(r.speaker_names.as_deref(), Some(r#"{"Speaker 1":"New"}"#));
+    }
+
+    #[test]
+    fn names_edited_elsewhere_reach_the_originating_device() {
+        let tmp = TempDir::new().unwrap();
+        let h = History::open(&tmp.path().join("h.sqlite")).unwrap();
+        let id = h
+            .insert_upload(&PathBuf::from("m.m4a"), ClippyMode::Light, "Desk")
+            .unwrap();
+        h.set_meeting_metadata(&id, true, true, None).unwrap();
+        h.update_status(&id, Status::Done).unwrap();
+        // Unpushed local edits win.
+        assert!(!h.apply_remote_speaker_names(&id, Some(r#"{"Speaker 1":"X"}"#)).unwrap());
+        h.mark_clean(&[id.clone()]).unwrap();
+        assert!(h.apply_remote_speaker_names(&id, Some(r#"{"Speaker 1":"X"}"#)).unwrap());
+        assert!(!h.apply_remote_speaker_names(&id, Some(r#"{"Speaker 1":"X"}"#)).unwrap(), "no-op when unchanged");
+        let r = h.get(&id).unwrap().unwrap();
+        assert_eq!(r.speaker_names.as_deref(), Some(r#"{"Speaker 1":"X"}"#));
+        assert!(!r.dirty);
+        assert_eq!(h.list_conversations(10).unwrap().len(), 1);
     }
 }

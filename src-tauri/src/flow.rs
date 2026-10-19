@@ -2129,36 +2129,10 @@ impl Flow {
         Ok(())
     }
 
-    /// Transcribe a user-supplied audio file (drag-and-drop or file picker)
-    /// instead of a live mic recording. The file is copied into the same dated
-    /// audio store the recorder uses — so playback, the (i) inspector, and the
-    /// retention GC treat it identically — then run through STT and the optional
-    /// cleanup/draft passes. It lands in History flagged `source = upload` (the
-    /// "Uploaded" badge) and is NOT injected anywhere: an upload isn't aimed at
-    /// a text field, it's just a new history entry.
-    ///
-    /// `stt_provider`/`stt_model`/`llm_provider`/`llm_model` are per-batch
-    /// overrides from the upload dialog; `None` means "use the current global
-    /// setting". `do_cleanup` and `do_draft` each add the corresponding version
-    /// column, exactly like the Cleaned/Drafted tabs on a dictation.
-    ///
-    /// Returns the new recording id.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn transcribe_file(
-        &self,
-        app: &AppHandle,
-        src_path: &str,
-        stt_provider: Option<String>,
-        stt_model: Option<String>,
-        llm_provider: Option<String>,
-        llm_model: Option<String>,
-        draft_llm_provider: Option<String>,
-        draft_llm_model: Option<String>,
-        do_cleanup: bool,
-        do_draft: bool,
-        do_diarize: bool,
-        do_meeting_notes: bool,
-    ) -> Result<String> {
+    /// Validate an uploaded file and copy it into the dated audio store, so
+    /// playback, the (i) inspector and retention GC treat it like a
+    /// recording. Shared by voice-note and conversation uploads.
+    async fn ingest_upload(&self, src_path: &str) -> Result<PathBuf> {
         let src = PathBuf::from(src_path);
         if !src.is_file() {
             return Err(anyhow!("file not found: {src_path}"));
@@ -2210,6 +2184,40 @@ impl Flow {
                 Err(e) => tracing::warn!("upload transcode task failed (non-fatal): {e}"),
             }
         }
+        Ok(dest)
+    }
+
+    /// Transcribe a user-supplied audio file (drag-and-drop or file picker)
+    /// instead of a live mic recording. The file is copied into the same dated
+    /// audio store the recorder uses — so playback, the (i) inspector, and the
+    /// retention GC treat it identically — then run through STT and the optional
+    /// cleanup/draft passes. It lands in History flagged `source = upload` (the
+    /// "Uploaded" badge) and is NOT injected anywhere: an upload isn't aimed at
+    /// a text field, it's just a new history entry.
+    ///
+    /// `stt_provider`/`stt_model`/`llm_provider`/`llm_model` are per-batch
+    /// overrides from the upload dialog; `None` means "use the current global
+    /// setting". `do_cleanup` and `do_draft` each add the corresponding version
+    /// column, exactly like the Cleaned/Drafted tabs on a dictation.
+    ///
+    /// Returns the new recording id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn transcribe_file(
+        &self,
+        app: &AppHandle,
+        src_path: &str,
+        stt_provider: Option<String>,
+        stt_model: Option<String>,
+        llm_provider: Option<String>,
+        llm_model: Option<String>,
+        draft_llm_provider: Option<String>,
+        draft_llm_model: Option<String>,
+        do_cleanup: bool,
+        do_draft: bool,
+        do_diarize: bool,
+        do_meeting_notes: bool,
+    ) -> Result<String> {
+        let dest = self.ingest_upload(src_path).await?;
 
         let device_name = self.settings.lock().device_name.clone();
         let record_id = self
@@ -2343,24 +2351,27 @@ impl Flow {
         stage(if diarize { "Transcribing + labelling speakers…" } else { "Transcribing…" });
 
         // Uploaded files can be long (a whole voice memo), so give STT a wider
-        // 180s ceiling than the 120s live-dictation cap.
+        // ceiling than the 120s live-dictation cap: at least 180s, and never
+        // shorter than the provider's own size-scaled request deadline (plus
+        // headroom) so this outer cap doesn't undo that scaling.
+        let upload_cap = upload_stt_deadline(file_bytes);
+        let cap_secs = upload_cap.as_secs();
         let stt_t0 = std::time::Instant::now();
         let stt_opts = crate::stt::SttOptions {
             language: stt_settings.language_hint.clone(),
             diarize,
         };
         let stt_future = stt.transcribe(audio_path, &stt_opts);
-        let stt_result =
-            tokio::time::timeout(std::time::Duration::from_secs(180), stt_future).await;
+        let stt_result = tokio::time::timeout(upload_cap, stt_future).await;
         let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
         tl.stt_ms = Some(stt_elapsed);
 
         let transcript = match stt_result {
             Err(_) => {
-                tl.mark(format!("STT TIMED OUT after {stt_elapsed}ms (180s cap)"));
+                tl.mark(format!("STT TIMED OUT after {stt_elapsed}ms ({cap_secs}s cap)"));
                 self.persist_timeline(record_id, &tl);
                 return Err(anyhow!(
-                    "Transcription timed out after 180s — try a shorter file"
+                    "Transcription timed out after {cap_secs}s — try a shorter file"
                 ));
             }
             Ok(Err(e)) => {
@@ -2422,12 +2433,16 @@ impl Flow {
         );
         self.history
             .set_transcript(record_id, &transcript.text, stt_name)?;
-        let turns_json = transcript.speakers.as_ref().and_then(|turns| {
-            serde_json::to_string(&serde_json::json!({
-                "version": 1,
-                "turns": turns,
-            }))
-            .ok()
+        let turns_json = transcript.speakers.as_ref().map(|turns| {
+            let mut doc = crate::conversation::TurnsDoc::default();
+            doc.apply_speakers(Ok((
+                turns.clone(),
+                crate::conversation::EngineInfo {
+                    provider: stt_name.to_string(),
+                    model: stt_settings.stt_model.clone(),
+                },
+            )));
+            doc.to_json()
         });
         if do_diarize || do_meeting_notes {
             self.history.set_meeting_metadata(
@@ -2760,11 +2775,14 @@ impl Flow {
             language: stt_settings.language_hint.clone(),
             diarize,
         };
-        // Same 180s ceiling as the upload path. This path had NO timeout: a
+        // Same ceiling as the upload path. This path had NO timeout: a
         // request that never came back left the Rerun dialog saying
         // "Working…" forever, with no way to close it.
+        let retry_bytes = std::fs::metadata(&rec.audio_path).map(|m| m.len()).unwrap_or(0);
+        let retry_cap = upload_stt_deadline(retry_bytes);
+        let cap_secs = retry_cap.as_secs();
         let stt_res = match tokio::time::timeout(
-            std::time::Duration::from_secs(180),
+            retry_cap,
             stt.transcribe(&rec.audio_path, &retry_opts),
         )
         .await
@@ -2772,15 +2790,15 @@ impl Flow {
             Ok(r) => r,
             Err(_) => {
                 let stt_elapsed = stt_t0.elapsed().as_millis() as i64;
-                tl.mark(format!("retry STT TIMED OUT after {stt_elapsed}ms (180s cap)"));
+                tl.mark(format!("retry STT TIMED OUT after {stt_elapsed}ms ({cap_secs}s cap)"));
                 self.persist_timeline(record_id, &tl);
                 let _ = self
                     .history
-                    .set_error(record_id, "transcription timed out after 180s");
+                    .set_error(record_id, &format!("transcription timed out after {cap_secs}s"));
                 let _ = app.emit("wispr:state", "idle");
                 let _ = app.emit("wispr:history_changed", ());
                 return Err(anyhow!(
-                    "Transcription timed out after 180s — try again, or pick a faster engine"
+                    "Transcription timed out after {cap_secs}s — try again, or pick a faster engine"
                 ));
             }
         };
@@ -2822,8 +2840,19 @@ impl Flow {
         );
         self.history
             .set_transcript(record_id, &transcript.text, stt_name)?;
-        let turns_json = transcript.speakers.as_ref().and_then(|turns| {
-            serde_json::to_string(&serde_json::json!({ "version": 1, "turns": turns })).ok()
+        // Merge into the existing envelope rather than replacing it, so a
+        // conversation's Whisper transcript and pass states survive a rerun.
+        let turns_json = transcript.speakers.as_ref().map(|turns| {
+            let mut doc =
+                crate::conversation::TurnsDoc::parse_or_default(rec.speaker_turns.as_deref());
+            doc.apply_speakers(Ok((
+                turns.clone(),
+                crate::conversation::EngineInfo {
+                    provider: stt_name.to_string(),
+                    model: stt_settings.stt_model.clone(),
+                },
+            )));
+            doc.to_json()
         });
         if diarize || rec.is_meeting {
             self.history.set_meeting_metadata(
@@ -2902,6 +2931,490 @@ impl Flow {
         crate::sync::engine::notify_recording_done(app);
         let _ = app.emit("wispr:state", "idle");
         Ok(())
+    }
+}
+
+// ─── Conversations ──────────────────────────────────────────────────────────
+//
+// Three independent passes per docs/CONVERSATIONS_CONTRACT.md: speakers
+// (diarizing engine, whole file, never chunked), accuracy (Groq Whisper,
+// optional) and notes (Draft engine, optional). Each records its own
+// done/failed state and error in the v2 `speaker_turns` envelope, so one
+// failing never discards another's result, and each can be retried alone.
+
+/// The Whisper pass always runs on Groq's large-v3 (not turbo): it exists for
+/// wording accuracy, which is the one thing turbo trades away.
+const ACCURACY_PROVIDER: &str = "groq";
+const ACCURACY_MODEL: &str = "whisper-large-v3";
+
+/// Outer cap for a whole-file STT call: at least 180 s, and always 30 s past
+/// the provider's own size-scaled request deadline.
+fn upload_stt_deadline(bytes: u64) -> std::time::Duration {
+    (crate::stt::scaled_request_timeout(bytes) + std::time::Duration::from_secs(30))
+        .max(std::time::Duration::from_secs(180))
+}
+
+/// One readable line for a pass error stored in the envelope and shown on the
+/// card. Long provider bodies are cut, not dropped.
+fn pass_error(e: impl std::fmt::Display) -> String {
+    let s = e.to_string();
+    let line = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("failed").trim();
+    if line.chars().count() > 240 {
+        format!("{}…", line.chars().take(240).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// Engine choices for one conversation upload. `None` = use the defaults.
+#[derive(Debug, Clone)]
+pub struct ConversationRequest {
+    pub speakers_provider: Option<String>,
+    pub speakers_model: Option<String>,
+    pub accuracy: bool,
+    pub notes: bool,
+    pub notes_llm_provider: Option<String>,
+    pub notes_llm_model: Option<String>,
+}
+
+struct SpeakersOut {
+    turns: Vec<crate::stt::SpeakerTurn>,
+    engine: crate::conversation::EngineInfo,
+    duration: Option<f64>,
+}
+
+impl Flow {
+    /// Transcribe an uploaded conversation. The row is created as a
+    /// conversation (`is_meeting = 1`) immediately so it shows on the
+    /// Conversations page while the passes run.
+    pub async fn transcribe_conversation(
+        &self,
+        app: &AppHandle,
+        src_path: &str,
+        req: ConversationRequest,
+    ) -> Result<String> {
+        use crate::conversation::{Pass, PassState, TurnsDoc};
+
+        let dest = self.ingest_upload(src_path).await?;
+        let device_name = self.settings.lock().device_name.clone();
+        let record_id = self
+            .history
+            .insert_upload(&dest, ClippyMode::Light, &device_name)?;
+
+        let mut doc = TurnsDoc::default();
+        doc.set_state(Pass::Speakers, PassState::Running);
+        doc.set_state(
+            Pass::Accuracy,
+            if req.accuracy { PassState::Running } else { PassState::Skipped },
+        );
+        doc.set_state(
+            Pass::Notes,
+            if req.notes { PassState::Running } else { PassState::Skipped },
+        );
+        self.history
+            .set_meeting_metadata(&record_id, true, true, Some(&doc.to_json()))?;
+        let _ = app.emit("wispr:history_changed", ());
+
+        let stage = |s: &str| {
+            let _ = app.emit(
+                "wispr:job_stage",
+                serde_json::json!({ "id": record_id, "stage": s }),
+            );
+        };
+        let mut tl = Timeline::new();
+
+        let (speakers_provider, speakers_model) = resolve_speakers_engine(
+            req.speakers_provider.as_deref(),
+            req.speakers_model.as_deref(),
+        );
+        tl.mark(format!(
+            "conversation · speakers → {} ({speakers_model}){}{}",
+            pretty_provider(&speakers_provider),
+            if req.accuracy { " · whisper" } else { "" },
+            if req.notes { " · notes" } else { "" },
+        ));
+        stage(if req.accuracy {
+            "Labelling speakers + Whisper transcript…"
+        } else {
+            "Labelling speakers…"
+        });
+
+        // Speakers and accuracy are independent requests against different
+        // providers, so run them side by side.
+        let t0 = std::time::Instant::now();
+        let speakers_fut = self.run_speakers_pass(&dest, &speakers_provider, &speakers_model);
+        let accuracy_fut = async {
+            if req.accuracy {
+                Some(self.run_accuracy_pass(&dest).await)
+            } else {
+                None
+            }
+        };
+        let (speakers, accuracy) = tokio::join!(speakers_fut, accuracy_fut);
+        tl.stt_ms = Some(t0.elapsed().as_millis() as i64);
+
+        let mut duration: Option<f64> = None;
+        match speakers {
+            Ok(out) => {
+                tl.mark(format!("speakers ok · {} turns", out.turns.len()));
+                duration = out.duration;
+                doc.apply_speakers(Ok((out.turns, out.engine)));
+            }
+            Err(e) => {
+                tl.mark(format!("speakers FAILED · {e}"));
+                doc.apply_speakers(Err(e));
+            }
+        }
+        if let Some(acc) = accuracy {
+            match acc {
+                Ok((a, d)) => {
+                    tl.mark(format!("whisper ok · {} chars", a.text.chars().count()));
+                    duration = duration.or(d);
+                    doc.apply_accuracy(Ok(a));
+                }
+                Err(e) => {
+                    tl.mark(format!("whisper FAILED · {e}"));
+                    doc.apply_accuracy(Err(e));
+                }
+            }
+        }
+        let duration = duration.or_else(|| doc.turns.last().and_then(|t| t.end));
+        if let Some(d) = duration {
+            let ms = (d * 1000.0) as i64;
+            self.history.set_duration(&record_id, ms, ms)?;
+        }
+        self.write_conversation_transcript(&record_id, &doc)?;
+        self.history.set_speaker_turns(&record_id, &doc.to_json())?;
+        let _ = app.emit("wispr:history_changed", ());
+
+        if req.notes {
+            stage("Writing meeting notes…");
+            let t0 = std::time::Instant::now();
+            let r = self
+                .run_notes_pass(
+                    &record_id,
+                    doc.speaker_text().as_deref(),
+                    doc.accuracy_text(),
+                    req.notes_llm_provider.clone(),
+                    req.notes_llm_model.clone(),
+                )
+                .await;
+            tl.cleanup_ms = Some(t0.elapsed().as_millis() as i64);
+            match &r {
+                Ok(()) => tl.mark("notes ok".to_string()),
+                Err(e) => tl.mark(format!("notes FAILED · {e}")),
+            }
+            doc.apply_notes(r);
+            self.history.set_speaker_turns(&record_id, &doc.to_json())?;
+        }
+
+        let outcome = if doc.has_transcript() {
+            let text = doc
+                .speaker_text()
+                .or_else(|| doc.accuracy_text().map(str::to_string))
+                .unwrap_or_default();
+            let words = text.split_whitespace().count() as i64;
+            let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let dur_ms = duration.map(|d| (d * 1000.0) as i64).unwrap_or(0);
+            let _ = self
+                .history
+                .record_session(&date, words, dur_ms, ClippyMode::Light);
+            self.spawn_auto_title(app, &record_id, text);
+            self.history.update_status(&record_id, Status::Done)?;
+            crate::sync::engine::notify_recording_done(app);
+            Ok(record_id.clone())
+        } else {
+            let msg = doc
+                .errors
+                .get("speakers")
+                .cloned()
+                .unwrap_or_else(|| "no transcript was produced".to_string());
+            let _ = self.history.set_error(&record_id, &msg);
+            let _ = app.emit("wispr:flow_error", user_friendly_error(&msg));
+            Err(anyhow!("Speaker labelling failed: {msg}"))
+        };
+        self.persist_timeline(&record_id, &tl);
+        let _ = app.emit("wispr:history_changed", ());
+        outcome
+    }
+
+    /// Rerun one pass for an existing conversation and update its envelope.
+    /// Speakers and accuracy need the audio, so they only run on the device
+    /// that has it; notes can run anywhere.
+    pub async fn retry_conversation_pass(
+        &self,
+        app: &AppHandle,
+        record_id: &str,
+        pass: crate::conversation::Pass,
+        provider: Option<String>,
+        model: Option<String>,
+    ) -> Result<()> {
+        use crate::conversation::{Pass, PassState, TurnsDoc};
+
+        let rec = self
+            .history
+            .get(record_id)?
+            .ok_or_else(|| anyhow!("recording {record_id} not found"))?;
+        let needs_audio = matches!(pass, Pass::Speakers | Pass::Accuracy);
+        if needs_audio && (rec.remote || !rec.audio_path.exists()) {
+            return Err(anyhow!(
+                "The audio for this conversation isn't on this computer, so it can't be transcribed again here."
+            ));
+        }
+        let mut doc = TurnsDoc::parse_or_default(rec.speaker_turns.as_deref());
+        doc.set_state(pass, PassState::Running);
+        self.history.set_speaker_turns(record_id, &doc.to_json())?;
+        let _ = app.emit("wispr:history_changed", ());
+
+        match pass {
+            Pass::Speakers => {
+                let (p, m) = match (&provider, &doc.engine) {
+                    (Some(p), _) => resolve_speakers_engine(Some(p), model.as_deref()),
+                    (None, Some(e)) => resolve_speakers_engine(Some(&e.provider), Some(&e.model)),
+                    (None, None) => resolve_speakers_engine(rec.stt_provider.as_deref(), None),
+                };
+                match self.run_speakers_pass(&rec.audio_path, &p, &m).await {
+                    Ok(out) => {
+                        if let Some(d) = out.duration.or_else(|| out.turns.last().and_then(|t| t.end)) {
+                            let ms = (d * 1000.0) as i64;
+                            self.history.set_duration(record_id, ms, ms)?;
+                        }
+                        doc.apply_speakers(Ok((out.turns, out.engine)));
+                    }
+                    Err(e) => doc.apply_speakers(Err(e)),
+                }
+                self.write_conversation_transcript(record_id, &doc)?;
+            }
+            Pass::Accuracy => {
+                let r = self.run_accuracy_pass(&rec.audio_path).await.map(|(a, _)| a);
+                doc.apply_accuracy(r);
+                if doc.turns.is_empty() {
+                    self.write_conversation_transcript(record_id, &doc)?;
+                }
+            }
+            Pass::Notes => {
+                // Old rows may hold speaker text only in the flat transcript.
+                let speakers = doc.speaker_text().or_else(|| rec.transcript.clone());
+                let r = self
+                    .run_notes_pass(
+                        record_id,
+                        speakers.as_deref(),
+                        doc.accuracy_text(),
+                        provider,
+                        model,
+                    )
+                    .await;
+                doc.apply_notes(r);
+            }
+        }
+
+        self.history.set_speaker_turns(record_id, &doc.to_json())?;
+        if doc.has_transcript() || rec.transcript.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            self.history.set_done_after_retry(record_id)?;
+        }
+        crate::sync::engine::notify_recording_done(app);
+        let _ = app.emit("wispr:history_changed", ());
+        match doc.errors.get(pass.key()) {
+            Some(e) if doc.state(pass) == Some(PassState::Failed) => Err(anyhow!("{e}")),
+            _ => Ok(()),
+        }
+    }
+
+    /// Keep the flat `transcript` column readable by every client: the
+    /// speaker turns when they exist, else the Whisper text.
+    fn write_conversation_transcript(
+        &self,
+        record_id: &str,
+        doc: &crate::conversation::TurnsDoc,
+    ) -> Result<()> {
+        if let Some(text) = doc.speaker_text() {
+            let provider = doc.engine.as_ref().map(|e| e.provider.as_str()).unwrap_or("deepgram");
+            self.history.set_transcript(record_id, &text, provider)?;
+        } else if let Some(text) = doc.accuracy_text() {
+            self.history.set_transcript(record_id, text, ACCURACY_PROVIDER)?;
+        }
+        Ok(())
+    }
+
+    async fn run_speakers_pass(
+        &self,
+        audio: &std::path::Path,
+        provider: &str,
+        model: &str,
+    ) -> std::result::Result<SpeakersOut, String> {
+        let mut s = self.settings();
+        s.stt_provider = provider.to_string();
+        s.stt_model = model.to_string();
+        if !crate::stt::provider_supports_diarization(provider, model) {
+            return Err(format!(
+                "{} {model} can't label speakers — pick Deepgram, ElevenLabs or OpenAI Diarize",
+                pretty_provider(provider)
+            ));
+        }
+        let stt = build_stt_provider(&s).map_err(pass_error)?;
+        let name = stt.name();
+        let bytes = std::fs::metadata(audio).map(|m| m.len()).unwrap_or(0);
+        let deadline = crate::stt::scaled_request_timeout(bytes) + std::time::Duration::from_secs(30);
+        let opts = crate::stt::SttOptions {
+            language: s.language_hint.clone(),
+            diarize: true,
+        };
+        // Whole file, one request: diarizing in pieces would let "Speaker 1"
+        // mean different people in different pieces.
+        let t = tokio::time::timeout(deadline, stt.transcribe(audio, &opts))
+            .await
+            .map_err(|_| format!("{} timed out after {}s", pretty_provider(name), deadline.as_secs()))?
+            .map_err(|e| format!("{}: {}", pretty_provider(name), pass_error(e)))?;
+        let turns = crate::conversation::turns_or_single(t.speakers, &t.text, t.duration_seconds);
+        if turns.is_empty() {
+            return Err(format!("{} returned an empty transcript", pretty_provider(name)));
+        }
+        let duration = t.duration_seconds.or_else(|| turns.last().and_then(|x| x.end));
+        self.usage.record_stt(name, model, duration.unwrap_or(0.0));
+        Ok(SpeakersOut {
+            turns,
+            engine: crate::conversation::EngineInfo {
+                provider: name.to_string(),
+                model: model.to_string(),
+            },
+            duration,
+        })
+    }
+
+    async fn run_accuracy_pass(
+        &self,
+        audio: &std::path::Path,
+    ) -> std::result::Result<(crate::conversation::Accuracy, Option<f64>), String> {
+        let key = secrets::get(SecretKey::GroqStt)
+            .map_err(pass_error)?
+            .ok_or_else(|| "no Groq key — add one in Settings → Providers".to_string())?;
+        let bytes = std::fs::metadata(audio).map(|m| m.len()).unwrap_or(0);
+        let is_wav = audio
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+        // Groq takes 25 MB per request and only WAV can be split locally.
+        if !is_wav && bytes > 24 * 1024 * 1024 {
+            return Err(format!(
+                "file is {:.0} MB — too large for Groq Whisper in one request",
+                bytes as f64 / (1024.0 * 1024.0)
+            ));
+        }
+        let stt = GroqStt::with_model(key, ACCURACY_MODEL.to_string());
+        let opts = crate::stt::SttOptions {
+            language: self.settings().language_hint.clone(),
+            diarize: false,
+        };
+        let deadline = upload_stt_deadline(bytes);
+        let t = tokio::time::timeout(deadline, stt.transcribe(audio, &opts))
+            .await
+            .map_err(|_| format!("Groq Whisper timed out after {}s", deadline.as_secs()))?
+            .map_err(|e| format!("Groq: {}", pass_error(e)))?;
+        if t.text.trim().is_empty() {
+            return Err("Groq Whisper returned an empty transcript".to_string());
+        }
+        self.usage
+            .record_stt(ACCURACY_PROVIDER, ACCURACY_MODEL, t.duration_seconds.unwrap_or(0.0));
+        Ok((
+            crate::conversation::Accuracy {
+                text: t.text.trim().to_string(),
+                provider: ACCURACY_PROVIDER.to_string(),
+                model: ACCURACY_MODEL.to_string(),
+            },
+            t.duration_seconds,
+        ))
+    }
+
+    /// Meeting notes from the Draft engine. Writes `meeting_notes_text` on
+    /// success; a failed call never overwrites notes that already exist.
+    async fn run_notes_pass(
+        &self,
+        record_id: &str,
+        speakers: Option<&str>,
+        accuracy: Option<&str>,
+        provider: Option<String>,
+        model: Option<String>,
+    ) -> std::result::Result<(), String> {
+        let input = crate::conversation::notes_input(speakers, accuracy)
+            .ok_or_else(|| "no transcript to write notes from".to_string())?;
+        let s = self.settings();
+        let provider_id = provider.unwrap_or_else(|| s.draft_llm_provider.clone());
+        let model = model.unwrap_or_else(|| s.draft_llm_model.clone());
+        let llm = build_llm_provider(&provider_id, model.clone()).map_err(pass_error)?;
+        let mut system = if s.custom_meeting_prompt.trim().is_empty() {
+            crate::llm::prompts::MEETING_NOTES_SYSTEM.to_string()
+        } else {
+            s.custom_meeting_prompt.clone()
+        };
+        let has_speakers = speakers.is_some_and(|t| !t.trim().is_empty());
+        let has_accuracy = accuracy.is_some_and(|t| !t.trim().is_empty());
+        if has_speakers && has_accuracy {
+            system.push_str(crate::conversation::NOTES_REFERENCE_RULE);
+        }
+        let out = clippy::clean_with_timeout(
+            &input,
+            ClippyMode::Drafting,
+            Some(&system),
+            None,
+            llm.as_ref(),
+            clippy::on_demand_timeout_for(&input),
+        )
+        .await;
+        self.usage.record_llm(llm.name(), &model, out.usage.as_ref());
+        if !out.used_clippy || out.text.trim().is_empty() {
+            return Err(format!(
+                "{} {model}: {}",
+                pretty_provider(llm.name()),
+                out.note.unwrap_or("no notes returned")
+            ));
+        }
+        self.history
+            .set_alt(record_id, AltKind::MeetingNotes, &out.text, Some(llm.name()), true, None)
+            .map_err(pass_error)?;
+        Ok(())
+    }
+
+    fn spawn_auto_title(&self, app: &AppHandle, record_id: &str, text: String) {
+        let title_cfg = {
+            let s = self.settings.lock();
+            s.auto_title
+                .then(|| (s.title_provider.clone(), s.title_model.clone()))
+        };
+        let Some((title_provider, title_model)) = title_cfg else {
+            return;
+        };
+        let history = self.history.clone();
+        let app = app.clone();
+        let rid = record_id.to_string();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(Some(title)) = generate_title(&text, &title_provider, &title_model).await {
+                if history.set_title(&rid, &title).is_ok() {
+                    let _ = app.emit("wispr:history_changed", ());
+                }
+            }
+        });
+    }
+}
+
+/// Pick the diarizing engine: the requested one when it can label speakers,
+/// otherwise Deepgram Nova-3 (the contract's default).
+fn resolve_speakers_engine(provider: Option<&str>, model: Option<&str>) -> (String, String) {
+    match provider.unwrap_or("deepgram") {
+        "elevenlabs" => (
+            "elevenlabs".into(),
+            model
+                .filter(|m| m.starts_with("scribe_"))
+                .unwrap_or(crate::stt::elevenlabs::DEFAULT_MODEL)
+                .into(),
+        ),
+        "openai" => ("openai".into(), "gpt-4o-transcribe-diarize".into()),
+        _ => (
+            "deepgram".into(),
+            model
+                .filter(|m| m.starts_with("nova-"))
+                .unwrap_or(crate::stt::deepgram::DEFAULT_MODEL)
+                .into(),
+        ),
     }
 }
 

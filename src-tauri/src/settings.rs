@@ -208,6 +208,15 @@ pub struct AppSettings {
     /// and the `devices` table's `name` column on sign-in/sync.
     #[serde(default = "default_device_name")]
     pub device_name: String,
+
+    /// Last answer to the upload dialog's first question: `"voice_note"` or
+    /// `"conversation"`. Preselected the next time the dialog opens.
+    #[serde(default = "default_upload_kind")]
+    pub upload_kind: String,
+}
+
+fn default_upload_kind() -> String {
+    "voice_note".to_string()
 }
 
 impl Default for AppSettings {
@@ -288,6 +297,7 @@ impl Default for AppSettings {
             open_silently: default_open_silently(),
             adapt_to_app: default_adapt_to_app(),
             device_name: default_device_name(),
+            upload_kind: default_upload_kind(),
         }
     }
 }
