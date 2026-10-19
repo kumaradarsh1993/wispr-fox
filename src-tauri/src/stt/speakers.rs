@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 /// One contiguous run of speech by a single speaker.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpeakerTurn {
     /// Display label, e.g. "Speaker 1". Providers hand back opaque integer or
     /// string ids; we normalise to a 1-based human label here so the UI, the
@@ -24,6 +24,11 @@ pub struct SpeakerTurn {
     pub text: String,
     /// Seconds from the start of the audio, when the provider reports it.
     pub start: Option<f64>,
+    /// Seconds at which the turn's last word ends, when reported. Optional in
+    /// both directions: v1 rows never carried it, so readers treat a missing
+    /// value as unknown and writers omit it rather than write `null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<f64>,
 }
 
 /// Whether a provider id can attribute speech to speakers. Groq and OpenAI
@@ -47,11 +52,12 @@ pub fn render_turns(turns: &[SpeakerTurn]) -> String {
         .join("\n\n")
 }
 
-/// Collapse a word-level `(speaker_id, word, start)` stream into contiguous
-/// turns.
+/// Collapse a word-level `(speaker_id, word, start, end)` stream into
+/// contiguous turns. A turn starts when its first word starts and ends when
+/// its last word ends.
 pub fn turns_from_words<I>(words: I) -> Vec<SpeakerTurn>
 where
-    I: IntoIterator<Item = (String, String, Option<f64>)>,
+    I: IntoIterator<Item = (String, String, Option<f64>, Option<f64>)>,
 {
     // Providers label speakers with arbitrary ids ("0", "speaker_7", …) and
     // don't promise they start at zero or appear in order. Map first-seen order
@@ -60,7 +66,7 @@ where
     let mut order: Vec<String> = Vec::new();
     let mut turns: Vec<SpeakerTurn> = Vec::new();
 
-    for (raw_id, word, start) in words {
+    for (raw_id, word, start, end) in words {
         let word = word.trim();
         if word.is_empty() {
             continue;
@@ -78,8 +84,11 @@ where
             Some(last) if last.speaker == label => {
                 last.text.push(' ');
                 last.text.push_str(word);
+                if end.is_some() {
+                    last.end = end;
+                }
             }
-            _ => turns.push(SpeakerTurn { speaker: label, text: word.to_string(), start }),
+            _ => turns.push(SpeakerTurn { speaker: label, text: word.to_string(), start, end }),
         }
     }
     turns
@@ -99,8 +108,8 @@ pub fn speaker_count(turns: &[SpeakerTurn]) -> usize {
 mod tests {
     use super::*;
 
-    fn w(speaker: &str, word: &str) -> (String, String, Option<f64>) {
-        (speaker.to_string(), word.to_string(), None)
+    fn w(speaker: &str, word: &str) -> (String, String, Option<f64>, Option<f64>) {
+        (speaker.to_string(), word.to_string(), None, None)
     }
 
     #[test]
@@ -147,10 +156,11 @@ mod tests {
     #[test]
     fn keeps_the_start_time_of_the_turn_not_the_last_word() {
         let turns = turns_from_words(vec![
-            ("0".into(), "one".into(), Some(1.0)),
-            ("0".into(), "two".into(), Some(2.0)),
+            ("0".into(), "one".into(), Some(1.0), Some(1.5)),
+            ("0".into(), "two".into(), Some(2.0), Some(2.4)),
         ]);
         assert_eq!(turns[0].start, Some(1.0), "turn starts when it started");
+        assert_eq!(turns[0].end, Some(2.4), "turn ends when its last word ends");
     }
 
     #[test]

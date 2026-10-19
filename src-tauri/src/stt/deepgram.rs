@@ -96,6 +96,8 @@ struct DeepgramWord {
     speaker: Option<i64>,
     #[serde(default)]
     start: Option<f64>,
+    #[serde(default)]
+    end: Option<f64>,
 }
 
 #[async_trait]
@@ -110,9 +112,13 @@ impl SttProvider for DeepgramStt {
         opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
+        // Per-request deadline scaled to the file; overrides the client's
+        // 90 s fallback, which a long meeting upload would blow through.
+        let deadline = super::scaled_request_timeout(bytes.len() as u64);
         let mut req = self
             .client
             .post(ENDPOINT)
+            .timeout(deadline)
             .query(&[("model", self.model.as_str()), ("smart_format", "true")])
             .header("Authorization", format!("Token {}", self.api_key))
             .header("Content-Type", super::mime_for_audio(wav_path))
@@ -167,7 +173,7 @@ impl SttProvider for DeepgramStt {
             let turns = super::turns_from_words(alt.words.into_iter().filter_map(|w| {
                 let speaker = w.speaker?;
                 let word = w.punctuated_word.or(w.word)?;
-                Some((speaker.to_string(), word, w.start))
+                Some((speaker.to_string(), word, w.start, w.end))
             }));
             if !turns.is_empty() {
                 return Ok(Transcript {

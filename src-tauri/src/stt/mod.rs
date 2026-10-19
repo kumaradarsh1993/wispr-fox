@@ -55,6 +55,45 @@ impl SttOptions {
     }
 }
 
+/// Whole-request deadline for providers that take the entire file in one
+/// request (Deepgram, ElevenLabs): 90 s plus 30 s per 10 MB of audio, capped
+/// at 15 minutes. A flat 90 s covered the upload as well as the provider's
+/// processing, so an hour-long meeting on a slow uplink timed out before the
+/// provider had finished receiving it.
+pub fn scaled_request_timeout(bytes: u64) -> std::time::Duration {
+    const BASE_SECS: f64 = 90.0;
+    const PER_10_MB_SECS: f64 = 30.0;
+    const CAP_SECS: f64 = 15.0 * 60.0;
+    let ten_mb = 10.0 * 1024.0 * 1024.0;
+    let secs = BASE_SECS + PER_10_MB_SECS * (bytes as f64 / ten_mb);
+    std::time::Duration::from_secs_f64(secs.min(CAP_SECS))
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::scaled_request_timeout;
+
+    const MB: u64 = 1024 * 1024;
+
+    #[test]
+    fn small_files_keep_the_old_90s() {
+        assert_eq!(scaled_request_timeout(0).as_secs(), 90);
+    }
+
+    #[test]
+    fn adds_30s_per_10_mb() {
+        assert_eq!(scaled_request_timeout(10 * MB).as_secs(), 120);
+        assert_eq!(scaled_request_timeout(50 * MB).as_secs(), 240);
+        assert_eq!(scaled_request_timeout(5 * MB).as_secs(), 105);
+    }
+
+    #[test]
+    fn caps_at_15_minutes() {
+        assert_eq!(scaled_request_timeout(270 * MB).as_secs(), 900);
+        assert_eq!(scaled_request_timeout(2_000 * MB).as_secs(), 900);
+    }
+}
+
 pub use speakers::{provider_supports_diarization, render_turns, turns_from_words, SpeakerTurn};
 
 /// Audio container extensions we accept for uploaded files. The cloud STT

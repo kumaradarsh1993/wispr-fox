@@ -49,6 +49,8 @@ struct ElevenLabsWord {
     speaker_id: Option<String>,
     #[serde(default)]
     start: Option<f64>,
+    #[serde(default)]
+    end: Option<f64>,
     /// "word" | "spacing" | "audio_event". Only real words carry meaning for
     /// turn grouping; spacing entries are whitespace and audio events are
     /// things like (laughter).
@@ -68,6 +70,9 @@ impl SttProvider for ElevenLabsStt {
         opts: &SttOptions,
     ) -> Result<Transcript, SttError> {
         let bytes = fs::read(wav_path).await?;
+        // Per-request deadline scaled to the file; overrides the client's
+        // 90 s fallback, which a long meeting upload would blow through.
+        let deadline = super::scaled_request_timeout(bytes.len() as u64);
         let filename = wav_path
             .file_name()
             .and_then(|s| s.to_str())
@@ -98,6 +103,7 @@ impl SttProvider for ElevenLabsStt {
         let resp = self
             .client
             .post(ENDPOINT)
+            .timeout(deadline)
             .header("xi-api-key", &self.api_key)
             .multipart(form)
             .send()
@@ -126,7 +132,7 @@ impl SttProvider for ElevenLabsStt {
                 }
                 let speaker = w.speaker_id?;
                 let text = w.text?;
-                Some((speaker, text, w.start))
+                Some((speaker, text, w.start, w.end))
             }));
             if !turns.is_empty() {
                 return Ok(Transcript {

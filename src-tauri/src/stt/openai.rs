@@ -117,7 +117,7 @@ impl OpenAiStt {
                 .map_err(|e| SttError::Decode(e.to_string()))?;
             let duration = parsed.segments.last().map(|s| s.end);
             let turns = turns_from_words(
-                parsed.segments.into_iter().map(|s| (s.speaker, s.text, Some(s.start))),
+                parsed.segments.into_iter().map(|s| (s.speaker, s.text, Some(s.start), Some(s.end))),
             );
             let text = render_turns(&turns);
             return Ok(Transcript {
