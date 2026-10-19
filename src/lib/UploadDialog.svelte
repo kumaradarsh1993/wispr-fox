@@ -1,9 +1,11 @@
 <script lang="ts">
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
+  import { goto } from "$app/navigation";
   import { api, type SecretCheck } from "$lib/api";
   import { history } from "$lib/history-store.svelte";
   import { settings } from "$lib/settings-store.svelte";
+  import Disclosure from "$lib/ui/Disclosure.svelte";
   import {
     STT_PROVIDERS,
     LLM_PROVIDERS,
@@ -13,17 +15,39 @@
     llmReady,
   } from "$lib/provider-options";
 
+  type Kind = "voice_note" | "conversation";
+
   // `open` toggles the modal; `paths` is the staged file list, shared with the
-  // parent so a window-wide drag-drop can push files straight in. Both bindable.
+  // parent so a window-wide drag-drop can push files straight in. Both
+  // bindable. `kind` forces the first choice (the Conversations page passes
+  // "conversation" for a drop); null = the last answer the user gave.
   let {
     open = $bindable(false),
     paths = $bindable<string[]>([]),
-  } = $props<{ open?: boolean; paths?: string[] }>();
+    kind: forcedKind = null,
+    onDone,
+  } = $props<{
+    open?: boolean;
+    paths?: string[];
+    kind?: Kind | null;
+    onDone?: () => void;
+  }>();
 
   const AUDIO_EXTS = ["wav", "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "webm", "mp4"];
 
-  // Engine + options. Seed from the user's current global picks; the dialog can
-  // override them just for this batch without touching the saved settings.
+  function savedKind(): Kind {
+    return settings.s.upload_kind === "conversation" ? "conversation" : "voice_note";
+  }
+  let kind = $state<Kind>(savedKind());
+
+  function chooseKind(k: Kind) {
+    if (running) return;
+    kind = k;
+    if (settings.s.upload_kind !== k) void settings.set("upload_kind", k);
+  }
+
+  // ── Voice note engine + options. Seeded from the global picks; the dialog
+  // can override them for this batch without touching saved settings.
   let sttProvider = $state(settings.s.stt_provider || "groq");
   let sttModel = $state(settings.s.stt_model || sttModelsFor(settings.s.stt_provider || "groq")[0].id);
   let llmProvider = $state(settings.s.llm_provider || "groq");
@@ -32,30 +56,20 @@
   let draftLlmModel = $state(settings.s.draft_llm_model || llmModelsFor(settings.s.draft_llm_provider || "groq")[0].id);
   let cleanup = $state(false);
   let draft = $state(false);
-  let diarize = $state(false);
-  let meetingNotes = $state(false);
+
+  // ── Conversation engine + options.
+  const SPEAKER_ENGINES = [
+    { provider: "deepgram", model: "nova-3", label: "Deepgram Nova-3", note: "Recommended. Speaker labels are a small add-on charge (~$0.002/min)." },
+    { provider: "elevenlabs", model: "scribe_v2", label: "ElevenLabs Scribe v2", note: "Speaker labels included at no extra charge." },
+    { provider: "openai", model: "gpt-4o-transcribe-diarize", label: "OpenAI GPT-4o Diarize", note: "Files over ~20 MB are refused; use Deepgram for long meetings." },
+  ];
+  let speakerEngine = $state("deepgram");
+  const speakerChoice = $derived(SPEAKER_ENGINES.find((e) => e.provider === speakerEngine) ?? SPEAKER_ENGINES[0]);
+  let accuracy = $state(false);
+  let notes = $state(false);
+  let optionsOpen = $state(false);
 
   let secrets = $state<SecretCheck | null>(null);
-
-  // Only Deepgram and ElevenLabs have a speaker model. Whisper (Groq/OpenAI)
-  // has none at all, so the checkbox is disabled with the reason rather than
-  // accepted and silently ignored — which would hand back an unlabelled wall
-  // of text and no clue why. Rust enforces the same rule server-side.
-  const canDiarize = $derived(
-    sttProvider === "deepgram" || sttProvider === "elevenlabs" ||
-      (sttProvider === "openai" && sttModel === "gpt-4o-transcribe-diarize"),
-  );
-  let diarizeSwitchNote = $state("");
-
-  // Diarization is priced differently by provider and this is a real cost
-  // decision for long meeting audio, so say it plainly at the point of choice.
-  const diarizeCostNote = $derived(
-    sttProvider === "elevenlabs"
-      ? "Included free with Scribe — no extra charge."
-      : sttProvider === "deepgram"
-        ? "Deepgram bills speaker labels as an add-on (~$0.002/min on top of the model rate)."
-        : "",
-  );
 
   // Per-file progress: keyed by path → "queued" | "working" | "done" | "error".
   type FileState = "queued" | "working" | "done" | "error";
@@ -63,28 +77,36 @@
   let errors = $state<Record<string, string>>({});
   let running = $state(false);
   let finished = $state(false);
+  let finishedKind = $state<Kind>("voice_note");
 
-  // Re-seed engine + reset progress when the dialog OPENS (closed → open
-  // transition only). The old version re-ran whenever `running` changed,
-  // because Svelte 5 tracks every value read inside — so the moment a batch
-  // finished (running flips false) it wiped statuses and `finished`, and the
-  // "N transcribed ✓ / Close" completion state never appeared. The dialog
-  // looked permanently stuck on "Working".
+  // Reset when the dialog OPENS (closed → open transition only). Re-running
+  // on every tracked change once wiped the "N transcribed / Close" state the
+  // moment a batch finished, so keep this edge-triggered.
   let wasOpen = false;
   $effect(() => {
     if (open && !wasOpen) {
-      api.checkSecrets().then((s) => (secrets = s)).catch(() => {});
+      kind = forcedKind ?? savedKind();
       statuses = {};
       errors = {};
       finished = false;
       stageText = "";
+      optionsOpen = false;
+      api
+        .checkSecrets()
+        .then((s) => {
+          secrets = s;
+          // Defaults per the contract: Whisper on when a Groq key exists,
+          // notes on when the Draft engine has a key.
+          accuracy = Boolean(s.stt);
+          notes = llmReady(s, draftLlmProvider);
+        })
+        .catch(() => {});
     }
     wasOpen = open;
   });
 
-  // Live pipeline stage from the backend (transcribing → cleaning → drafting
-  // → meeting notes), shown on the in-flight file row. Files run one at a
-  // time, so a single latest-stage string is unambiguous.
+  // Live pipeline stage from the backend, shown on the in-flight file row.
+  // Files run one at a time, so a single latest-stage string is unambiguous.
   let stageText = $state("");
   $effect(() => {
     const un = listen<{ id: string; stage: string }>("wispr:job_stage", (e) => {
@@ -98,41 +120,30 @@
   const sttModels = $derived(sttModelsFor(sttProvider));
   const llmModels = $derived(llmModelsFor(llmProvider));
   const draftLlmModels = $derived(llmModelsFor(draftLlmProvider));
-  const needsLlm = $derived(cleanup || draft || meetingNotes);
   const sttHasKey = $derived(sttReady(secrets, sttProvider));
   const llmHasKey = $derived(!cleanup || llmReady(secrets, llmProvider));
-  const draftLlmHasKey = $derived(!(draft || meetingNotes) || llmReady(secrets, draftLlmProvider));
-  const canTranscribe = $derived(paths.length > 0 && sttHasKey && llmHasKey && draftLlmHasKey && !running);
+  const draftLlmHasKey = $derived(!draft || llmReady(secrets, draftLlmProvider));
+  const speakersHasKey = $derived(sttReady(secrets, speakerChoice.provider));
+  const groqHasKey = $derived(!secrets || secrets.stt);
+  const notesHasKey = $derived(!notes || llmReady(secrets, draftLlmProvider));
 
-  // Keep the selected model valid when the provider changes.
+  const canTranscribe = $derived(
+    paths.length > 0 &&
+      !running &&
+      (kind === "voice_note"
+        ? sttHasKey && llmHasKey && draftLlmHasKey
+        : speakersHasKey && (!accuracy || groqHasKey) && notesHasKey),
+  );
+
+  // Keep the selected models valid when the provider changes.
   $effect(() => {
     if (!sttModels.some((m) => m.id === sttModel)) sttModel = sttModels[0].id;
   });
-  function toggleDiarize(on: boolean) {
-    diarize = on;
-    diarizeSwitchNote = "";
-    if (!on) return;
-    if (sttProvider === "openai") {
-      if (sttModel !== "gpt-4o-transcribe-diarize") {
-        sttModel = "gpt-4o-transcribe-diarize";
-        diarizeSwitchNote = "Changed to OpenAI GPT-4o Diarize because the selected model has no speaker labels.";
-      }
-      return;
-    }
-    if (sttProvider !== "deepgram" && sttProvider !== "elevenlabs") {
-      sttProvider = "deepgram";
-      sttModel = "nova-3";
-      diarizeSwitchNote = "Changed to Deepgram Nova-3 because Whisper does not support speaker labels.";
-    }
-  }
   $effect(() => {
     if (!llmModels.some((m) => m.id === llmModel)) llmModel = llmModels[0].id;
   });
   $effect(() => {
     if (!draftLlmModels.some((m) => m.id === draftLlmModel)) draftLlmModel = draftLlmModels[0].id;
-  });
-  $effect(() => {
-    if (diarize && !canDiarize) toggleDiarize(true);
   });
 
   function baseName(p: string): string {
@@ -167,10 +178,39 @@
     paths = [];
   }
 
+  async function runOne(p: string) {
+    if (kind === "conversation") {
+      await api.transcribeConversation(p, {
+        speakersProvider: speakerChoice.provider,
+        speakersModel: speakerChoice.model,
+        accuracy,
+        notes,
+        notesLlmProvider: notes ? draftLlmProvider : null,
+        notesLlmModel: notes ? draftLlmModel : null,
+      });
+    } else {
+      // A voice note is one speaker: no speaker labels, no meeting notes, so
+      // it lands on Home, never on Conversations.
+      await api.transcribeUpload(p, {
+        sttProvider,
+        sttModel,
+        llmProvider: cleanup ? llmProvider : null,
+        llmModel: cleanup ? llmModel : null,
+        draftLlmProvider: draft ? draftLlmProvider : null,
+        draftLlmModel: draft ? draftLlmModel : null,
+        cleanup,
+        draft,
+        diarize: false,
+        meetingNotes: false,
+      });
+    }
+  }
+
   async function transcribeAll() {
     if (!canTranscribe) return;
     running = true;
     finished = false;
+    finishedKind = kind;
     // Snapshot the queue so removing rows mid-run can't desync the loop.
     const queue = [...paths];
     for (const p of queue) statuses[p] = "queued";
@@ -181,18 +221,7 @@
       statuses = { ...statuses };
       stageText = "Starting…";
       try {
-        await api.transcribeUpload(p, {
-          sttProvider,
-          sttModel,
-          llmProvider: needsLlm ? llmProvider : null,
-          llmModel: needsLlm ? llmModel : null,
-          draftLlmProvider: draft || meetingNotes ? draftLlmProvider : null,
-          draftLlmModel: draft || meetingNotes ? draftLlmModel : null,
-          cleanup,
-          draft,
-          diarize,
-          meetingNotes,
-        });
+        await runOne(p);
         statuses[p] = "done";
       } catch (e) {
         statuses[p] = "error";
@@ -201,11 +230,18 @@
       statuses = { ...statuses };
       errors = { ...errors };
       await history.refresh();
+      onDone?.();
     }
 
     running = false;
     finished = true;
     stageText = "";
+  }
+
+  async function openDestination() {
+    const dest = finishedKind === "conversation" ? "/conversations" : "/history";
+    close();
+    await goto(dest);
   }
 
   const doneCount = $derived(Object.values(statuses).filter((s) => s === "done").length);
@@ -227,10 +263,47 @@
     <header class="modal-head">
       <div>
         <h2>Upload audio</h2>
-        <p class="sub">Transcribe voice notes or recordings from your computer or phone.</p>
+        <p class="sub">What kind of recording is it?</p>
       </div>
       <button class="x" onclick={close} disabled={running} aria-label="Close">×</button>
     </header>
+
+    <!-- The one question every upload asks first. -->
+    <div class="kind-row" role="radiogroup" aria-label="Recording type">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={kind === "voice_note"}
+        class="kind"
+        class:active={kind === "voice_note"}
+        disabled={running}
+        onclick={() => chooseKind("voice_note")}
+      >
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span class="kind-title">Voice note</span>
+        <span class="kind-sub">One speaker. Lands on Home.</span>
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={kind === "conversation"}
+        class="kind"
+        class:active={kind === "conversation"}
+        disabled={running}
+        onclick={() => chooseKind("conversation")}
+      >
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <circle cx="16.5" cy="9.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M2.5 19c.6-3 3-4.8 5.5-4.8s4.9 1.8 5.5 4.8M13.8 15.2c.8-.6 1.7-.9 2.7-.9 2.1 0 4 1.5 4.5 4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span class="kind-title">Conversation</span>
+        <span class="kind-sub">Several people. Who said what, plus notes.</span>
+      </button>
+    </div>
 
     <!-- Drop / pick zone. Files can be dragged anywhere onto the window, or
          picked here. The list shows what's staged. -->
@@ -273,113 +346,136 @@
       {/if}
     </div>
 
-    <!-- Engine + processing options. -->
     <div class="options">
-      <div class="opt-row">
-        <label class="opt-label" for="stt-prov">Transcribe with</label>
-        <div class="selects">
-          <select id="stt-prov" bind:value={sttProvider} disabled={running}>
-            {#each STT_PROVIDERS as p}
-              <option value={p.id}>{p.label}</option>
-            {/each}
-          </select>
-          <select bind:value={sttModel} disabled={running}>
-            {#each sttModels as m}
-              <option value={m.id}>{m.label}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
-      {#if !sttHasKey}
-        <p class="keywarn">No API key saved for {sttProvider} — add one in Settings → Providers first.</p>
-      {/if}
-
-      <!-- Speaker labels. Sits directly under the engine picker because it's a
-           property of the transcription request, not a post-processing step. -->
-      <div class="checks">
-        <label class="check">
-          <input
-            type="checkbox"
-            checked={diarize}
-            onchange={(e) => toggleDiarize((e.currentTarget as HTMLInputElement).checked)}
-            disabled={running}
-          />
-          <span>
-            <strong>Label speakers</strong> — split the transcript into "Speaker 1 / Speaker 2"
-            turns. For meetings and interviews.
-            {#if diarizeSwitchNote}
-              <em class="why switch-note">{diarizeSwitchNote}</em>
-            {:else if !canDiarize}
-              <em class="why">Not available on {sttProvider === "groq" ? "Groq" : "OpenAI"} — Whisper has no speaker model. Switch to Deepgram or ElevenLabs above.</em>
-            {:else if diarizeCostNote}
-              <em class="why">{diarizeCostNote}</em>
-            {/if}
-          </span>
-        </label>
-      </div>
-
-      <div class="checks">
-        <label class="check">
-          <input type="checkbox" bind:checked={cleanup} disabled={running} />
-          <span><strong>Clean up</strong> — fix punctuation & paragraphs, keep my words</span>
-        </label>
-        <label class="check">
-          <input type="checkbox" bind:checked={draft} disabled={running} />
-          <span><strong>Draft</strong> — rewrite into a polished, structured version</span>
-        </label>
-        <label class="check">
-          <input type="checkbox" bind:checked={meetingNotes} disabled={running} />
-          <span>
-            <strong>Meeting notes</strong> — summary, decisions, and action items with owners.
-            {#if meetingNotes && !diarize && canDiarize}
-              <em class="why">Tip: turn on speaker labels too, so action items can be attributed.</em>
-            {/if}
-          </span>
-        </label>
-      </div>
-
-      {#if cleanup}
-        <div class="opt-row sub-opt">
-          <label class="opt-label" for="llm-prov">
-            Clean up with
+      {#if kind === "conversation"}
+        <div class="checks">
+          <label class="check">
+            <input type="checkbox" bind:checked={accuracy} disabled={running} />
+            <span>
+              <strong>Also make a Whisper transcript</strong> — more accurate wording, no speakers.
+              {#if accuracy && !groqHasKey}<em class="why warn">Needs a Groq key (Settings → Providers).</em>{/if}
+            </span>
           </label>
-          <div class="selects">
-            <select id="llm-prov" bind:value={llmProvider} disabled={running}>
-              {#each LLM_PROVIDERS as p}
-                <option value={p.id}>{p.label}</option>
-              {/each}
-            </select>
-            <select bind:value={llmModel} disabled={running}>
-              {#each llmModels as m}
-                <option value={m.id}>{m.label}</option>
-              {/each}
-            </select>
-          </div>
+          <label class="check">
+            <input type="checkbox" bind:checked={notes} disabled={running} />
+            <span>
+              <strong>Write meeting notes</strong> — summary, decisions and action items.
+              {#if notes && !notesHasKey}<em class="why warn">Needs a {draftLlmProvider} key (Settings → Providers).</em>{/if}
+            </span>
+          </label>
         </div>
+        {#if !speakersHasKey}
+          <p class="keywarn">No API key saved for {speakerChoice.label} — add one in Settings → Providers, or pick another engine under Options.</p>
+        {/if}
+        <Disclosure label="Options" hint={`${speakerChoice.label}${notes ? ` · notes with ${draftLlmProvider}` : ""}`} bind:open={optionsOpen}>
+          <div class="opt-stack">
+            <div class="opt-row">
+              <label class="opt-label" for="speaker-engine">Label speakers with</label>
+              <select id="speaker-engine" bind:value={speakerEngine} disabled={running}>
+                {#each SPEAKER_ENGINES as e (e.provider)}
+                  <option value={e.provider}>{e.label}</option>
+                {/each}
+              </select>
+              <em class="why">{speakerChoice.note} The whole file goes in one request so speaker labels stay consistent.</em>
+            </div>
+            {#if accuracy}
+              <div class="opt-row">
+                <span class="opt-label">Whisper transcript</span>
+                <em class="why">Groq Whisper Large v3.</em>
+              </div>
+            {/if}
+            {#if notes}
+              <div class="opt-row">
+                <label class="opt-label" for="notes-llm-prov">Meeting notes with</label>
+                <div class="selects">
+                  <select id="notes-llm-prov" bind:value={draftLlmProvider} disabled={running}>
+                    {#each LLM_PROVIDERS as p}<option value={p.id}>{p.label}</option>{/each}
+                  </select>
+                  <select bind:value={draftLlmModel} disabled={running}>
+                    {#each draftLlmModels as m}<option value={m.id}>{m.label}</option>{/each}
+                  </select>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </Disclosure>
+      {:else}
+        <div class="checks">
+          <label class="check">
+            <input type="checkbox" bind:checked={cleanup} disabled={running} />
+            <span><strong>Clean up</strong> — fix punctuation & paragraphs, keep my words</span>
+          </label>
+        </div>
+        {#if !sttHasKey}
+          <p class="keywarn">No API key saved for {sttProvider} — add one in Settings → Providers first.</p>
+        {/if}
         {#if !llmHasKey}
           <p class="keywarn">No API key saved for {llmProvider} — add one in Settings → Providers first.</p>
         {/if}
-      {/if}
-      {#if draft || meetingNotes}
-        <div class="opt-row sub-opt">
-          <label class="opt-label" for="draft-llm-prov">Draft / meeting notes with</label>
-          <div class="selects">
-            <select id="draft-llm-prov" bind:value={draftLlmProvider} disabled={running}>
-              {#each LLM_PROVIDERS as p}<option value={p.id}>{p.label}</option>{/each}
-            </select>
-            <select bind:value={draftLlmModel} disabled={running}>
-              {#each draftLlmModels as m}<option value={m.id}>{m.label}</option>{/each}
-            </select>
+        {#if !draftLlmHasKey}<p class="keywarn">Add a {draftLlmProvider} key in Settings before running Draft.</p>{/if}
+        <Disclosure label="Options" hint={`${sttProvider} · ${sttModel}`} bind:open={optionsOpen}>
+          <div class="opt-stack">
+            <div class="opt-row">
+              <label class="opt-label" for="stt-prov">Transcribe with</label>
+              <div class="selects">
+                <select id="stt-prov" bind:value={sttProvider} disabled={running}>
+                  {#each STT_PROVIDERS as p}
+                    <option value={p.id}>{p.label}</option>
+                  {/each}
+                </select>
+                <select bind:value={sttModel} disabled={running}>
+                  {#each sttModels as m}
+                    <option value={m.id}>{m.label}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+            {#if cleanup}
+              <div class="opt-row">
+                <label class="opt-label" for="llm-prov">Clean up with</label>
+                <div class="selects">
+                  <select id="llm-prov" bind:value={llmProvider} disabled={running}>
+                    {#each LLM_PROVIDERS as p}
+                      <option value={p.id}>{p.label}</option>
+                    {/each}
+                  </select>
+                  <select bind:value={llmModel} disabled={running}>
+                    {#each llmModels as m}
+                      <option value={m.id}>{m.label}</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+            {/if}
+            <div class="checks">
+              <label class="check">
+                <input type="checkbox" bind:checked={draft} disabled={running} />
+                <span><strong>Draft</strong> — also write a polished, structured version</span>
+              </label>
+            </div>
+            {#if draft}
+              <div class="opt-row">
+                <label class="opt-label" for="draft-llm-prov">Draft with</label>
+                <div class="selects">
+                  <select id="draft-llm-prov" bind:value={draftLlmProvider} disabled={running}>
+                    {#each LLM_PROVIDERS as p}<option value={p.id}>{p.label}</option>{/each}
+                  </select>
+                  <select bind:value={draftLlmModel} disabled={running}>
+                    {#each draftLlmModels as m}<option value={m.id}>{m.label}</option>{/each}
+                  </select>
+                </div>
+              </div>
+            {/if}
           </div>
-        </div>
-        {#if !draftLlmHasKey}<p class="keywarn">Add a {draftLlmProvider} key in Settings before running Draft / Meeting notes.</p>{/if}
+        </Disclosure>
       {/if}
     </div>
 
     <footer class="modal-foot">
       {#if finished}
         <span class="result-msg">
-          {doneCount} transcribed{#if errCount > 0}, {errCount} failed{/if}. Added to your history.
+          {doneCount} transcribed{#if errCount > 0}, {errCount} failed{/if}.
+          {finishedKind === "conversation" ? "Added to Conversations." : "Added to Home."}
         </span>
       {:else if running}
         <span class="hint-msg">{stageText || "Working…"} ({doneCount + errCount}/{paths.length} done)</span>
@@ -389,6 +485,11 @@
         </span>
       {/if}
       <div class="foot-btns">
+        {#if finished && doneCount > 0}
+          <button class="ghost" onclick={openDestination}>
+            {finishedKind === "conversation" ? "Open Conversations" : "Open Home"}
+          </button>
+        {/if}
         <button class="ghost" onclick={close} disabled={running}>{finished ? "Close" : "Cancel"}</button>
         {#if !finished}
           <button class="primary" onclick={transcribeAll} disabled={!canTranscribe}>
@@ -533,10 +634,6 @@
 
   .options { display: flex; flex-direction: column; gap: 12px; }
   .opt-row { display: flex; flex-direction: column; gap: 6px; }
-  .sub-opt {
-    padding-left: 10px;
-    border-left: 2px solid var(--accent-fade);
-  }
   .opt-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
   .selects { display: flex; gap: 8px; }
   select {
@@ -619,4 +716,36 @@
   }
   .primary:hover:not(:disabled) { background: var(--accent-hover, var(--accent)); }
   .primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .kind-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-3);
+  }
+  .kind {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-1);
+    padding: var(--sp-4);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .kind:hover:not(:disabled) { border-color: var(--accent); }
+  .kind.active {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+    color: var(--accent);
+  }
+  .kind:disabled { cursor: not-allowed; opacity: 0.7; }
+  .kind-title { font-size: var(--fs-md); font-weight: 700; color: var(--text-primary); }
+  .kind-sub { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.35; }
+  .opt-stack { display: flex; flex-direction: column; gap: var(--sp-3); padding-top: var(--sp-2); }
+  .why.warn { color: var(--danger); }
 </style>

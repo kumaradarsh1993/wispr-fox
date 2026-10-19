@@ -13,14 +13,15 @@
   import { prettyHotkey } from "$lib/hotkey-display";
   import { showMessage } from "$lib/dialogs";
 
-  type FilterId = "all" | "light" | "drafting" | "meeting" | "upload" | "error";
+  type FilterId = "all" | "light" | "drafting" | "upload" | "error";
   let filter = $state<FilterId>("all");
   // Filters name what the user thinks about, not the internal mode enum.
+  // Conversations (is_meeting) live on their own page, so Home has no
+  // Meetings filter and never lists them.
   const FILTERS: { id: FilterId; label: string }[] = [
     { id: "all", label: "All" },
     { id: "light", label: "Dictations" },
     { id: "drafting", label: "Drafts" },
-    { id: "meeting", label: "Meetings" },
     { id: "upload", label: "Uploads" },
     { id: "error", label: "Failed" },
   ];
@@ -88,13 +89,15 @@
     return () => unlisten?.();
   });
 
+  // Home's own rows: everything except conversations.
+  let homeList = $derived(history.list.filter((r) => !r.is_meeting));
+
   let filtered = $derived.by(() => {
-    let list = history.list;
+    let list = homeList;
     if (filter !== "all") {
       list = list.filter((r) => {
         switch (filter) {
           case "error": return r.status === "error";
-          case "meeting": return r.is_meeting;
           case "upload": return r.source === "upload";
           case "light": return r.mode === "light" || r.mode === "advanced";
           default: return r.mode === filter;
@@ -214,7 +217,7 @@
     </div>
   </header>
 
-  {#if history.loading && history.list.length === 0}
+  {#if history.loading && homeList.length === 0}
     <!-- Loading state: watercolor walking fox + caption. The breathe
          animation is replaced with a subtle bob so the fox feels alive
          while transcripts load. -->
@@ -222,7 +225,7 @@
       <img class="empty-fox loading" src="/fox/fox-loading.png" alt="" />
       <p class="empty-title">Loading transcripts…</p>
     </div>
-  {:else if history.list.length === 0}
+  {:else if homeList.length === 0}
     <!-- First-run empty state: watercolor sitting fox in plants from the
          design playbook. -->
     <div class="empty">

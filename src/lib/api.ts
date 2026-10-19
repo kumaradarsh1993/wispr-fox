@@ -134,6 +134,8 @@ export interface AppSettings {
   pause_hotkey: string;
   adapt_to_app: boolean;
   device_name: string;
+  /** Last answer to the upload dialog's first question. */
+  upload_kind: "voice_note" | "conversation" | string;
 }
 
 /** Account / sync status (accounts + cross-device sync, v3.0.0). */
@@ -186,7 +188,8 @@ export interface Recording {
   cleaned_text: string | null;
   drafted_text: string | null;
   meeting_notes_text: string | null;
-  /** Versioned JSON envelope: {version:1, turns:[{speaker,text,start}]}. */
+  /** Versioned JSON envelope (v1 or v2, see docs/CONVERSATIONS_CONTRACT.md).
+   *  Read it with `conversationDoc()` in meeting-text.ts. */
   speaker_turns: string | null;
   /** JSON object mapping placeholders to user-supplied names. */
   speaker_names: string | null;
@@ -242,6 +245,19 @@ export interface UploadOptions {
   /** Summarise the transcript into meeting notes (summary / decisions /
    *  action items with owners). Writes to the Drafted column. */
   meetingNotes: boolean;
+}
+
+/** Options for a conversation upload. Null provider/model = defaults
+ *  (Deepgram Nova-3 for speakers, the Draft engine for notes). */
+export interface ConversationOptions {
+  speakersProvider?: string | null;
+  speakersModel?: string | null;
+  /** Also make a Groq whisper-large-v3 transcript for accurate wording. */
+  accuracy: boolean;
+  /** Write meeting notes with the Draft engine. */
+  notes: boolean;
+  notesLlmProvider?: string | null;
+  notesLlmModel?: string | null;
 }
 
 export interface SecretCheck {
@@ -434,6 +450,35 @@ export const api = {
   ) => invoke<void>("rerun_transcription", { id, sttProvider, sttModel, diarize }),
   setSpeakerNames: (id: string, names: Record<string, string>) =>
     invoke<void>("set_speaker_names", { id, namesJson: JSON.stringify(names) }),
+  // ── Conversations ─────────────────────────────────────────────────────
+  /** Upload a conversation: speakers pass (whole file), optional Whisper
+   *  accuracy pass, optional meeting notes. Returns the new recording id. */
+  transcribeConversation: (path: string, opts: ConversationOptions) =>
+    invoke<string>("transcribe_conversation", {
+      path,
+      speakersProvider: opts.speakersProvider ?? null,
+      speakersModel: opts.speakersModel ?? null,
+      accuracy: opts.accuracy,
+      notes: opts.notes,
+      notesLlmProvider: opts.notesLlmProvider ?? null,
+      notesLlmModel: opts.notesLlmModel ?? null,
+    }),
+  retryConversationPass: (
+    id: string,
+    pass: "speakers" | "accuracy" | "notes",
+    opts?: { provider?: string; model?: string },
+  ) =>
+    invoke<void>("retry_conversation_pass", {
+      id,
+      pass,
+      provider: opts?.provider ?? null,
+      model: opts?.model ?? null,
+    }),
+  listConversations: (limit = 500) => invoke<Recording[]>("list_conversations", { limit }),
+  conversationMarkdown: (id: string) => invoke<string>("conversation_markdown", { id }),
+  conversationExportName: (id: string) => invoke<string>("conversation_export_name", { id }),
+  exportConversation: (id: string, path: string) =>
+    invoke<void>("export_conversation", { id, path }),
   audioUrlFor: (id: string) => invoke<string>("audio_url_for", { id }),
   audioDataUrlFor: (id: string) => invoke<string>("audio_data_url_for", { id }),
   listInputDevices: () => invoke<InputDeviceInfo[]>("list_input_devices"),

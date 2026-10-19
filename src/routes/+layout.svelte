@@ -320,9 +320,10 @@
   // of emoji — emoji glyphs render with the OS emoji font (inconsistent
   // weight/colour, can't follow the theme), while currentColor strokes pick
   // up the active/hover accent automatically.
-  type NavItem = { href: string; label: string; icon: "history" | "stats" | "settings" };
+  type NavItem = { href: string; label: string; icon: "history" | "conversations" | "stats" | "settings" };
   const navItems: NavItem[] = [
     { href: "/history", label: "Home", icon: "history" },
+    { href: "/conversations", label: "Conversations", icon: "conversations" },
     { href: "/stats", label: "Insights", icon: "stats" },
     { href: "/settings", label: "Settings", icon: "settings" },
   ];
@@ -396,6 +397,12 @@
             <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
               <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6" />
               <path d="M 8 4.8 V 8 L 10.4 9.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          {:else if icon === "conversations"}
+            <!-- two speech bubbles -->
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path d="M 2 3.5 A 1.5 1.5 0 0 1 3.5 2 H 9 A 1.5 1.5 0 0 1 10.5 3.5 V 7 A 1.5 1.5 0 0 1 9 8.5 H 5.2 L 3 10.2 V 8.5 A 1 1 0 0 1 2 7.5 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+              <path d="M 12.2 5.5 H 12.5 A 1.5 1.5 0 0 1 14 7 V 10.5 A 1 1 0 0 1 13 11.5 V 13.2 L 10.8 11.5 H 7.5 A 1.5 1.5 0 0 1 6 10 V 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           {:else if icon === "stats"}
             <!-- bar chart -->

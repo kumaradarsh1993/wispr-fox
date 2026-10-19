@@ -74,6 +74,7 @@ const FALLBACK: AppSettings = {
   pause_hotkey: "Ctrl+F8",
   adapt_to_app: true,
   device_name: "",
+  upload_kind: "voice_note",
 };
 
 class SettingsStore {
