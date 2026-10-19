@@ -152,6 +152,12 @@ impl SyncEngine {
         // re-seed rows the reset was meant to clear.
         self.apply_purge(&token).await?;
         self.push_notes(&token).await?;
+        // Speaker-name edits on rows another device made. Best-effort: a
+        // failure leaves the rows flagged for the next cycle and never stops
+        // the pull below.
+        if let Err(e) = self.push_remote_speaker_names(&token).await {
+            tracing::warn!("sync: speaker-name push failed (non-fatal, will retry): {e:#}");
+        }
         self.pull_notes(&token).await?;
         // API-key sync is a nice-to-have layered on top of the notes sync
         // that actually matters — never let a settings hiccup fail the
@@ -313,6 +319,42 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Push speaker names for rows ANOTHER device originated. The normal push
+    /// is an upsert of the whole row and must never run for a remote row (it
+    /// would overwrite the originator's columns with this device's copy and
+    /// re-stamp `device_id`), so this is a PATCH that sets only
+    /// `speaker_names` and `updated_at` on that one id. `updated_at` must
+    /// advance or other devices, which pull by `updated_at > cursor`, never
+    /// see the change.
+    async fn push_remote_speaker_names(&self, token: &str) -> anyhow::Result<()> {
+        let pending = self.history.list_names_dirty_remote()?;
+        for (id, names) in pending {
+            let url = format!(
+                "{}/rest/v1/notes?id=eq.{}",
+                config::SUPABASE_URL,
+                percent_encode(&id),
+            );
+            let body = serde_json::json!({
+                "speaker_names": names,
+                "updated_at": Utc::now().to_rfc3339(),
+            });
+            let resp = http()
+                .patch(&url)
+                .header("apikey", config::SUPABASE_ANON_KEY)
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("speaker-name push: {e}"))?;
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("speaker-name push HTTP failed: {body}");
+            }
+            self.history.clear_names_dirty(&id, names.as_deref())?;
+        }
+        Ok(())
+    }
+
     async fn pull_notes(&self, token: &str) -> anyhow::Result<()> {
         let cursor = self
             .history
@@ -347,8 +389,18 @@ impl SyncEngine {
                 max_updated = row.updated_at.clone();
             }
             // Our own row echoing back from a prior push — we're already
-            // the authoritative local copy, nothing to do.
+            // the authoritative local copy. The one exception is speaker
+            // names, which another device may have edited (contract: name
+            // edits sync for every row). Take just those, and only when we
+            // have no unpushed edits of our own.
             if row.device_id == my_device_id {
+                if row.deleted_at.is_none()
+                    && self
+                        .history
+                        .apply_remote_speaker_names(&row.id, row.speaker_names.as_deref())?
+                {
+                    changed = true;
+                }
                 continue;
             }
             if self.history.exclusion_contains(&row.id)? {
