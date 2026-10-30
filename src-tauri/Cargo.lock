@@ -6958,7 +6958,7 @@ dependencies = [
 
 [[package]]
 name = "wispr-fox"
-version = "3.6.0-nightly.1"
+version = "3.6.0-nightly.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6980,6 +6980,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rodio",
  "rusqlite",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "sha2",

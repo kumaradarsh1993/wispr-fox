@@ -91,8 +91,25 @@ fn fallback_path() -> PathBuf {
     app_data_dir().join(FALLBACK_FILENAME)
 }
 
-fn keyring_entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY).context("opening sync-token keyring entry")
+/// Thin adapter so the code below keeps its shape while storage goes through
+/// `os_store` (one Keychain item per build on macOS, see that module).
+struct TokenEntry;
+
+impl TokenEntry {
+    fn set_password(&self, token: &str) -> Result<()> {
+        crate::os_store::set(KEYRING_ENTRY, token)
+    }
+    fn get_password(&self) -> Result<String> {
+        crate::os_store::get(KEYRING_ENTRY).context("no sync token in keyring")
+    }
+    fn delete_credential(&self) -> Result<()> {
+        crate::os_store::delete(KEYRING_ENTRY)
+    }
+}
+
+fn keyring_entry() -> Result<TokenEntry> {
+    let _ = KEYRING_SERVICE;
+    Ok(TokenEntry)
 }
 
 /// Write the refresh token, keyring-first — but only TRUST the keyring after

@@ -10,6 +10,7 @@ mod history;
 mod hotkey;
 mod inject;
 mod llm;
+mod os_store;
 mod power;
 mod secrets;
 mod settings;

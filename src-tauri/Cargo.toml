@@ -1,6 +1,6 @@
 [package]
 name = "wispr-fox"
-version = "3.6.0-nightly.1"
+version = "3.6.0-nightly.2"
 description = "WisperFlow-style desktop dictation: hotkey speech-to-text with optional LLM cleanup"
 authors = ["wispr-fox contributors"]
 edition = "2021"
@@ -102,6 +102,9 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS Keychain backend for keyring (see the note in [dependencies]).
 keyring = { version = "3", features = ["apple-native"] }
+# Lists our Keychain items by name (attributes only) for the per-build vault
+# in os_store.rs. Same version keyring already pulls in.
+security-framework = "3"
 core-graphics = "0.23"
 core-foundation = "0.10"
 # Converts the floater WebviewWindow into a non-activating NSPanel. A plain

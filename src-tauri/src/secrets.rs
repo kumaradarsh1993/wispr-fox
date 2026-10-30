@@ -306,27 +306,21 @@ pub fn invalidate_cache() {
 
 // -- Keyring helpers ---------------------------------------------------------
 
-fn keyring_entry(key: SecretKey) -> Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, key.entry_name())
-        .with_context(|| format!("opening keyring entry for {:?}", key))
-}
+// Per-name access goes through `os_store`, which on macOS keeps every secret
+// in one Keychain item per app build (see that module for why).
 
 fn keyring_set(key: SecretKey, value: &str) -> Result<()> {
-    keyring_entry(key)?
-        .set_password(value)
+    crate::os_store::set(key.entry_name(), value)
         .with_context(|| format!("storing secret {:?} in keyring", key))
 }
 
 fn keyring_get(key: SecretKey) -> Option<String> {
-    keyring_entry(key).ok().and_then(|e| e.get_password().ok())
+    crate::os_store::get(key.entry_name())
 }
 
 fn keyring_delete(key: SecretKey) -> Result<()> {
-    let entry = keyring_entry(key)?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(anyhow!("keyring delete failed for {:?}: {e:#}", key)),
-    }
+    crate::os_store::delete(key.entry_name())
+        .map_err(|e| anyhow!("keyring delete failed for {:?}: {e:#}", key))
 }
 
 fn keyring_probe() -> bool {
