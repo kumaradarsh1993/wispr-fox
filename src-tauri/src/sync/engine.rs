@@ -56,6 +56,9 @@ pub struct ReconcileReport {
     pub updated: usize,
     /// Rows deleted on their own device, now removed here.
     pub removed: usize,
+    /// This device's own transcripts that were missing locally, restored
+    /// from the server (without audio).
+    pub restored: usize,
     /// This device's rows the server didn't have, now sent again.
     pub repushed: usize,
     /// This device's rows still processing or waiting to send.
@@ -318,6 +321,7 @@ impl SyncEngine {
             .then(|| (Utc::now() - chrono::Duration::days(retention_days)).to_rfc3339());
 
         let mut to_fetch: Vec<String> = Vec::new();
+        let mut to_restore: Vec<String> = Vec::new();
         let mut on_server: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut changed = false;
         for row in &server {
@@ -326,7 +330,15 @@ impl SyncEngine {
             if row.deleted_at.is_none() {
                 report.server_rows += 1;
             }
+            let in_window = keep_after
+                .as_ref()
+                .map_or(true, |cut| parse_ts(&row.created_at) >= parse_ts(cut));
             if mine {
+                // Our own transcript, gone from this device but still on the
+                // server (older builds' storage cap deleted rows): restore it.
+                if row.deleted_at.is_none() && in_window && !local.contains_key(&row.id) {
+                    to_restore.push(row.id.clone());
+                }
                 continue;
             }
             let here = local.get(&row.id);
@@ -338,10 +350,8 @@ impl SyncEngine {
                 }
                 continue;
             }
-            if let Some(cut) = &keep_after {
-                if parse_ts(&row.created_at) < parse_ts(cut) {
-                    continue;
-                }
+            if !in_window {
+                continue;
             }
             match here {
                 None => {
@@ -369,7 +379,46 @@ impl SyncEngine {
         }
 
         // 4. Fetch the missing or newer rows in small batches.
-        for chunk in to_fetch.chunks(FETCH_CHUNK) {
+        for row in self.fetch_rows(&token, &to_fetch).await? {
+            let existed = local.contains_key(&row.id);
+            if self.apply_pulled_row(row)? {
+                changed = true;
+                if existed {
+                    report.updated += 1;
+                } else {
+                    report.fetched += 1;
+                }
+            }
+        }
+        // Our own restored rows come back without audio but stay ours, so
+        // delete and rename keep working on them.
+        for row in self.fetch_rows(&token, &to_restore).await? {
+            let id = row.id.clone();
+            if self.apply_pulled_row(row)? {
+                self.history.mark_local_owned(&id)?;
+                changed = true;
+                report.restored += 1;
+            }
+        }
+
+        // 5. What this device still owes the server.
+        report.waiting = self
+            .history
+            .sync_index()?
+            .iter()
+            .filter(|l| !l.remote && (l.dirty || !matches!(l.status.as_str(), "done" | "error")))
+            .count();
+
+        if changed {
+            let _ = self.app.emit("wispr:history_changed", ());
+        }
+        Ok(())
+    }
+
+    /// Full rows for `ids`, fetched in small batches.
+    async fn fetch_rows(&self, token: &str, ids: &[String]) -> anyhow::Result<Vec<RemoteNoteRow>> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(FETCH_CHUNK) {
             let list = chunk.iter().map(|s| percent_encode(s)).collect::<Vec<_>>().join(",");
             let url = format!("{}/rest/v1/notes?id=in.({list})", config::SUPABASE_URL);
             let resp = http()
@@ -387,31 +436,9 @@ impl SyncEngine {
                 .json()
                 .await
                 .map_err(|e| anyhow::anyhow!("decoding fetched rows: {e}"))?;
-            for row in rows {
-                let existed = local.contains_key(&row.id);
-                if self.apply_pulled_row(row)? {
-                    changed = true;
-                    if existed {
-                        report.updated += 1;
-                    } else {
-                        report.fetched += 1;
-                    }
-                }
-            }
+            out.extend(rows);
         }
-
-        // 5. What this device still owes the server.
-        report.waiting = self
-            .history
-            .sync_index()?
-            .iter()
-            .filter(|l| !l.remote && (l.dirty || !matches!(l.status.as_str(), "done" | "error")))
-            .count();
-
-        if changed {
-            let _ = self.app.emit("wispr:history_changed", ());
-        }
-        Ok(())
+        Ok(out)
     }
 
     /// Publish this device's analytics rollup, then re-read the whole fleet.

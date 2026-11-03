@@ -20,6 +20,7 @@ export type ReconcileReport = {
   fetched: number;
   updated: number;
   removed: number;
+  restored: number;
   repushed: number;
   waiting: number;
   server_rows: number;
@@ -33,6 +34,7 @@ export function describeReconcile(r: ReconcileReport): string {
   if (r.fetched) parts.push(`${r.fetched} new from other devices`);
   if (r.updated) parts.push(`${r.updated} updated`);
   if (r.removed) parts.push(`${r.removed} removed`);
+  if (r.restored) parts.push(`${r.restored} restored from your account`);
   if (r.repushed) parts.push(`${r.repushed} re-sent from here`);
   if (r.waiting) parts.push(`${r.waiting} still waiting to send`);
   return parts.length ? `Synced: ${parts.join(", ")}.` : "Everything is in sync.";

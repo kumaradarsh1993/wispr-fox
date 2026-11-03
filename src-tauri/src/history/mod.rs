@@ -1159,6 +1159,17 @@ impl History {
         Ok(rows)
     }
 
+    /// A row restored from the server that this device originally made:
+    /// mark it as ours again (not a pulled copy of another device's row).
+    pub fn mark_local_owned(&self, id: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        conn.execute(
+            "UPDATE recordings SET remote = 0, dirty = 0 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
     /// Mark local rows as needing a push (the server has lost them).
     pub fn mark_dirty_ids(&self, ids: &[String]) -> Result<()> {
         let conn = self.inner.lock();
