@@ -15,6 +15,29 @@ export type FlowState =
 
 export type ClippyMode = "light" | "advanced" | "drafting";
 
+/** What the Refresh sync check found and fixed (mirrors Rust `ReconcileReport`). */
+export type ReconcileReport = {
+  fetched: number;
+  updated: number;
+  removed: number;
+  repushed: number;
+  waiting: number;
+  server_rows: number;
+  error: string | null;
+};
+
+/** One short line for the UI. Shared by History and Conversations. */
+export function describeReconcile(r: ReconcileReport): string {
+  if (r.error) return `Sync check failed: ${r.error}`;
+  const parts: string[] = [];
+  if (r.fetched) parts.push(`${r.fetched} new from other devices`);
+  if (r.updated) parts.push(`${r.updated} updated`);
+  if (r.removed) parts.push(`${r.removed} removed`);
+  if (r.repushed) parts.push(`${r.repushed} re-sent from here`);
+  if (r.waiting) parts.push(`${r.waiting} still waiting to send`);
+  return parts.length ? `Synced: ${parts.join(", ")}.` : "Everything is in sync.";
+}
+
 export type FlowPhase =
   | "idle"
   | "starting"
@@ -421,6 +444,8 @@ export const api = {
   cancelGoogleSignIn: () => invoke<void>("cancel_google_sign_in"),
   signOut: () => invoke<AuthStatus>("sign_out"),
   syncNow: () => invoke<void>("sync_now"),
+  /** Refresh: sync, then compare every row with the server and fix gaps. */
+  syncReconcile: () => invoke<ReconcileReport>("sync_reconcile"),
   setDeviceName: (name: string) => invoke<void>("set_device_name", { name }),
   /** Transcribe an on-disk audio file. Returns the new recording id. */
   transcribeUpload: (path: string, opts: UploadOptions) =>

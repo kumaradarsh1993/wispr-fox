@@ -961,6 +961,19 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The Refresh button: sync, then compare every row with the server and fix
+/// what differs. Returns what it found so the UI can say so.
+#[tauri::command]
+pub async fn sync_reconcile(app: AppHandle) -> Result<crate::sync::engine::ReconcileReport, String> {
+    match app.try_state::<crate::sync::engine::SyncEngine>() {
+        Some(engine) => {
+            let engine = engine.inner().clone();
+            Ok(engine.reconcile().await)
+        }
+        None => Err("Sync isn't available.".into()),
+    }
+}
+
 /// Update this install's device name (shown as "Desktop · <name>" on synced
 /// rows). Persists into the live Flow settings; the frontend also writes it
 /// into its own settings store so it survives a restart.

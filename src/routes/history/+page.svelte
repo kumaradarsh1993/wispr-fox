@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { history } from "$lib/history-store.svelte";
-  import { api, type Recording } from "$lib/api";
+  import { api, describeReconcile, type Recording } from "$lib/api";
   import HistoryRow from "$lib/HistoryRow.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -35,6 +35,34 @@
     }
   }
   let search = $state("");
+
+  // Refresh = reload from disk + a full sync consistency check when signed in.
+  let checking = $state(false);
+  let syncNote = $state<string | null>(null);
+  let syncNoteTimer: ReturnType<typeof setTimeout> | null = null;
+  async function refreshAndCheck() {
+    if (checking) return;
+    checking = true;
+    try {
+      await history.refresh();
+      if (!account.signedIn) {
+        showSyncNote("Reloaded. Sign in to sync with other devices.");
+        return;
+      }
+      const r = await api.syncReconcile();
+      await history.refresh();
+      showSyncNote(describeReconcile(r));
+    } catch (e) {
+      showSyncNote(`Couldn't check sync: ${e}`);
+    } finally {
+      checking = false;
+    }
+  }
+  function showSyncNote(msg: string) {
+    syncNote = msg;
+    if (syncNoteTimer) clearTimeout(syncNoteTimer);
+    syncNoteTimer = setTimeout(() => (syncNote = null), 8000);
+  }
 
   // Audio upload: staged file paths + modal state. `stagedPaths` is shared with
   // UploadDialog so a window-wide drag-drop drops files straight into it.
@@ -198,8 +226,9 @@
             <path d="M 2 4 L 2 12 A 1 1 0 0 0 3 13 L 13 13 A 1 1 0 0 0 14 12 L 14 5 A 1 1 0 0 0 13 4 L 8 4 L 6.5 2.5 A 1 1 0 0 0 5.8 2.2 L 3 2.2 A 1 1 0 0 0 2 3.2 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           </svg>
         </Button>
-        <Button tone="ghost" iconOnly aria-label="Reload list" title="Reload the list from disk — does not re-transcribe anything" onclick={() => history.refresh()}>
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        {#if syncNote}<span class="sync-note" role="status">{syncNote}</span>{/if}
+        <Button tone="ghost" iconOnly aria-label="Refresh and check sync" title="Refresh: reload the list and check every note against your other devices" onclick={refreshAndCheck} disabled={checking}>
+          <svg class:spin={checking} viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
             <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
           </svg>
@@ -620,6 +649,23 @@
     align-items: center;
     gap: var(--sp-1);
     margin-left: auto;
+  }
+  .sync-note {
+    font-size: 12px;
+    color: var(--text-muted, var(--muted));
+    max-width: 320px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .spin {
+    animation: sync-spin 0.9s linear infinite;
+  }
+  @keyframes sync-spin {
+    to { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin { animation: none; }
   }
   .pill-count {
     margin-left: 6px;

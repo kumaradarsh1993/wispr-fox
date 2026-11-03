@@ -4,7 +4,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { api, onFlowState, type Recording } from "$lib/api";
+  import { api, describeReconcile, onFlowState, type Recording } from "$lib/api";
+  import { account } from "$lib/account-store.svelte";
   import UploadDialog from "$lib/UploadDialog.svelte";
   import SpeakerLabelsDialog from "$lib/SpeakerLabelsDialog.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -48,6 +49,27 @@
       console.error("conversations.refresh failed", e);
     } finally {
       loading = false;
+    }
+  }
+
+  // Refresh = reload + a full sync consistency check when signed in.
+  let checking = $state(false);
+  async function refreshAndCheck() {
+    if (checking) return;
+    checking = true;
+    try {
+      await refresh();
+      if (!account.signedIn) {
+        flash("Reloaded. Sign in to sync with other devices.");
+        return;
+      }
+      const r = await api.syncReconcile();
+      await refresh();
+      flash(describeReconcile(r), r.error ? "error" : "ok");
+    } catch (e) {
+      flash(`Couldn't check sync: ${e}`, "error");
+    } finally {
+      checking = false;
     }
   }
 
@@ -414,6 +436,12 @@
         </svg>
         Upload
       </Button>
+      <Button tone="ghost" iconOnly aria-label="Refresh and check sync" title="Refresh: reload and check every conversation against your other devices" onclick={refreshAndCheck} disabled={checking}>
+        <svg class:spin={checking} viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+          <path d="M 13 4 L 13 8 L 9 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 13 8 A 5 5 0 1 1 11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </Button>
     </header>
 
     {#if loading && list.length === 0}
@@ -726,4 +754,7 @@
     .list-head, .reader-head { padding: 18px 16px 10px; flex-wrap: wrap; }
     .cards, .reader-body { padding-inline: 16px; }
   }
+  .spin { animation: sync-spin 0.9s linear infinite; }
+  @keyframes sync-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 </style>

@@ -521,6 +521,7 @@ pub fn run() {
             commands::cancel_google_sign_in,
             commands::sign_out,
             commands::sync_now,
+            commands::sync_reconcile,
             commands::set_device_name,
             commands::list_devices,
             commands::list_devices_cached,

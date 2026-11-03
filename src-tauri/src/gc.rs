@@ -117,9 +117,11 @@ fn enforce_storage_cap(audio_dir: &Path, history: &History, max_mb: u64) {
         if bytes_remaining <= target {
             break;
         }
-        // Try to delete the matching history row first (best-effort lookup).
+        // The cap is about disk space, and the transcript is a few KB, so keep
+        // the row and drop only its audio. Deleting the row here used to wipe
+        // whole days of transcripts after one long recording day.
         if let Ok(Some(id)) = history.find_by_audio_path(&path) {
-            let _ = history.delete(&id);
+            let _ = history.clear_audio(&id);
         }
         let _ = std::fs::remove_file(&path);
         bytes_remaining = bytes_remaining.saturating_sub(size);

@@ -313,6 +313,10 @@ impl History {
             "ALTER TABLE recordings ADD COLUMN names_dirty INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        // The server's `updated_at` for this row as of our last push or pull.
+        // Lets the pull skip rows it already applied, and lets the Refresh
+        // consistency check spot rows the server has a newer copy of.
+        let _ = conn.execute("ALTER TABLE recordings ADD COLUMN server_updated_at TEXT", []);
 
         // Repair for the `mark_all_done_dirty` defect shipped in v3.0.0: it
         // marked PULLED rows dirty as well as local ones. `list_dirty` refuses
@@ -970,6 +974,16 @@ pub struct RemoteNote {
     pub deleted_at: Option<String>,
 }
 
+/// One local row's sync identity, used by the Refresh consistency check.
+#[derive(Debug, Clone)]
+pub struct SyncIndexRow {
+    pub id: String,
+    pub remote: bool,
+    pub status: String,
+    pub dirty: bool,
+    pub server_updated_at: Option<String>,
+}
+
 impl History {
     /// Rows eligible for the next push: terminal `done` status AND locally
     /// dirty. Remote rows (pulled from another device) are never pushed back
@@ -1048,10 +1062,11 @@ impl History {
                   transcript, cleaned_text, drafted_text, meeting_notes_text,
                   speaker_turns, speaker_names, is_meeting, diarization_enabled,
                   stt_provider, llm_provider,
-                  title, platform, device_name, device_id, dirty, remote, source)
+                  title, platform, device_name, device_id, dirty, remote, source,
+                  server_updated_at)
                VALUES (?1, ?2, '', ?3, 'light', 'done',
                        ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                       ?12, ?13, ?14, ?15, ?16, ?17, 0, 1, 'mic')
+                       ?12, ?13, ?14, ?15, ?16, ?17, 0, 1, 'mic', ?18)
                ON CONFLICT(id) DO UPDATE SET
                  transcript   = excluded.transcript,
                  cleaned_text = excluded.cleaned_text,
@@ -1070,6 +1085,7 @@ impl History {
                  device_name  = excluded.device_name,
                  device_id    = excluded.device_id,
                  duration_ms  = excluded.duration_ms,
+                 server_updated_at = excluded.server_updated_at,
                  dirty        = 0,
                  remote       = 1"#,
             params![
@@ -1090,9 +1106,69 @@ impl History {
                 note.platform,
                 note.device_name,
                 note.device_id,
+                note.updated_at,
             ],
         )?;
         Ok(true)
+    }
+
+    /// The server `updated_at` we last applied or pushed for `id`, if any.
+    /// `None` both for unknown ids and for rows from before this column.
+    pub fn server_updated_at(&self, id: &str) -> Result<Option<String>> {
+        let conn = self.inner.lock();
+        let v: Option<Option<String>> = conn
+            .query_row(
+                "SELECT server_updated_at FROM recordings WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.flatten())
+    }
+
+    /// Record the `updated_at` stamped on rows we just pushed.
+    pub fn set_server_updated_at(&self, ids: &[String], updated_at: &str) -> Result<()> {
+        let conn = self.inner.lock();
+        for id in ids {
+            conn.execute(
+                "UPDATE recordings SET server_updated_at = ?2 WHERE id = ?1",
+                params![id, updated_at],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Every row's sync identity, for the Refresh consistency check:
+    /// `(id, remote, status, dirty, server_updated_at)`.
+    pub fn sync_index(&self) -> Result<Vec<SyncIndexRow>> {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, COALESCE(remote, 0), status, dirty, server_updated_at FROM recordings",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(SyncIndexRow {
+                    id: r.get(0)?,
+                    remote: r.get::<_, i32>(1)? != 0,
+                    status: r.get(2)?,
+                    dirty: r.get::<_, i32>(3)? != 0,
+                    server_updated_at: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Mark local rows as needing a push (the server has lost them).
+    pub fn mark_dirty_ids(&self, ids: &[String]) -> Result<()> {
+        let conn = self.inner.lock();
+        for id in ids {
+            conn.execute(
+                "UPDATE recordings SET dirty = 1 WHERE id = ?1 AND COALESCE(remote, 0) = 0",
+                params![id],
+            )?;
+        }
+        Ok(())
     }
 
     /// Apply a cloud tombstone (`deleted_at` set): remove the local row and,
@@ -1121,8 +1197,8 @@ impl History {
     /// "voice files only" delete option; the ownership-scoped delete rework
     /// dropped audio-only deletion (a transcript and its audio die together),
     /// so nothing calls this now. Kept because it's a coherent piece of the
-    /// History API and a future feature may want it.
-    #[allow(dead_code)]
+    /// History API. The storage-cap sweep (`gc.rs`) uses it to free disk
+    /// space without losing the transcript.
     pub fn clear_audio(&self, id: &str) -> Result<()> {
         let conn = self.inner.lock();
         let existing: Option<String> = conn

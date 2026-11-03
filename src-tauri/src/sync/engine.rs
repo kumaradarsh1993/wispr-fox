@@ -23,6 +23,58 @@ use crate::secrets::{self, SecretKey};
 use super::{auth, config};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
+/// How far behind the pull cursor each pull re-reads (see `pull_notes`).
+const PULL_OVERLAP: chrono::Duration = chrono::Duration::minutes(15);
+/// Ids per `id=in.(...)` fetch, small enough to keep the URL short.
+const FETCH_CHUNK: usize = 40;
+/// PostgREST's default page size on Supabase.
+const INDEX_PAGE: usize = 1000;
+
+/// `cursor` moved back by `by`, as RFC 3339. An unparseable cursor is
+/// returned unchanged.
+fn lookback(cursor: &str, by: chrono::Duration) -> String {
+    match chrono::DateTime::parse_from_rfc3339(cursor) {
+        Ok(t) => (t.with_timezone(&Utc) - by).to_rfc3339(),
+        Err(_) => cursor.to_string(),
+    }
+}
+
+/// Parse an RFC 3339 timestamp for comparison. Postgres and clients format
+/// fractional seconds differently, so string order is not reliable.
+fn parse_ts(s: &str) -> chrono::DateTime<Utc> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC)
+}
+
+/// What the Refresh consistency check found and fixed.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ReconcileReport {
+    /// Rows from other devices this device was missing, now added.
+    pub fetched: usize,
+    /// Rows from other devices with a newer copy on the server, now updated.
+    pub updated: usize,
+    /// Rows deleted on their own device, now removed here.
+    pub removed: usize,
+    /// This device's rows the server didn't have, now sent again.
+    pub repushed: usize,
+    /// This device's rows still processing or waiting to send.
+    pub waiting: usize,
+    /// Rows the server holds for this account (not deleted).
+    pub server_rows: usize,
+    /// Set when the check couldn't finish.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerIndexRow {
+    id: String,
+    device_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    deleted_at: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,6 +226,194 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// The Refresh button: a normal sync cycle, then a full comparison of the
+    /// server's row list with this device's. Fetches rows from other devices
+    /// that are missing or out of date here, removes rows deleted on their
+    /// own device, and re-sends this device's rows the server lacks.
+    pub async fn reconcile(&self) -> ReconcileReport {
+        let mut report = ReconcileReport::default();
+        if !config::is_configured() || auth::current_user().is_none() {
+            report.error = Some("Sign in to sync with your other devices.".into());
+            return report;
+        }
+        // Wait briefly for a background cycle to finish rather than racing it.
+        let mut waited = 0;
+        while self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            if waited >= 60 {
+                report.error = Some("A sync is already running. Try again in a moment.".into());
+                return report;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            waited += 1;
+        }
+        self.emit_status(SyncState::Syncing);
+        let result = self.reconcile_inner(&mut report).await;
+        self.running.store(false, Ordering::SeqCst);
+        match result {
+            Ok(()) => {
+                *self.last_synced_at.lock() = Some(Utc::now());
+                self.emit_status(SyncState::Idle);
+            }
+            Err(e) => {
+                tracing::warn!("sync reconcile failed: {e:#}");
+                self.emit_status(SyncState::Error);
+                report.error = Some(format!("{e:#}"));
+            }
+        }
+        report
+    }
+
+    async fn reconcile_inner(&self, report: &mut ReconcileReport) -> anyhow::Result<()> {
+        self.run_sync().await?;
+        let token = auth::ensure_access_token().await?;
+        let my_device_id = self.device_id();
+
+        // 1. The server's view: every row's id, owner and timestamps.
+        let mut server: Vec<ServerIndexRow> = Vec::new();
+        loop {
+            let url = format!(
+                "{}/rest/v1/notes?select=id,device_id,created_at,updated_at,deleted_at&order=id.asc&limit={}&offset={}",
+                config::SUPABASE_URL,
+                INDEX_PAGE,
+                server.len(),
+            );
+            let resp = http()
+                .get(&url)
+                .header("apikey", config::SUPABASE_ANON_KEY)
+                .header("Authorization", format!("Bearer {token}"))
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("listing server rows: {e}"))?;
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("listing server rows failed: {body}");
+            }
+            let page: Vec<ServerIndexRow> = resp
+                .json()
+                .await
+                .map_err(|e| anyhow::anyhow!("decoding server row list: {e}"))?;
+            let n = page.len();
+            server.extend(page);
+            if n < INDEX_PAGE {
+                break;
+            }
+        }
+
+        // 2. This device's view.
+        let local: std::collections::HashMap<String, crate::history::SyncIndexRow> = self
+            .history
+            .sync_index()?
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect();
+
+        // Rows older than the retention window are pruned here every hour, so
+        // fetching them would only bring them back for an hour.
+        let retention_days = self.flow.settings().retention_days as i64;
+        let keep_after = (retention_days > 0)
+            .then(|| (Utc::now() - chrono::Duration::days(retention_days)).to_rfc3339());
+
+        let mut to_fetch: Vec<String> = Vec::new();
+        let mut on_server: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut changed = false;
+        for row in &server {
+            on_server.insert(row.id.as_str());
+            let mine = row.device_id.as_deref() == Some(my_device_id.as_str());
+            if row.deleted_at.is_none() {
+                report.server_rows += 1;
+            }
+            if mine {
+                continue;
+            }
+            let here = local.get(&row.id);
+            if row.deleted_at.is_some() {
+                if here.is_some() {
+                    self.history.apply_tombstone(&row.id)?;
+                    report.removed += 1;
+                    changed = true;
+                }
+                continue;
+            }
+            if let Some(cut) = &keep_after {
+                if parse_ts(&row.created_at) < parse_ts(cut) {
+                    continue;
+                }
+            }
+            match here {
+                None => {
+                    if !self.history.exclusion_contains(&row.id)? {
+                        to_fetch.push(row.id.clone());
+                    }
+                }
+                Some(l) if l.remote && l.server_updated_at.as_deref() != Some(row.updated_at.as_str()) => {
+                    to_fetch.push(row.id.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // 3. Our own finished rows the server has lost: send them again.
+        let missing_mine: Vec<String> = local
+            .values()
+            .filter(|l| !l.remote && l.status == "done" && !l.dirty && !on_server.contains(l.id.as_str()))
+            .map(|l| l.id.clone())
+            .collect();
+        if !missing_mine.is_empty() {
+            report.repushed = missing_mine.len();
+            self.history.mark_dirty_ids(&missing_mine)?;
+            self.push_notes(&token).await?;
+        }
+
+        // 4. Fetch the missing or newer rows in small batches.
+        for chunk in to_fetch.chunks(FETCH_CHUNK) {
+            let list = chunk.iter().map(|s| percent_encode(s)).collect::<Vec<_>>().join(",");
+            let url = format!("{}/rest/v1/notes?id=in.({list})", config::SUPABASE_URL);
+            let resp = http()
+                .get(&url)
+                .header("apikey", config::SUPABASE_ANON_KEY)
+                .header("Authorization", format!("Bearer {token}"))
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("fetching rows: {e}"))?;
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("fetching rows failed: {body}");
+            }
+            let rows: Vec<RemoteNoteRow> = resp
+                .json()
+                .await
+                .map_err(|e| anyhow::anyhow!("decoding fetched rows: {e}"))?;
+            for row in rows {
+                let existed = local.contains_key(&row.id);
+                if self.apply_pulled_row(row)? {
+                    changed = true;
+                    if existed {
+                        report.updated += 1;
+                    } else {
+                        report.fetched += 1;
+                    }
+                }
+            }
+        }
+
+        // 5. What this device still owes the server.
+        report.waiting = self
+            .history
+            .sync_index()?
+            .iter()
+            .filter(|l| !l.remote && (l.dirty || !matches!(l.status.as_str(), "done" | "error")))
+            .count();
+
+        if changed {
+            let _ = self.app.emit("wispr:history_changed", ());
+        }
+        Ok(())
+    }
+
     /// Publish this device's analytics rollup, then re-read the whole fleet.
     async fn sync_fleet(&self, token: &str) -> anyhow::Result<()> {
         let device_id = self.device_id();
@@ -316,6 +556,7 @@ impl SyncEngine {
         }
         let ids: Vec<String> = dirty.into_iter().map(|r| r.id).collect();
         self.history.mark_clean(&ids)?;
+        self.history.set_server_updated_at(&ids, &now)?;
         Ok(())
     }
 
@@ -361,10 +602,17 @@ impl SyncEngine {
             .meta_get("pull_cursor")?
             .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
         let my_device_id = self.device_id();
+        // Every client stamps `updated_at` with its own clock at push time, so
+        // a row from a device whose clock runs behind can land on the server
+        // with a stamp older than rows we have already pulled. A strict
+        // `> cursor` read would skip it forever. Re-read a 15-minute overlap
+        // each time; rows already applied are skipped below by comparing
+        // their stamp with the one we stored.
+        let since = lookback(&cursor, PULL_OVERLAP);
         let url = format!(
             "{}/rest/v1/notes?updated_at=gt.{}&order=updated_at.asc",
             config::SUPABASE_URL,
-            percent_encode(&cursor),
+            percent_encode(&since),
         );
         let resp = http()
             .get(&url)
@@ -403,13 +651,29 @@ impl SyncEngine {
                 }
                 continue;
             }
+            if self.apply_pulled_row(row)? {
+                changed = true;
+            }
+        }
+        self.history.meta_set("pull_cursor", &max_updated)?;
+        if changed {
+            let _ = self.app.emit("wispr:history_changed", ());
+        }
+        Ok(())
+    }
+
+    /// Apply one row another device owns. Returns whether anything changed.
+    fn apply_pulled_row(&self, row: RemoteNoteRow) -> anyhow::Result<bool> {
+        {
             if self.history.exclusion_contains(&row.id)? {
-                continue;
+                return Ok(false);
             }
             if row.deleted_at.is_some() {
                 self.history.apply_tombstone(&row.id)?;
-                changed = true;
-                continue;
+                return Ok(true);
+            }
+            if self.history.server_updated_at(&row.id)?.as_deref() == Some(row.updated_at.as_str()) {
+                return Ok(false);
             }
             let note = RemoteNote {
                 id: row.id,
@@ -432,15 +696,8 @@ impl SyncEngine {
                 updated_at: row.updated_at,
                 deleted_at: row.deleted_at,
             };
-            if self.history.upsert_remote(&note)? {
-                changed = true;
-            }
+            Ok(self.history.upsert_remote(&note)?)
         }
-        self.history.meta_set("pull_cursor", &max_updated)?;
-        if changed {
-            let _ = self.app.emit("wispr:history_changed", ());
-        }
-        Ok(())
     }
 
     /// Push locally-saved API keys and pull any newer ones from other
@@ -857,5 +1114,24 @@ pub async fn tombstone_remote(ids: &[String], device_id: &str) {
         .await
     {
         tracing::warn!("sync: cloud tombstone failed (deleted locally regardless): {e:#}");
+    }
+}
+
+#[cfg(test)]
+mod lookback_tests {
+    use super::*;
+
+    #[test]
+    fn lookback_moves_cursor_back_and_keeps_bad_input() {
+        let back = lookback("2026-11-03T14:02:13.065464+00:00", PULL_OVERLAP);
+        assert_eq!(parse_ts(&back), parse_ts("2026-11-03T13:47:13.065464Z"));
+        assert_eq!(lookback("not a time", PULL_OVERLAP), "not a time");
+    }
+
+    #[test]
+    fn parse_ts_orders_mixed_precision() {
+        // String order gets these wrong; parsed order must not.
+        assert!(parse_ts("2026-11-03T08:00:00Z") > parse_ts("2026-11-03T07:59:59.999999+00:00"));
+        assert!(parse_ts("garbage") < parse_ts("1970-01-01T00:00:00Z"));
     }
 }
