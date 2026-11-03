@@ -5,11 +5,48 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-10-19** (**`v3.5.0-nightly.8` is the current nightly**;
-> `v3.4.0` is still stable/Latest. The v3.5 line is the design revamp plus the
-> fixes below — see the 2026-10-19 section. Design brief: `docs/DESIGN_v3.5.md`.
-> **`v3.3.0-nightly.2` is burned — it froze on the first hotkey press; do not
-> install or test it.**)
+> **Last updated: 2026-11-03.** **`v3.6.0` is stable/Latest** (Conversations +
+> one Keychain item per build). **`v3.7.0-nightly.1` is the current nightly**
+> (Refresh sync check, see the 2026-11-03 section). Design brief:
+> `docs/DESIGN_v3.5.md`. **`v3.3.0-nightly.2` is burned — it froze on the first
+> hotkey press; do not install or test it.**
+
+## 2026-11-03 — v3.6.0 stable; v3.7.0-nightly.1 sync check
+
+Brief (verbatim) and checklist: `docs/briefs/2026-11-03 *`. Notes:
+`docs/RELEASE_NOTES_v3.6.0.md`, `docs/RELEASE_NOTES_v3.7.0-nightly.1.md`.
+
+**Branches.** `v3.6.0` is tagged on `keychain-fix`; `v3.7.0-nightly.1` on
+`sync-check` (built on top of it). `main` on GitHub is still at the Conversations
+design doc; Adarsh pushes `main` himself (`git merge --ff-only sync-check`).
+
+**Why a phone conversation never reached this Mac (found 2026-11-03):**
+1. Android applied its own pushed rows back as pulled copies (`remote = 1`, no
+   audio), so they stopped pushing and speaker-name edits never left the phone
+   (fixed on Android, `revamp` branch).
+2. A conversation whose notes step was waiting on a WorkManager retry was never
+   `done`, so never pushed (fixed on Android).
+3. Pull used a strict `updated_at > cursor`. Every client stamps `updated_at`
+   with its own clock at push time, so a slower clock could land a row under the
+   cursor forever. **Pull now re-reads a 15-minute overlap** and skips rows whose
+   stamp matches the new `server_updated_at` column.
+4. **The storage cap (`retention_max_mb`, 500 MB) deleted whole history rows
+   with their audio** (`gc.rs`). One long recording day wiped every older
+   transcript, which is why this Mac held only that day's 18 rows. It now
+   clears only the audio (`History::clear_audio`).
+
+**Refresh = consistency check** (`SyncEngine::reconcile`, command
+`sync_reconcile`, button on History and Conversations). Sync, then list every
+server row (`id, device_id, created_at, updated_at, deleted_at`, paged 1000),
+and: fetch other devices' rows missing or newer here (`id=in.(…)`, 40 per
+request); remove rows tombstoned elsewhere; re-push our own `done` rows the
+server lacks; restore our own rows the server still has but this device lost
+(`mark_local_owned`, no audio). Rows older than `retention_days` are skipped so
+the hourly sweep doesn't fight the check. The result is one line in the page
+header (`describeReconcile` in `src/lib/api.ts`).
+
+**Not verified against the live account yet:** reconcile needs a signed-in run.
+First Refresh after install should report restored rows (the lost history).
 
 ## 2026-10-19 — v3.5.0 nightlies 1–8: design revamp, keychain, pause/resume, India sync block
 
