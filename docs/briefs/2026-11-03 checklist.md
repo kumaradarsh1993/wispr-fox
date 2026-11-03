@@ -4,13 +4,13 @@ Status: [ ] open, [x] done, [?] unclear (ask Adarsh).
 
 ## A. Releases
 - [x] A1 Latest desktop nightly on this Mac: v3.6.0-nightly.2 is installed and is the newest release.
-- [ ] A2 Promote desktop to stable v3.6.0 (Conversations + Keychain fix).
-- [ ] A3 Promote Android to stable v2.3.0 (Conversations), before the revamp starts.
+- [x] A2 Promote desktop to stable v3.6.0 (Conversations + Keychain fix).
+- [x] A3 Promote Android to stable v2.3.0 (Conversations), before the revamp starts.
 - [ ] A4 Revamp work goes into the next nightlies (desktop v3.7.0-nightly.x, Android v2.4.0-nightly.x).
 
 ## B. Sync (desktop + web, and Android History)
-- [ ] B1 Find why the phone's second upload of the same audio (2 speakers, speakers renamed) never reached desktop.
-- [ ] B2 Refresh button runs a full consistency check: fetch rows on the server missing here, push local rows the server lacks, re-push local edits, then report what it fixed.
+- [x] B1 Find why the phone's second upload of the same audio (2 speakers, speakers renamed) never reached desktop.
+- [x] B2 Refresh button runs a full consistency check: fetch rows on the server missing here, push local rows the server lacks, re-push local edits, then report what it fixed.
 - [ ] B3 Same refresh on web.
 
 ## C. Android revamp
@@ -29,3 +29,9 @@ Status: [ ] open, [x] done, [?] unclear (ask Adarsh).
 
 ## D. Docs
 - [ ] D1 Update CLAUDE.md, HANDOVER.md for desktop, Android and web. THETA_MEMORY.md doesn't exist in these repos yet: create one in each (append-only log), per Adarsh's 3-file norm.
+
+## Progress log
+- 19:35 IST: v3.6.0 (desktop) and v2.3.0 (Android) tagged. Android v2.3.0 published as Latest.
+- 19:50 IST: B1 causes found. (1) Android applied its own pushed rows back as pulled copies, so a phone row stopped pushing after its first sync; speaker-name edits never left the phone. (2) A conversation waiting on a retried step was never pushed. (3) Pull read strictly after the cursor, so a row stamped by a slower clock could be skipped. (4) Desktop's storage-cap sweep deleted whole rows, which is why this Mac only holds today's 18 rows.
+- 19:52 IST: B2 desktop on branch `sync-check` (Refresh on History and Conversations). Android sync fixes on branch `revamp`; Refresh button lands with the History redesign (C10).
+- S10 models check (03-Nov): Groq's live model page lists Whisper Large v3, Whisper Large v3 Turbo, GPT-OSS 20B/120B and Qwen 3.8 27B. All 5 are already in the apps, and Llama 3.3 70B is still Enterprise-only. Deepgram's current model is still Nova-3. ElevenLabs' current speech-to-text model is still Scribe v2 (v1 is deprecated, and the apps only migrate it). The Gemini and OpenAI model pages render client-side and couldn't be fetched, and web search was blocked. The Android and desktop lists are identical and were last refreshed 30-Oct. No changes made.
