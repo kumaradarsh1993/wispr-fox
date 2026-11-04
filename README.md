@@ -63,8 +63,8 @@ Tap a hotkey to latch recording, or hold it for push-to-talk. The text appears i
 | Press | What you get |
 |---|---|
 | 🎙️ **F8** *(Win)* / **Option+Space** *(Mac)* | Raw transcript — exactly what you said |
-| ✏️ **F9** *(Win)* / **Option+Enter** *(Mac)* | Drafted output — give a brief, get a polished email/doc/message back |
-| 🧹 **Shift+F8** / **Shift+Option+Space** *(Mac)* | One-shot cleaned version (spell + punctuation + paragraphing) |
+| ✏️ **F9** *(Win)* / **Shift+Option+Space** *(Mac)* | Drafted output — give a brief, get a polished email/doc/message back |
+| 🧹 **Shift+F8** / **Ctrl+Shift+Option+Space** *(Mac)* | One-shot cleaned version (spell + punctuation + paragraphing) |
 | ⏏️ **Esc** | Stop and send the active recording |
 
 Every dictation key is adaptive: release before **700 ms** to latch recording, then press any dictation key (or Esc) to stop and send. Hold for **700 ms or longer** to stop and send on release.
@@ -140,7 +140,7 @@ Either way, most users pay **$0**. There's no wispr-fox subscription — your us
 <details>
 <summary><strong>The Mac hotkey does nothing — F8 just plays/pauses music</strong></summary>
 
-That's macOS treating the function row as media keys by default. The Mac defaults are **Option+Space** (transcribe) and **Option+Enter** (draft) for exactly this reason. If you'd rather use F-keys: System Settings → Keyboard → Keyboard Shortcuts → Function Keys → toggle "Use F1, F2, etc. as standard function keys". Or rebind in wispr-fox Settings → Dictation.
+That's macOS treating the function row as media keys by default. The Mac defaults are **Option+Space** (transcribe) and **Shift+Option+Space** (draft) for exactly this reason. If you'd rather use F-keys: System Settings → Keyboard → Keyboard Shortcuts → Function Keys → toggle "Use F1, F2, etc. as standard function keys". Or rebind in wispr-fox Settings → Dictation.
 
 </details>
 

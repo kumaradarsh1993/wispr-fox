@@ -141,7 +141,8 @@ class SettingsStore {
     }
 
     // 2b) macOS hotkey migration. F8/F9 are media keys on Mac, so macOS uses a
-    //     single ⌥ chord (⌥Space dictate, ⌥Enter draft, ⌘ for sticky). Two
+    //     single ⌥ chord (⌥Space dictate, ⇧⌥Space draft since Nov 2026,
+    //     ⌘ for sticky; see step 5). Two
     //     one-time steps, each gated by a marker so we never clobber a user's
     //     deliberate rebind:
     //       • macHotkeyMigrated  — moves Windows F-key defaults → Mac combos
@@ -255,6 +256,30 @@ class SettingsStore {
         remap("force_clean_sticky_hotkey", "Ctrl+Alt+Shift+C", "Super+Shift+Alt+Space");
         try {
           await store?.set("macHotkeyV2Migrated", true);
+          await store?.save();
+        } catch {
+          /* best-effort marker */
+        }
+      }
+
+      // Step 5 (Nov 2026): Drafting leaves ⌥Enter, which stole Excel's new
+      // line inside a cell. Drafting becomes ⇧⌥Space (dictate's key plus
+      // Shift), so force-clean moves up to ⌃⇧⌥Space. Runs after steps 1-2,
+      // which can still produce the old values, and only touches fields that
+      // still hold a default.
+      let macV3Done = false;
+      try {
+        macV3Done = (await store?.get<boolean>("macHotkeyV3Migrated")) ?? false;
+      } catch {
+        /* treat as not-yet-migrated */
+      }
+      if (!macV3Done) {
+        remap("force_clean_hotkey", "Shift+Alt+Space", "Ctrl+Shift+Alt+Space");
+        remap("force_clean_sticky_hotkey", "Super+Shift+Alt+Space", "Super+Ctrl+Shift+Alt+Space");
+        remap("drafting_hotkey", "Alt+Enter", "Shift+Alt+Space");
+        remap("drafting_sticky_hotkey", "Super+Alt+Enter", "Super+Shift+Alt+Space");
+        try {
+          await store?.set("macHotkeyV3Migrated", true);
           await store?.save();
         } catch {
           /* best-effort marker */

@@ -235,20 +235,23 @@ impl Default for AppSettings {
         // Existing Mac installs are migrated off F8/F9 by the frontend store.
         let mac = cfg!(target_os = "macos");
         Self {
-            // macOS: a single ⌥ chord (Option+Space / Option+Enter) instead of
-            // ⌃⌥ three-key combos — one modifier + one key, works out of the box
-            // (no "use F-keys as standard" setting needed, unlike bare F8/F9).
+            // macOS: ⌥Space dictates (F8's job) and ⇧⌥Space drafts (F9's job),
+            // instead of ⌃⌥ three-key combos. Works out of the box (no "use
+            // F-keys as standard" setting needed, unlike bare F8/F9).
+            // Drafting was ⌥Enter until Nov 2026. That stole Excel's new line
+            // inside a cell (Option+Enter), and a global shortcut always wins
+            // over the focused app, so Enter combos are off the table.
             // Legacy sticky values below remain only so old settings round-trip;
             // the hotkey registrar deliberately ignores them.
             light_hotkey: if mac { "Alt+Space" } else { "F8" }.to_string(),
             advanced_hotkey: String::new(),
-            drafting_hotkey: if mac { "Alt+Enter" } else { "F9" }.to_string(),
+            drafting_hotkey: if mac { "Shift+Alt+Space" } else { "F9" }.to_string(),
             sticky_light: false,
             sticky_advanced: false,
             sticky_drafting: false,
             light_sticky_hotkey: if mac { "Super+Alt+Space" } else { "Super+F8" }.to_string(),
             advanced_sticky_hotkey: String::new(),
-            drafting_sticky_hotkey: if mac { "Super+Alt+Enter" } else { "Super+F9" }.to_string(),
+            drafting_sticky_hotkey: if mac { "Super+Shift+Alt+Space" } else { "Super+F9" }.to_string(),
             force_clean_hotkey: default_force_clean_hotkey(),
             force_clean_sticky_hotkey: default_force_clean_sticky_hotkey(),
             toggle_window_hotkey: default_toggle_window_hotkey(),
@@ -354,8 +357,10 @@ fn default_open_silently() -> bool {
     !cfg!(target_os = "macos")
 }
 
+/// macOS moved from ⇧⌥Space to ⌃⇧⌥Space in Nov 2026, when ⇧⌥Space became
+/// the Drafting key.
 fn default_force_clean_hotkey() -> String {
-    if cfg!(target_os = "macos") { "Shift+Alt+Space" } else { "Shift+F8" }.to_string()
+    if cfg!(target_os = "macos") { "Ctrl+Shift+Alt+Space" } else { "Shift+F8" }.to_string()
 }
 
 /// Show/hide the main window.
@@ -373,7 +378,7 @@ fn default_force_clean_hotkey() -> String {
 ///   - `Cmd+Alt+Space`  — Finder search window.
 ///   - `Ctrl+Cmd+Space` — Emoji & Symbols viewer.
 ///   - `Alt+Space`      — already this app's dictate key (and Alfred's default).
-///   - `Shift+Alt+Space`— already this app's force-clean key.
+///   - `Shift+Alt+Space`— already this app's Drafting key.
 /// `Cmd+Shift+Space` is unassigned by default on macOS and is not bound in
 /// Word, Chrome, WhatsApp or Claude. A global shortcut wins over the focused
 /// app, so the cost of a wrong guess is stealing a key from an app — which is
@@ -415,7 +420,7 @@ fn default_title_model() -> String {
 }
 
 fn default_force_clean_sticky_hotkey() -> String {
-    if cfg!(target_os = "macos") { "Super+Shift+Alt+Space" } else { "Shift+Super+F8" }.to_string()
+    if cfg!(target_os = "macos") { "Super+Ctrl+Shift+Alt+Space" } else { "Shift+Super+F8" }.to_string()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
