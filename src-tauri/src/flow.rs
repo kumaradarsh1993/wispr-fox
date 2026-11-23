@@ -2949,6 +2949,67 @@ const ACCURACY_MODEL: &str = "whisper-large-v3";
 
 /// Outer cap for a whole-file STT call: at least 180 s, and always 30 s past
 /// the provider's own size-scaled request deadline.
+/// A temporary WAV made from a compressed upload; deleted when dropped.
+struct TempWav(std::path::PathBuf);
+
+impl TempWav {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempWav {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Over this, a non-WAV file can't go to Groq/OpenAI in one request.
+const SINGLE_REQUEST_LIMIT: u64 = 24 * 1024 * 1024;
+
+/// `Ok(None)` when `audio` can be sent as is (a WAV, which the Groq client
+/// splits itself, or a compressed file under the single-request limit).
+/// Otherwise converts it to 16 kHz mono 16-bit WAV with macOS's built-in
+/// `afconvert` (about 2 s for 95 minutes of audio) so it can be split.
+async fn splittable_wav_for(audio: &std::path::Path) -> std::result::Result<Option<TempWav>, String> {
+    let bytes = std::fs::metadata(audio).map(|m| m.len()).unwrap_or(0);
+    let is_wav = audio
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+    if is_wav || bytes <= SINGLE_REQUEST_LIMIT {
+        return Ok(None);
+    }
+    let mb = bytes as f64 / (1024.0 * 1024.0);
+    if !cfg!(target_os = "macos") {
+        return Err(format!(
+            "file is {mb:.0} MB, too large for Whisper in one request. Convert it to WAV first, or use Deepgram for long files."
+        ));
+    }
+    let out = std::env::temp_dir().join(format!("wispr-fox-split-{}.wav", uuid::Uuid::new_v4()));
+    let status = tokio::process::Command::new("/usr/bin/afconvert")
+        .args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"])
+        .arg(audio)
+        .arg(&out)
+        .status()
+        .await
+        .map_err(|e| format!("couldn't convert the {mb:.0} MB file for Whisper: {e}"))?;
+    let temp = TempWav(out);
+    if !status.success() || std::fs::metadata(temp.path()).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err(format!("couldn't convert the {mb:.0} MB file for Whisper (afconvert failed)"));
+    }
+    tracing::info!(src_mb = mb, "converted long compressed upload to WAV for chunked Whisper");
+    Ok(Some(temp))
+}
+
+/// Deadline for a Whisper request that may be split into ~20 MB parts sent
+/// one after another: the usual per-request budget for each part.
+fn chunked_stt_deadline(bytes: u64) -> std::time::Duration {
+    let part = crate::stt::chunk::TARGET_CHUNK_BYTES;
+    let parts = bytes.div_ceil(part).max(1) as u32;
+    upload_stt_deadline(bytes.min(part)) * parts
+}
+
 fn upload_stt_deadline(bytes: u64) -> std::time::Duration {
     (crate::stt::scaled_request_timeout(bytes) + std::time::Duration::from_secs(30))
         .max(std::time::Duration::from_secs(180))
@@ -3288,28 +3349,23 @@ impl Flow {
         let key = secrets::get(SecretKey::GroqStt)
             .map_err(pass_error)?
             .ok_or_else(|| "no Groq key — add one in Settings → Providers".to_string())?;
-        let bytes = std::fs::metadata(audio).map(|m| m.len()).unwrap_or(0);
-        let is_wav = audio
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
-        // Groq takes 25 MB per request and only WAV can be split locally.
-        if !is_wav && bytes > 24 * 1024 * 1024 {
-            return Err(format!(
-                "file is {:.0} MB — too large for Groq Whisper in one request",
-                bytes as f64 / (1024.0 * 1024.0)
-            ));
-        }
+        // Groq takes 25 MB per request and only WAV can be split locally, so
+        // a long compressed file (a 95-minute phone .m4a is ~65 MB) is first
+        // converted to a 16 kHz mono WAV, which the Groq client then splits.
+        let converted = splittable_wav_for(audio).await?;
+        let send_path = converted.as_ref().map(|c| c.path()).unwrap_or(audio);
+        let bytes = std::fs::metadata(send_path).map(|m| m.len()).unwrap_or(0);
         let stt = GroqStt::with_model(key, ACCURACY_MODEL.to_string());
         let opts = crate::stt::SttOptions {
             language: self.settings().language_hint.clone(),
             diarize: false,
         };
-        let deadline = upload_stt_deadline(bytes);
-        let t = tokio::time::timeout(deadline, stt.transcribe(audio, &opts))
+        let deadline = chunked_stt_deadline(bytes);
+        let t = tokio::time::timeout(deadline, stt.transcribe(send_path, &opts))
             .await
             .map_err(|_| format!("Groq Whisper timed out after {}s", deadline.as_secs()))?
             .map_err(|e| format!("Groq: {}", pass_error(e)))?;
+        drop(converted);
         if t.text.trim().is_empty() {
             return Err("Groq Whisper returned an empty transcript".to_string());
         }
