@@ -5,11 +5,45 @@
 > and `CLAUDE.md` for conventions and ground rules. Everything else is a
 > specialist doc (see the map at the bottom).
 >
-> **Last updated: 2026-11-03.** **`v3.6.0` is stable/Latest** (Conversations +
-> one Keychain item per build). **`v3.7.0-nightly.1` is the current nightly**
-> (Refresh sync check, see the 2026-11-03 section). Design brief:
-> `docs/DESIGN_v3.5.md`. **`v3.3.0-nightly.2` is burned — it froze on the first
-> hotkey press; do not install or test it.**
+> **Last updated: 2026-11-23.** **`v3.7.0` is stable/Latest**: the Refresh sync
+> check, the storage cap no longer deleting transcripts, long compressed
+> uploads split for Whisper, and Mac Drafting on ⇧⌥Space (see the 2026-11-23
+> and 2026-11-03 sections). Design brief: `docs/DESIGN_v3.5.md`.
+> **`v3.3.0-nightly.2` is burned — it froze on the first hotkey press; do not
+> install or test it.**
+>
+> **Release notes:** `docs/RELEASE_NOTES_<tag>.md` holds one short file per
+> stable release, written for users. Nightly and preview notes live in
+> `docs/release-notes-archive/`. A new nightly's notes still go in `docs/`,
+> because the release workflow reads them from there; move them to the archive
+> once that version ships as stable. Older sections below cite
+> `docs/RELEASE_NOTES_v*-nightly*.md`, and those files are now in the archive.
+
+## 2026-11-23 — v3.7.0 stable
+
+**Why the Whisper step failed on long conversations.** A 95-minute phone .m4a
+(65 MB) hit `run_accuracy_pass`'s guard: Groq takes 25 MB per request, and only
+WAV can be chunked (`stt::chunk`). nightly.2 added `splittable_wav_for` in
+`flow.rs`. A non-WAV over 24 MB is converted with `/usr/bin/afconvert -f WAVE
+-d LEI16@16000 -c 1` into a temp WAV (`TempWav`, deleted on drop). The
+95-minute file converted in 2.3 s to 174 MB. `GroqStt` then sends it in
+~20 MB parts, and `chunked_stt_deadline` gives each part its own time budget.
+**macOS only.** Elsewhere it still returns the old "too large" error. The
+voice-note upload path (`flow.rs` around the `chunkable_provider` check) still
+rejects a long non-WAV for Groq/OpenAI. That's the next item if asked.
+
+**Mac hotkeys.** Drafting moved ⌥Enter → ⇧⌥Space, because ⌥Enter stole Excel's
+in-cell new line. Force-clean moved ⇧⌥Space → ⌃⇧⌥Space. Existing installs are
+moved by step 5 in `settings-store.svelte.ts` (`macHotkeyV3Migrated`), but only
+fields still holding the old default.
+
+**Release body.** `release.yml` now appends a short download / first-launch
+block instead of the long install essay. The stable notes for v3.6.0 and v3.7.0
+were rewritten for users.
+
+**Push.** `main` on GitHub was last moved 2026-10-19. Adarsh pushes `main`
+himself: `git checkout main && git merge --ff-only sync-check && git push
+origin main`.
 
 ## 2026-11-03 — v3.6.0 stable; v3.7.0-nightly.1 sync check
 

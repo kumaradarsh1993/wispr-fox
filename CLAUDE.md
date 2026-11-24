@@ -13,11 +13,15 @@ unsigned). Tauri 2 + SvelteKit + Svelte 5 (runes) + Rust. Press a
 hotkey, talk, get text — pasted into whatever app you're in.
 
 Public repo: <https://github.com/kumaradarsh1993/wispr-fox>
-**Current (2026-11-03): stable `v3.6.0`** (Conversations page with two
-transcripts + one Keychain item per build), **nightly `v3.7.0-nightly.1`**
-(Refresh runs a full sync check; pull re-reads a 15-minute overlap; the storage
-cap no longer deletes transcripts). See `HANDOVER.md` 2026-11-03 section and
-`THETA_MEMORY.md`. The lines below are earlier states.
+**Current (2026-11-23): stable `v3.7.0`.** Refresh runs a full sync check,
+pull re-reads a 15-minute overlap, the storage cap no longer deletes
+transcripts, long compressed uploads are split for Whisper (macOS `afconvert`),
+and Mac Drafting is ⇧⌥Space (⌥Enter freed for Excel). See `HANDOVER.md`
+(2026-11-23 and 2026-11-03 sections) and `THETA_MEMORY.md`. **Release notes:**
+one short, user-facing `docs/RELEASE_NOTES_<tag>.md` per stable release.
+Nightly notes go in `docs/` while that version is in testing, then move to
+`docs/release-notes-archive/` once it ships as stable. The lines below are
+earlier states.
 **Previous nightly: `v3.5.0-nightly.8`** (2026-10-19) — design revamp in progress
 (`docs/DESIGN_v3.5.md`), real OS keychain + per-launch secret cache,
 pause/resume dictation, self-repairing WAV headers, floater anchor fix, and

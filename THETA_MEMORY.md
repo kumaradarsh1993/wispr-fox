@@ -44,3 +44,34 @@ The real server state was not inspected. That would need Adarsh's account token,
 - Nothing has been tested on the S23 Ultra or against the live account.
 - Adarsh pushes `main` in all three repos himself.
 - The web `sync-check` branch isn't live.
+
+## 2026-11-04 — Mac hotkey hotfix (Option+Enter)
+
+- **Input:** Adarsh said Option+Enter started a recording and broke Excel's new line inside a cell. He wanted Option+Space to stay the F8 equivalent and Shift+Option+Space to become the F9 equivalent.
+- **Cause:** Option+Enter was the Mac Drafting default. A global shortcut always beats the app in front.
+- **Done on this Mac:**
+  - waited for 2 quiet minutes with no recording, quit the app, edited `user-prefs.json` (backup next to it), reopened the app and verified the change stuck;
+  - Drafting is now Shift+Alt+Space;
+  - Force clean moved to Ctrl+Shift+Alt+Space, since Drafting took its key;
+  - the sticky versions with Cmd moved the same way.
+- **In code (commit `369c215`):** new Mac defaults in `settings.rs`, a one-time migration step 5 (`macHotkeyV3Migrated`) that only touches fields still holding a default, and the README key table.
+
+## 2026-11-23 — Whisper step on long conversations; v3.7.0 stable; release-notes cleanup
+
+- **Input:** a 95-minute phone conversation (65 MB .m4a). Deepgram labelled the speakers, but the Whisper step failed with "file is 65 MB — too large for Groq Whisper in one request". Adarsh had assumed long files were already split.
+- **Cause:** splitting only worked on WAV. Phone uploads are .m4a, and `run_accuracy_pass` rejected any non-WAV file over 24 MB before sending anything.
+- **Fix (v3.7.0-nightly.2, commit `0c331eb`):**
+  - a non-WAV file over 24 MB is converted with macOS `afconvert` to a temporary 16 kHz mono WAV, then split into parts of about 20 MB;
+  - the deadline is scaled per part;
+  - the real file converted in 2.3 s to 174 MB, which is about 9 parts.
+- **Install:** after a 2-minute recording-idle check, this Mac moved to nightly.2 and the signature verified. AppleScript quit was refused (-10004), so the app was stopped with SIGTERM.
+- **Stable:** v3.7.0 = v3.7.0-nightly.2, promoted on Adarsh's say-so.
+- **Release notes:**
+  - 51 nightly, Codex and preview notes moved to `docs/release-notes-archive/`;
+  - the stable notes for 3.6.0 and 3.7.0 were rewritten short and user-facing;
+  - `release.yml` now appends a short download and first-launch block instead of the long install essay and the provenance line;
+  - the published v3.6.0 body was replaced with the short version.
+- **Open:**
+  - voice-note uploads of long .m4a files with Groq or OpenAI still fail;
+  - the Whisper retry on the 95-minute file has not been confirmed;
+  - Adarsh pushes `main`.
